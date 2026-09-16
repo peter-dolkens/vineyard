@@ -1,0 +1,387 @@
+{
+  "name": "vineyard",
+  "displayName": "Vineyard",
+  "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
+  "version": "0.1.0",
+  "publisher": "dolkens",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "agents",
+    "ssh",
+    "fleet",
+    "sessions"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vineyard",
+          "title": "Vineyard",
+          "icon": "media/vineyard.svg"
+        }
+      ]
+    },
+    "views": {
+      "vineyard": [
+        {
+          "id": "vineyard.fleet",
+          "name": "Agents",
+          "icon": "media/vineyard.svg",
+          "contextualTitle": "Vineyard"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "vineyard.fleet",
+        "contents": "Vineyard runs a tiny daemon on each machine; they talk to each other only while a VS Code window is watching.\n\nThis machine is not set up yet.\n\n[Set Up This Machine](command:vineyard.setupLocal)\n\nStart a new fleet here: writes ~/.vineyard/config.json, generates the fleet certificate and installs a login service.\n\n[Join Fleet with Invite Code](command:vineyard.joinWithCode)\n\nAlready have a fleet? Create an invite code from a machine that is in it (Vineyard: Create Invite Code) and paste it here. No SSH needed.",
+        "when": "vineyard.daemonState == 'no-config'"
+      },
+      {
+        "view": "vineyard.fleet",
+        "contents": "Cannot reach the local Vineyard daemon.\n[Restart Daemon](command:vineyard.restartDaemon)\n[Reconnect](command:vineyard.reconnect)\n[Show Output](command:vineyard.showOutput)",
+        "when": "vineyard.daemonState == 'disconnected'"
+      },
+      {
+        "view": "vineyard.fleet",
+        "contents": "Connecting to the local daemon\u2026",
+        "when": "vineyard.daemonState == 'connecting'"
+      }
+    ],
+    "commands": [
+      {
+        "command": "vineyard.refresh",
+        "title": "Refresh",
+        "category": "Vineyard",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vineyard.setupLocal",
+        "title": "Set Up This Machine",
+        "category": "Vineyard",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "vineyard.createInvite",
+        "title": "Create Invite Code (join without SSH)",
+        "category": "Vineyard",
+        "icon": "$(link)"
+      },
+      {
+        "command": "vineyard.joinWithCode",
+        "title": "Join Fleet with Invite Code",
+        "category": "Vineyard",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "vineyard.addMachine",
+        "title": "Add Machine (install daemon over SSH)",
+        "category": "Vineyard",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vineyard.updateMachine",
+        "title": "Reinstall / Update Daemon",
+        "category": "Vineyard",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "vineyard.removeMachine",
+        "title": "Remove Machine",
+        "category": "Vineyard",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vineyard.restartDaemon",
+        "title": "Restart Daemon",
+        "category": "Vineyard",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "vineyard.showDaemonLog",
+        "title": "Show Daemon Log",
+        "category": "Vineyard",
+        "icon": "$(output)"
+      },
+      {
+        "command": "vineyard.showOutput",
+        "title": "Show Output",
+        "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.reconnect",
+        "title": "Reconnect to Local Daemon",
+        "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.openWorkspace",
+        "title": "Open Workspace in VS Code",
+        "category": "Vineyard",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "vineyard.openTerminal",
+        "title": "Open Terminal Here",
+        "category": "Vineyard",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "vineyard.showTranscript",
+        "title": "Show Transcript",
+        "category": "Vineyard",
+        "icon": "$(book)"
+      },
+      {
+        "command": "vineyard.resumeSession",
+        "title": "Resume Session in Terminal",
+        "category": "Vineyard",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "vineyard.copySessionId",
+        "title": "Copy Session ID",
+        "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.copyPath",
+        "title": "Copy Path",
+        "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.toggleHistorical",
+        "title": "Toggle Historical Workspaces",
+        "category": "Vineyard",
+        "icon": "$(history)"
+      },
+      {
+        "command": "vineyard.toggleExited",
+        "title": "Toggle Exited Agents",
+        "category": "Vineyard",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "vineyard.focus",
+        "title": "Focus Vineyard",
+        "category": "Vineyard"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vineyard.refresh",
+          "when": "view == vineyard.fleet",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vineyard.addMachine",
+          "when": "view == vineyard.fleet",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vineyard.createInvite",
+          "when": "view == vineyard.fleet",
+          "group": "navigation@3"
+        },
+        {
+          "command": "vineyard.toggleHistorical",
+          "when": "view == vineyard.fleet",
+          "group": "1_view@1"
+        },
+        {
+          "command": "vineyard.toggleExited",
+          "when": "view == vineyard.fleet",
+          "group": "1_view@2"
+        },
+        {
+          "command": "vineyard.setupLocal",
+          "when": "view == vineyard.fleet",
+          "group": "2_setup@1"
+        },
+        {
+          "command": "vineyard.showOutput",
+          "when": "view == vineyard.fleet",
+          "group": "2_setup@2"
+        },
+        {
+          "command": "vineyard.joinWithCode",
+          "when": "view == vineyard.fleet",
+          "group": "2_setup@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vineyard.openTerminal",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/",
+          "group": "inline@1"
+        },
+        {
+          "command": "vineyard.updateMachine",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "vineyard.restartDaemon",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "vineyard.showDaemonLog",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/",
+          "group": "1_manage@3"
+        },
+        {
+          "command": "vineyard.removeMachine",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-local",
+          "group": "2_remove@1"
+        },
+        {
+          "command": "vineyard.openWorkspace",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "inline@1"
+        },
+        {
+          "command": "vineyard.openTerminal",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "inline@2"
+        },
+        {
+          "command": "vineyard.copyPath",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "vineyard.showTranscript",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "inline@1"
+        },
+        {
+          "command": "vineyard.openTerminal",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "inline@2"
+        },
+        {
+          "command": "vineyard.resumeSession",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "vineyard.openWorkspace",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "1_act@2"
+        },
+        {
+          "command": "vineyard.copySessionId",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "vineyard.copyPath",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "2_copy@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vineyard.openWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.openTerminal",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.removeMachine",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Vineyard",
+      "properties": {
+        "vineyard.daemon.port": {
+          "type": "number",
+          "default": 7734,
+          "description": "TCP port the daemon listens on (used when setting up new machines). All machines should use the same port."
+        },
+        "vineyard.transcriptLines": {
+          "type": "number",
+          "default": 400,
+          "minimum": 20,
+          "description": "How many trailing transcript lines to fetch when opening a transcript."
+        },
+        "vineyard.showHistoricalWorkspaces": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show workspaces that have Claude history but no live agent right now."
+        },
+        "vineyard.showExitedAgents": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show sessions whose process has exited but whose registry entry is still on disk."
+        },
+        "vineyard.notify.attention": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pop a notification when an agent starts waiting on you (question or permission)."
+        },
+        "vineyard.notify.finished": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pop a notification when a working agent goes idle."
+        },
+        "vineyard.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a fleet summary in the status bar."
+        },
+        "vineyard.ssh.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments for the ssh/scp calls used to bootstrap machines."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:all",
+    "build": "node esbuild.mjs",
+    "build:daemon": "sh scripts/build-daemon.sh",
+    "build:all": "npm run build:daemon && npm run build",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/ && cd daemon && go test ./...",
+    "package": "vsce package --no-dependencies",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.104.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/peter-dolkens/vineyard"
+  }
+}

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- trellis post -->
+  <path d="M12 21V9"/>
+  <!-- vine -->
+  <path d="M12 9c-1.5-2-4-2-5 0 1 2 3.5 2 5 0z"/>
+  <path d="M12 9c1.5-2 4-2 5 0-1 2-3.5 2-5 0z"/>
+  <path d="M12 13c-1.5-2-4-2-5 0 1 2 3.5 2 5 0z"/>
+  <path d="M12 13c1.5-2 4-2 5 0-1 2-3.5 2-5 0z"/>
+  <!-- grapes -->
+  <circle cx="12" cy="4.5" r="1.6"/>
+  <circle cx="10.2" cy="7" r="1.2"/>
+  <circle cx="13.8" cy="7" r="1.2"/>
+  <!-- ground -->
+  <path d="M5 21h14"/>
+</svg>
