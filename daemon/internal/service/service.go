@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 )
@@ -30,6 +31,65 @@ func InstalledBinary() string {
 }
 
 func LogFile() string { return filepath.Join(config.Dir(), "vineyardd.log") }
+
+// UpgradeLogFile collects the output of self-installs started by an upgrade.
+func UpgradeLogFile() string { return filepath.Join(config.Dir(), "upgrade.log") }
+
+const stagedPrefix = binName + ".staged-"
+
+// StagedBinary is where an incoming upgrade is written before it installs itself.
+func StagedBinary(tag string) string {
+	name := stagedPrefix + tag
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(BinDir(), name)
+}
+
+// CleanStaged removes leftovers from earlier upgrades. Never touches the running executable (which,
+// during the install step, is itself a staged file).
+func CleanStaged() {
+	self, _ := os.Executable()
+	self, _ = filepath.EvalSymlinks(self)
+	matches, _ := filepath.Glob(filepath.Join(BinDir(), stagedPrefix+"*"))
+	for _, m := range matches {
+		if same, _ := sameFile(m, self); same {
+			continue
+		}
+		_ = os.Remove(m)
+	}
+}
+
+// LaunchInstaller runs `<staged> install` detached from this process. The staged binary copies itself
+// over the installed one and re-registers/restarts the service, which ends the calling daemon; it must
+// therefore outlive us: its own session on Unix, a detached process on Windows, and its own transient
+// unit under systemd (whose cgroup kill would otherwise take it down with the service).
+func LaunchInstaller(staged string) error {
+	logf, err := os.OpenFile(UpgradeLogFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	fmt.Fprintf(logf, "\n==== %s: installing %s\n", time.Now().Format(time.RFC3339), staged)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "linux" && os.Getenv("INVOCATION_ID") != "" {
+		if sr, err := exec.LookPath("systemd-run"); err == nil {
+			cmd = exec.Command(sr, "--user", "--quiet", "--collect", "--setenv=VINEYARD_DIR="+config.Dir(),
+				"-p", "StandardOutput=append:"+UpgradeLogFile(), "-p", "StandardError=append:"+UpgradeLogFile(), staged, "install")
+		}
+	}
+	if cmd == nil {
+		cmd = exec.Command(staged, "install")
+		cmd.Stdout, cmd.Stderr = logf, logf
+	}
+	cmd.Dir = config.Dir()
+	cmd.Env = append(os.Environ(), "VINEYARD_DIR="+config.Dir())
+	detach(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start installer: %w", err)
+	}
+	return cmd.Process.Release()
+}
 
 // EnsureBinary copies the running executable into ~/.vineyard/bin unless it already runs from there.
 func EnsureBinary() (string, error) {

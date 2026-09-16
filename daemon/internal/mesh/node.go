@@ -102,6 +102,7 @@ type Node struct {
 	cacheTimer  *time.Timer
 	subscribers int // links that want our self snapshot
 	invites     map[string]invite
+	upgrade     upgrader
 
 	wake chan struct{}
 }
@@ -227,8 +228,8 @@ func (n *Node) dial(p *peerState) {
 		}
 	}
 	n.mu.Lock()
-	p.dialing = false
 	if err != nil {
+		p.dialing = false
 		p.lastErr = trimErr(err)
 		if p.backoff == 0 {
 			p.backoff = backoffMin
@@ -255,11 +256,26 @@ func (n *Node) dial(p *peerState) {
 			n.logf("save config: %v", err)
 		}
 	}
+	// p.dialing stays set until this outbound link is gone. Clearing it as soon as the TCP connection
+	// opened (as an earlier version did) let the one-second reconcile tick dial the same peer again
+	// while the hello round trip was still in flight, which produced duplicate links and, through the
+	// duplicate-resolution path in register, silently unsubscribed links.
 	l := &link{conn: NewConn(raw), outbound: true, peerID: p.id}
-	if err := l.conn.Send(n.hello("peer")); err != nil {
-		return
-	}
-	go n.serve(l)
+	go func() {
+		defer func() {
+			n.mu.Lock()
+			p.dialing = false
+			if p.link == nil && p.nextDial.Before(time.Now()) {
+				p.nextDial = time.Now().Add(backoffMin)
+			}
+			n.mu.Unlock()
+		}()
+		if err := l.conn.Send(n.hello("peer")); err != nil {
+			l.conn.Close()
+			return
+		}
+		n.serve(l)
+	}()
 }
 
 func (n *Node) hello(role string) protocol.Hello {
@@ -411,8 +427,11 @@ func (n *Node) register(l *link, h protocol.Hello) {
 			l.conn.Close()
 			return
 		}
+		// The old link carried our subscription; the new one has not been asked for anything yet, so it
+		// must start unsubscribed and let reconcileSubscriptions below send a fresh subscribe. (Copying
+		// the flag here, as an earlier version did, left the surviving link permanently silent.)
 		p.link = l
-		l.weSubscribed = old.weSubscribed
+		l.weSubscribed = false
 		n.mu.Unlock()
 		n.logf("duplicate link to %s, replacing the old one", l.peerID)
 		old.conn.Close()
@@ -944,6 +963,39 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return json.RawMessage(`{"ok":true}`), nil
+	case "configure":
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var a protocol.ConfigureArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if a.Model != nil {
+			if err := n.opts.Managed.SetModel(a.SessionID, *a.Model); err != nil {
+				return nil, err
+			}
+		}
+		if a.Effort != nil {
+			if err := n.opts.Managed.SetEffort(a.SessionID, *a.Effort); err != nil {
+				return nil, err
+			}
+		}
+		if a.PermissionMode != nil {
+			if err := n.opts.Managed.SetPermissionMode(a.SessionID, *a.PermissionMode); err != nil {
+				return nil, err
+			}
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"ok":true}`), nil
+	case "upgrade":
+		var a protocol.UpgradeArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.handleUpgrade(a)
+	case "version":
+		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
 	case "transcript":
 		var a protocol.TranscriptArgs
 		if len(r.Args) > 0 {

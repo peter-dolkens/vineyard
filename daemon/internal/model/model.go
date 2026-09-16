@@ -86,6 +86,7 @@ type ManagedInfo struct {
 	Cwd            string          `json:"cwd"`
 	Name           string          `json:"name,omitempty"`
 	Model          string          `json:"model,omitempty"`
+	Effort         string          `json:"effort,omitempty"`
 	PermissionMode string          `json:"permissionMode,omitempty"`
 	StartedAt      int64           `json:"startedAt"`
 	Ready          bool            `json:"ready"`

@@ -36,7 +36,7 @@ interface Agent {
   gitBranch?: string;
   version?: string;
   pendingTools: { id: string; name: string; summary?: string }[];
-  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string };
+  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string };
 }
 interface MachineInfo {
   id: string;
@@ -126,6 +126,11 @@ app.innerHTML = `
   <div class="composer-box">
     <textarea id="input" rows="1" placeholder="Message this agent…"></textarea>
     <div class="composer-actions">
+      <div class="controls" id="controls" hidden>
+        <label class="ctl" title="Model for the rest of this session"><i class="codicon codicon-hubot"></i><select id="selModel"></select></label>
+        <label class="ctl" title="Reasoning effort"><i class="codicon codicon-dashboard"></i><select id="selEffort"></select></label>
+        <label class="ctl" title="Permission mode"><i class="codicon codicon-shield"></i><select id="selMode"></select></label>
+      </div>
       <span class="hint" id="hint"></span>
       <button class="icon" id="btnInterrupt" title="Interrupt current turn" hidden><i class="codicon codicon-debug-pause"></i></button>
       <button class="send" id="btnSend" title="Send (Enter)"><i class="codicon codicon-send"></i></button>
@@ -144,6 +149,63 @@ const btnInterrupt = document.getElementById('btnInterrupt') as HTMLButtonElemen
 const btnStop = document.getElementById('btnStop') as HTMLButtonElement;
 const jump = document.getElementById('jump') as HTMLButtonElement;
 const banner = document.getElementById('banner')!;
+const controlsEl = document.getElementById('controls')!;
+const selModel = document.getElementById('selModel') as HTMLSelectElement;
+const selEffort = document.getElementById('selEffort') as HTMLSelectElement;
+const selMode = document.getElementById('selMode') as HTMLSelectElement;
+
+// Live session controls (managed sessions only), mirroring the pickers in the Claude Code pane.
+const MODELS: [string, string][] = [
+  ['', 'Default model'],
+  ['claude-fable-5-1', 'Fable 5.1'],
+  ['claude-opus-5', 'Opus 5'],
+  ['claude-sonnet-5', 'Sonnet 5'],
+  ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+];
+const EFFORTS: [string, string][] = [
+  ['', 'Default effort'],
+  ['low', 'Low effort'],
+  ['medium', 'Medium effort'],
+  ['high', 'High effort'],
+  ['xhigh', 'Extra-high effort'],
+  ['max', 'Max effort'],
+];
+const MODES: [string, string][] = [
+  ['default', 'Ask before acting'],
+  ['acceptEdits', 'Accept edits'],
+  ['plan', 'Plan mode'],
+  ['auto', 'Auto mode'],
+  ['bypassPermissions', 'Bypass permissions'],
+];
+function fillSelect(sel: HTMLSelectElement, options: [string, string][], current: string, labelFor: (v: string) => string) {
+  const opts = current && !options.some(([v]) => v === current) ? [...options, [current, labelFor(current)] as [string, string]] : options;
+  if (sel.dataset.sig !== JSON.stringify(opts)) {
+    sel.innerHTML = '';
+    for (const [v, label] of opts) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = label;
+      sel.appendChild(o);
+    }
+    sel.dataset.sig = JSON.stringify(opts);
+  }
+  sel.value = current;
+}
+function renderControls() {
+  const live = !!agent?.managed && !agent.managed.exited && !!machine?.online;
+  controlsEl.hidden = !live;
+  if (!live || !agent) return;
+  fillSelect(selModel, MODELS, agent.managed?.model || agent.model || '', (v) => shortModel(v) || v);
+  fillSelect(selEffort, EFFORTS, agent.managed?.effort || agent.effort || '', (v) => v);
+  fillSelect(selMode, MODES, agent.managed?.permissionMode || agent.permissionMode || 'default', (v) => v);
+}
+function configure(change: { model?: string; effort?: string; permissionMode?: string }) {
+  controlsEl.classList.add('busy');
+  vscode.postMessage({ type: 'configure', ...change });
+}
+selModel.onchange = () => configure({ model: selModel.value });
+selEffort.onchange = () => configure({ effort: selEffort.value });
+selMode.onchange = () => configure({ permissionMode: selMode.value });
 
 document.getElementById('btnTerminal')!.onclick = () => vscode.postMessage({ type: 'openTerminal' });
 document.getElementById('btnWorkspace')!.onclick = () => vscode.postMessage({ type: 'openWorkspace' });
@@ -533,6 +595,8 @@ function renderHeader() {
   input.placeholder = !machine.online ? `${machine.name} is offline` : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
   document.getElementById('hint')!.textContent = managedLive ? '' : agent.alive ? 'observed session' : '';
 
+  controlsEl.classList.remove('busy');
+  renderControls();
   renderTicker();
   renderCards();
   if (!infoEl.hidden) renderInfo();
@@ -763,6 +827,7 @@ window.addEventListener('message', (ev) => {
       banner.textContent = m.text;
       banner.className = `banner ${m.kind}`;
       banner.hidden = false;
+      controlsEl.classList.remove('busy');
       if (m.kind !== 'error') setTimeout(() => (banner.hidden = true), 4000);
       break;
     case 'sending':

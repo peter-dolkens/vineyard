@@ -31,6 +31,7 @@ type FromWebview =
   | { type: 'respond'; requestId: string; response: unknown }
   | { type: 'interrupt' }
   | { type: 'stop' }
+  | { type: 'configure'; model?: string; effort?: string; permissionMode?: string }
   | { type: 'openWorkspace' }
   | { type: 'openTerminal' }
   | { type: 'reload' };
@@ -163,6 +164,30 @@ class ChatPanel {
         case 'stop': {
           const ok = await vscode.window.showWarningMessage(`Stop ${agentLabel(this.agent)} on ${this.machine.name}?`, { modal: true }, 'Stop');
           if (ok) await this.fleet.client.request('stop', this.machine.id, { sessionId: this.agent.sessionId }, 10_000);
+          break;
+        }
+        case 'configure': {
+          if (!this.agent.managed || this.agent.managed.exited) throw new Error('Only sessions started by Vineyard can be changed from here.');
+          if (m.permissionMode === 'bypassPermissions') {
+            const ok = await vscode.window.showWarningMessage(`Let ${agentLabel(this.agent)} on ${this.machine.name} run every tool without asking?`, { modal: true, detail: 'The session will no longer stop for permission prompts until you switch the mode back.' }, 'Bypass permissions');
+            if (!ok) {
+              this.post({ type: 'agent', agent: this.agent, machine: this.machineInfo() }); // snap the control back
+              break;
+            }
+          }
+          const args: Record<string, unknown> = { sessionId: this.agent.sessionId };
+          if (m.model !== undefined) args.model = m.model;
+          if (m.effort !== undefined) args.effort = m.effort;
+          if (m.permissionMode !== undefined) args.permissionMode = m.permissionMode;
+          try {
+            await this.fleet.client.request('configure', this.machine.id, args, 30_000);
+            const what = m.model !== undefined ? `Model set to ${m.model || 'the default'}` : m.effort !== undefined ? `Effort set to ${m.effort || 'the default'}` : `Permission mode set to ${m.permissionMode}`;
+            this.post({ type: 'status', text: `${what}. Takes effect from the next request.`, kind: 'ok' });
+          } finally {
+            // Whether it worked or not, re-send the agent so the controls show the daemon's truth.
+            this.lastAgentJson = '';
+            this.onFleetChange();
+          }
           break;
         }
         case 'openWorkspace':

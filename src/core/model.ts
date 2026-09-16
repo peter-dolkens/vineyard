@@ -88,6 +88,7 @@ export interface ManagedInfo {
   cwd: string;
   name?: string;
   model?: string;
+  effort?: string;
   permissionMode?: string;
   startedAt: number;
   ready: boolean;

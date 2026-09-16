@@ -156,6 +156,36 @@ type SendArgs struct {
 	Text      string `json:"text"`
 }
 
+// UpgradeArgs streams a new vineyardd binary to the target machine in base64 chunks. The first chunk
+// (Offset 0) opens a staging file for SHA256; every chunk must continue exactly where the last one
+// ended; Done on the final chunk verifies the hash and hands over to the new binary, which installs
+// itself and restarts the service. The viewer relays these through its local daemon like any request,
+// so no SSH is involved.
+type UpgradeArgs struct {
+	Version string `json:"version"`         // version of the binary being sent (informational)
+	SHA256  string `json:"sha256"`          // hex digest of the whole file
+	Size    int64  `json:"size"`            // total bytes
+	Offset  int64  `json:"offset"`          // byte offset of this chunk
+	Data    string `json:"data,omitempty"`  // base64 chunk
+	Done    bool   `json:"done,omitempty"`  // last chunk: verify and install
+	Force   bool   `json:"force,omitempty"` // install even if the version matches the running one
+}
+
+type UpgradeResult struct {
+	Received  int64  `json:"received"`            // bytes staged so far
+	Installed bool   `json:"installed,omitempty"` // the new binary was verified and is taking over
+	Version   string `json:"version,omitempty"`   // version reported by the staged binary
+}
+
+// ConfigureArgs changes a running managed session's model, effort or permission mode. A nil field is
+// left alone; an empty string resets to Claude Code's default where that makes sense (model).
+type ConfigureArgs struct {
+	SessionID      string  `json:"sessionId"`
+	Model          *string `json:"model,omitempty"`
+	Effort         *string `json:"effort,omitempty"`
+	PermissionMode *string `json:"permissionMode,omitempty"`
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`

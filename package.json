@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "dolkens",
   "private": true,
   "license": "MIT",
@@ -95,7 +95,7 @@
       },
       {
         "command": "vineyard.updateMachine",
-        "title": "Reinstall / Update Daemon",
+        "title": "Update Daemon",
         "category": "Vineyard",
         "icon": "$(cloud-upload)"
       },
@@ -200,6 +200,17 @@
         "command": "vineyard.showRawTranscript",
         "title": "Show Raw Transcript (Markdown)",
         "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.updateAllDaemons",
+        "title": "Update All Daemons to Bundled Version",
+        "category": "Vineyard",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "vineyard.checkForUpdates",
+        "title": "Check for Extension Updates",
+        "category": "Vineyard"
       }
     ],
     "menus": {
@@ -243,6 +254,16 @@
           "command": "vineyard.joinWithCode",
           "when": "view == vineyard.fleet",
           "group": "2_setup@3"
+        },
+        {
+          "command": "vineyard.updateAllDaemons",
+          "when": "view == vineyard.fleet",
+          "group": "2_setup@4"
+        },
+        {
+          "command": "vineyard.checkForUpdates",
+          "when": "view == vineyard.fleet",
+          "group": "2_setup@5"
         }
       ],
       "view/item/context": [
@@ -427,6 +448,16 @@
           ],
           "default": "default",
           "description": "Pre-selected permission mode when starting a new agent from Vineyard."
+        },
+        "vineyard.autoUpdateDaemons": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically bring every online daemon up to the version bundled with this extension. The binary travels over the existing mesh connection; nothing happens unless a machine is outdated while a Vineyard view is open."
+        },
+        "vineyard.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Once a day, ask GitHub Releases whether a newer Vineyard extension exists and offer to install it. This is the only time Vineyard talks to the internet."
         }
       }
     }

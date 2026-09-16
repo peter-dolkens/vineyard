@@ -108,6 +108,14 @@ input:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outl
 textarea { width: 100%; border: none; background: transparent; color: var(--vscode-input-foreground); font: inherit; resize: none; outline: none; line-height: 1.4; max-height: 200px; }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .hint { font-size: 11px; opacity: 0.6; margin-right: auto; }
+.controls { display: flex; align-items: center; gap: 2px; margin-right: auto; flex-wrap: wrap; }
+.controls.busy { opacity: 0.5; pointer-events: none; }
+.ctl { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 4px; color: var(--vscode-descriptionForeground); font-size: 11px; cursor: pointer; }
+.ctl:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.ctl .codicon { font-size: 13px; }
+.ctl select { appearance: none; -webkit-appearance: none; border: none; background: transparent; color: inherit; font: inherit; font-size: 11px; padding: 0 2px; cursor: pointer; max-width: 140px; text-overflow: ellipsis; }
+.ctl select:focus { outline: none; }
+.ctl select option { background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); }
 .send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 4px 8px; }
 .send:hover { background: var(--vscode-button-hoverBackground); }
 

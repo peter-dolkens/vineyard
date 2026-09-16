@@ -141,6 +141,7 @@ func cmdRun() error {
 		return fmt.Errorf("load config (run `vineyardd init` first): %w", err)
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+	service.CleanStaged() // leftovers from a previous self-upgrade
 	collector := claude.NewCollector(cfg.ClaudeDir, cfg.TailLines)
 	var node *mesh.Node
 	var mgr *managed.Manager

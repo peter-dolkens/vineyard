@@ -8,6 +8,7 @@ import { Notifier } from './notify.ts';
 import { TRANSCRIPT_SCHEME, TranscriptProvider, transcriptUri } from './transcript.ts';
 import { Setup } from './setup.ts';
 import { ChatPanels } from './chatPanel.ts';
+import { Updater } from './updater.ts';
 import { agentLabel, basename } from '../core/format.ts';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -21,8 +22,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const transcripts = new TranscriptProvider(fleet);
   const setup = new Setup(context, client, fleet, log);
   const chats = new ChatPanels(context, fleet, log);
+  const updater = new Updater(context, client, fleet, setup, log);
 
-  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
+  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
 
   const describe = (state: DaemonConnState) => {
     const s = fleet.summary();
@@ -87,8 +89,10 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.addMachine', () => setup.addMachine());
   cmd('vineyard.updateMachine', async (node?: Node) => {
     const m = await machineOf(node);
-    if (m) await setup.updateMachine(m);
+    if (m) await updater.updateMachine(m, { auto: false, force: true });
   });
+  cmd('vineyard.updateAllDaemons', () => updater.updateAll());
+  cmd('vineyard.checkForUpdates', () => updater.checkExtensionUpdate(true));
   cmd('vineyard.removeMachine', async (node?: Node) => {
     const m = await machineOf(node);
     if (m) await setup.removeMachine(m);
@@ -210,6 +214,18 @@ export function activate(context: vscode.ExtensionContext): void {
       { title: 'Model', placeHolder: 'Model for this agent', ignoreFocusOut: true },
     );
     if (!modelPick) return;
+    const effortPick = await vscode.window.showQuickPick(
+      [
+        { label: 'Default effort', description: 'whatever Claude Code is configured to use', value: '' },
+        { label: 'low', value: 'low' },
+        { label: 'medium', value: 'medium' },
+        { label: 'high', value: 'high' },
+        { label: 'xhigh', value: 'xhigh' },
+        { label: 'max', value: 'max' },
+      ],
+      { title: 'Reasoning effort', placeHolder: 'Effort for this agent (changeable later from the chat)', ignoreFocusOut: true },
+    );
+    if (!effortPick) return;
     const modePick = await vscode.window.showQuickPick(
       [
         { label: 'default', description: 'ask before edits and commands (you approve here in Vineyard)', value: 'default' },
@@ -224,7 +240,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const res = await fleet.client.request<{ sessionId: string }>(
       'spawn',
       machine.id,
-      { cwd, prompt, model: modelPick.value || undefined, permissionMode: modePick.value, resume: resume?.sessionId, name: resume ? undefined : `vineyard-${basename(cwd)}` },
+      { cwd, prompt, model: modelPick.value || undefined, effort: effortPick.value || undefined, permissionMode: modePick.value, resume: resume?.sessionId, name: resume ? undefined : `vineyard-${basename(cwd)}` },
       30_000,
     );
     // Wait briefly for the agent to appear in the fleet, then open its chat.
@@ -291,6 +307,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void vscode.commands.executeCommand('setContext', 'vineyard.daemonState', client.state);
   client.start();
+  updater.start();
 }
 
 export function deactivate(): void {}

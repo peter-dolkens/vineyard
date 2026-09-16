@@ -45,7 +45,12 @@ type proc struct {
 	wmu    sync.Mutex
 	stderr []string
 	done   chan struct{}
+	// ctl holds the reply channel for each control_request we sent and are waiting on.
+	ctl map[string]chan error
 }
+
+// controlTimeout bounds how long a live setting change waits for Claude Code to acknowledge it.
+const controlTimeout = 20 * time.Second
 
 type Manager struct {
 	mu       sync.Mutex
@@ -187,8 +192,8 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 		return "", fmt.Errorf("start claude: %w", err)
 	}
 	p := &proc{
-		cmd: cmd, stdin: stdin, done: make(chan struct{}),
-		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
+		cmd: cmd, stdin: stdin, done: make(chan struct{}), ctl: map[string]chan error{},
+		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
 	}
 	m.mu.Lock()
 	m.procs[sid] = p
@@ -289,6 +294,94 @@ func (m *Manager) Interrupt(sid string) error {
 	return m.write(p, map[string]any{"type": "control_request", "request_id": newUUID(), "request": map[string]any{"subtype": "interrupt"}})
 }
 
+// control sends a control_request and waits for Claude Code's control_response, so callers learn
+// whether a live change was accepted (e.g. bypassPermissions can be refused).
+func (m *Manager) control(p *proc, req map[string]any) error {
+	rid := newUUID()
+	ch := make(chan error, 1)
+	m.mu.Lock()
+	p.ctl[rid] = ch
+	m.mu.Unlock()
+	forget := func() {
+		m.mu.Lock()
+		delete(p.ctl, rid)
+		m.mu.Unlock()
+	}
+	if err := m.write(p, map[string]any{"type": "control_request", "request_id": rid, "request": req}); err != nil {
+		forget()
+		return err
+	}
+	select {
+	case err := <-ch:
+		return err
+	case <-p.done:
+		forget()
+		return errors.New("the session exited before it answered")
+	case <-time.After(controlTimeout):
+		forget()
+		return errors.New("the session did not acknowledge the change in time")
+	}
+}
+
+// SetModel switches the model for the rest of the session; "" returns to Claude Code's default.
+func (m *Manager) SetModel(sid, modelID string) error {
+	p, err := m.get(sid)
+	if err != nil {
+		return err
+	}
+	req := map[string]any{"subtype": "set_model"}
+	if modelID != "" {
+		req["model"] = modelID
+	}
+	if err := m.control(p, req); err != nil {
+		return fmt.Errorf("set model: %w", err)
+	}
+	m.mu.Lock()
+	p.info.Model = modelID
+	m.mu.Unlock()
+	m.changed()
+	return nil
+}
+
+// SetEffort changes the reasoning effort level (low | medium | high | xhigh | max; "" = default).
+func (m *Manager) SetEffort(sid, effort string) error {
+	p, err := m.get(sid)
+	if err != nil {
+		return err
+	}
+	var level any
+	if effort != "" {
+		level = effort
+	}
+	if err := m.control(p, map[string]any{"subtype": "apply_flag_settings", "settings": map[string]any{"effortLevel": level}}); err != nil {
+		return fmt.Errorf("set effort: %w", err)
+	}
+	m.mu.Lock()
+	p.info.Effort = effort
+	m.mu.Unlock()
+	m.changed()
+	return nil
+}
+
+// SetPermissionMode switches how the session asks before acting (default | acceptEdits | plan | auto | bypassPermissions).
+func (m *Manager) SetPermissionMode(sid, mode string) error {
+	p, err := m.get(sid)
+	if err != nil {
+		return err
+	}
+	if mode == "" {
+		mode = "default"
+	}
+	if err := m.control(p, map[string]any{"subtype": "set_permission_mode", "mode": mode}); err != nil {
+		return fmt.Errorf("set permission mode: %w", err)
+	}
+	m.mu.Lock()
+	p.info.PermissionMode = mode
+	m.mu.Unlock()
+	m.changed()
+	return nil
+}
+
 // Stop ends the session: close stdin (Claude exits cleanly) and kill after a grace period.
 func (m *Manager) Stop(sid string) error {
 	p, err := m.get(sid)
@@ -327,6 +420,11 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				PermissionSuggestions   json.RawMessage `json:"permission_suggestions"`
 				Description             string          `json:"description"`
 			} `json:"request"`
+			Response struct {
+				Subtype   string `json:"subtype"`
+				RequestID string `json:"request_id"`
+				Error     string `json:"error"`
+			} `json:"response"`
 			SessionID      string  `json:"session_id"`
 			Model          string  `json:"model"`
 			PermissionMode string  `json:"permissionMode"`
@@ -338,6 +436,22 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 			continue
 		}
 		switch env.Type {
+		case "control_response":
+			m.mu.Lock()
+			ch, ok := p.ctl[env.Response.RequestID]
+			delete(p.ctl, env.Response.RequestID)
+			m.mu.Unlock()
+			if ok {
+				if env.Response.Subtype == "error" {
+					msg := env.Response.Error
+					if msg == "" {
+						msg = "rejected by the session"
+					}
+					ch <- errors.New(msg)
+				} else {
+					ch <- nil
+				}
+			}
 		case "control_request":
 			if env.Request.Subtype == "can_use_tool" {
 				m.mu.Lock()
@@ -353,7 +467,8 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				_ = m.write(p, map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": env.RequestID, "response": map[string]any{}}})
 			}
 		case "system":
-			if env.Subtype == "init" {
+			switch env.Subtype {
+			case "init":
 				m.mu.Lock()
 				if env.Model != "" {
 					p.info.Model = env.Model
@@ -364,6 +479,14 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				p.info.Ready = true
 				m.mu.Unlock()
 				m.changed()
+			case "status":
+				// Emitted when the session's mode changes (from us or from inside the session).
+				if env.PermissionMode != "" {
+					m.mu.Lock()
+					p.info.PermissionMode = env.PermissionMode
+					m.mu.Unlock()
+					m.changed()
+				}
 			}
 		case "result":
 			m.mu.Lock()
@@ -456,6 +579,17 @@ func (m *Manager) Merge(machineID string, agents []model.Agent) []model.Agent {
 		a.Managed = &copyInfo
 		if info.Exited {
 			continue
+		}
+		// What the control channel told us is more current than what the transcript shows: after a
+		// live switch the transcript only catches up on the next assistant message.
+		if info.Model != "" {
+			a.Model = info.Model
+		}
+		if info.Effort != "" {
+			a.Effort = info.Effort
+		}
+		if info.PermissionMode != "" {
+			a.PermissionMode = info.PermissionMode
 		}
 		if info.Pending != nil {
 			if info.Pending.ToolName == "AskUserQuestion" {

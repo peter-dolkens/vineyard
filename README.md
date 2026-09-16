@@ -25,7 +25,11 @@ be added.
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear
   as cards in the chat and are answered there. They still write the normal registry and transcript.
+  The composer carries pickers for **model, reasoning effort and permission mode** that change the
+  running session in place, like the ones in the Claude Code pane.
 * **Join machines without SSH** with a single-use invite code.
+* **Self-updating fleet**: install a newer extension on one machine and it upgrades every daemon
+  over the mesh (see *Staying up to date*).
 
 Observed sessions (started outside Vineyard) cannot have their permission prompts or questions
 answered from here: Claude Code only accepts those in the originating UI. The chat shows a card
@@ -123,6 +127,26 @@ To cut a release: `git tag v0.2.0 && git push --tags`. The **Release** workflow 
 daemon, runs the tests, packages the extension and publishes the release. Running the workflow
 manually from the Actions tab produces a pre-release named after the commit.
 
+## Staying up to date
+
+Updates flow from the extension outwards, so upgrading one VS Code is enough to upgrade the fleet:
+
+* **Extension.** At most once a day the extension asks the GitHub Releases API whether a newer
+  version exists and offers to download and install the `.vsix` (`vineyard.checkForUpdates`, or run
+  *Vineyard: Check for Extension Updates*). That single request is the only time Vineyard talks to
+  anything outside your machines.
+* **Daemons.** The extension bundles a `vineyardd` build for every platform. When a Vineyard view is
+  open and it sees an online machine reporting an older daemon than the bundled one, it streams the
+  matching binary to that machine over the existing mesh connection (the `upgrade` request, relayed by
+  the local daemon in 512 KB chunks). The receiving daemon stages the file, checks the SHA-256, runs
+  `vineyardd version` on it to prove it executes on that platform, then hands over to it: the new
+  binary copies itself into `~/.vineyard/bin`, re-registers the login service and restarts. No SSH,
+  no polling, and nothing at all happens while every daemon is current. Turn it off with
+  `vineyard.autoUpdateDaemons`; *Update Daemon* on a machine or *Update All Daemons* does the same
+  by hand. Only the numeric part of a version is compared, so two different dev builds never
+  overwrite each other; unparseable versions (`dev`) are never touched. Daemons older than 0.3.0 do
+  not understand `upgrade`, so the first update of those goes over SSH (or the local installer) once.
+
 ## Build and run
 
 ```sh
@@ -162,7 +186,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `probe`, `addpeer`, `removepeer`, `invite` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions
