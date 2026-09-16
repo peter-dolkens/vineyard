@@ -76,7 +76,7 @@ explaining that and offers to open the workspace on that machine.
   inviter accepts certificate-less connections **only while an invite is outstanding**, and such a
   connection may send exactly one `join`. This is how Windows boxes (no SSH server) and machines
   without key-based SSH get in; the extension bundles binaries for every platform so the joiner runs
-  its own copy locally. Codes also work as `vscode://dolkens.vineyard/join?code=…` links.
+  its own copy locally. Codes also work as `vscode://peter-dolkens.vineyard/join?code=…` links.
 * **SSH is an optional bootstrap.** For machines you *can* SSH to, *Add Machine* copies the binary
   and certificate with `scp` and runs `vineyardd init && vineyardd install` remotely. Day-to-day
   traffic never touches SSH either way.

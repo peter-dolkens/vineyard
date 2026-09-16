@@ -182,7 +182,7 @@ export class Setup {
     const res = await this.client.request<{ code: string; expiresInSeconds: number }>('invite', undefined, undefined, 10_000);
     const minutes = Math.round(res.expiresInSeconds / 60);
     await vscode.env.clipboard.writeText(res.code);
-    const uri = `vscode://dolkens.vineyard/join?code=${encodeURIComponent(res.code)}`;
+    const uri = `vscode://peter-dolkens.vineyard/join?code=${encodeURIComponent(res.code)}`;
     const choice = await vscode.window.showInformationMessage(
       `Invite code copied to the clipboard (single use, valid ${minutes} min). On the other machine run "Vineyard: Join Fleet with Invite Code" and paste it, or open the link.`,
       'Copy as vscode:// link',
