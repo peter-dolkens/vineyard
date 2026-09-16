@@ -181,9 +181,14 @@ func (n *Node) handleJoin(l *link) {
 	if j.MachineID != "" && j.Listen != "" && j.MachineID != n.cfg.MachineID {
 		changed = n.cfg.AddPeer(protocol.PeerAddr{MachineID: j.MachineID, Addr: j.Listen})
 		if p := n.peers[j.MachineID]; p != nil {
-			p.addr = j.Listen
+			addCandidates(p, j.Listen)
 		} else {
-			n.peers[j.MachineID] = &peerState{id: j.MachineID, addr: j.Listen}
+			n.peers[j.MachineID] = &peerState{id: j.MachineID, addr: j.Listen, addrs: []string{j.Listen}}
+		}
+		if host, _, err := net.SplitHostPort(l.conn.RemoteAddr()); err == nil {
+			if _, port, err := net.SplitHostPort(j.Listen); err == nil {
+				addCandidates(n.peers[j.MachineID], net.JoinHostPort(host, port))
+			}
 		}
 	}
 	n.mu.Unlock()

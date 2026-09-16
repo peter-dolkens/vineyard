@@ -21,14 +21,17 @@ type Envelope struct {
 }
 
 type Hello struct {
-	T         string     `json:"t"`    // "hello"
-	Role      string     `json:"role"` // "peer" | "viewer"
-	MachineID string     `json:"machineId"`
-	Name      string     `json:"name,omitempty"`
-	Version   string     `json:"version,omitempty"`
-	Protocol  int        `json:"protocol"`
-	Listen    string     `json:"listen,omitempty"`
-	Peers     []PeerAddr `json:"peers,omitempty"`
+	T         string `json:"t"`    // "hello"
+	Role      string `json:"role"` // "peer" | "viewer"
+	MachineID string `json:"machineId"`
+	Name      string `json:"name,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Protocol  int    `json:"protocol"`
+	Listen    string `json:"listen,omitempty"`
+	// Addrs lists every address the sender can be reached at (advertised name first, then LAN IPs),
+	// so peers survive stale DNS and DHCP changes without anyone editing config.
+	Addrs []string   `json:"addrs,omitempty"`
+	Peers []PeerAddr `json:"peers,omitempty"`
 }
 
 type SnapshotMsg struct {

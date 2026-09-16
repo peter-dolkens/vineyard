@@ -61,8 +61,10 @@ type link struct {
 }
 
 type peerState struct {
-	id       string
-	addr     string
+	id   string
+	addr string // primary (last known good); persisted in config
+	// addrs are all candidates in preference order: primary, advertised, observed. Dialing tries each.
+	addrs    []string
 	link     *link
 	dialing  bool
 	nextDial time.Time
@@ -135,7 +137,7 @@ func New(opts Options) (*Node, error) {
 	}
 	n.serverTLS.Certificates = srv.Certificates
 	for _, p := range opts.Config.Peers {
-		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr}
+		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: []string{p.Addr}}
 	}
 	n.loadCache()
 	return n, nil
@@ -208,7 +210,19 @@ func (n *Node) acceptOne(raw net.Conn) {
 
 func (n *Node) dial(p *peerState) {
 	d := &net.Dialer{Timeout: dialTimeout}
-	raw, err := tls.DialWithDialer(d, "tcp", p.addr, n.clientTLS)
+	n.mu.Lock()
+	candidates := append([]string(nil), p.addrs...)
+	n.mu.Unlock()
+	var raw *tls.Conn
+	var err error
+	var used string
+	for _, addr := range candidates {
+		raw, err = tls.DialWithDialer(d, "tcp", addr, n.clientTLS)
+		if err == nil {
+			used = addr
+			break
+		}
+	}
 	n.mu.Lock()
 	p.dialing = false
 	if err != nil {
@@ -225,7 +239,19 @@ func (n *Node) dial(p *peerState) {
 	}
 	p.backoff = 0
 	p.lastErr = ""
+	persist := false
+	if used != "" && used != p.addr {
+		// Remember what actually worked as the primary for next time.
+		p.addr = used
+		p.addrs = promote(p.addrs, used)
+		persist = n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: used})
+	}
 	n.mu.Unlock()
+	if persist {
+		if err := n.cfg.Save(); err != nil {
+			n.logf("save config: %v", err)
+		}
+	}
 	l := &link{conn: NewConn(raw), outbound: true, peerID: p.id}
 	if err := l.conn.Send(n.hello("peer")); err != nil {
 		return
@@ -234,9 +260,48 @@ func (n *Node) dial(p *peerState) {
 }
 
 func (n *Node) hello(role string) protocol.Hello {
+	_, port, _ := net.SplitHostPort(n.cfg.Listen)
+	addrs := []string{}
+	if n.cfg.Advertise != "" {
+		addrs = append(addrs, n.cfg.Advertise)
+	}
+	for _, a := range localAddrs(port) {
+		if a != n.cfg.Advertise {
+			addrs = append(addrs, a)
+		}
+	}
 	return protocol.Hello{
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
-		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise,
+		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: addrs,
+	}
+}
+
+// promote moves addr to the front of list (adding it if absent), deduplicating.
+func promote(list []string, addr string) []string {
+	out := []string{addr}
+	for _, a := range list {
+		if a != addr && a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// addCandidates appends addresses we have not seen for this peer, keeping the primary first.
+func addCandidates(p *peerState, addrs ...string) {
+	seen := map[string]bool{}
+	for _, a := range p.addrs {
+		seen[a] = true
+	}
+	for _, a := range addrs {
+		if a == "" || seen[a] {
+			continue
+		}
+		seen[a] = true
+		p.addrs = append(p.addrs, a)
+	}
+	if p.addr == "" && len(p.addrs) > 0 {
+		p.addr = p.addrs[0]
 	}
 }
 
@@ -312,9 +377,21 @@ func (n *Node) register(l *link, h protocol.Hello) {
 		p = &peerState{id: l.peerID}
 		n.peers[l.peerID] = p
 	}
-	if h.Listen != "" && p.addr != h.Listen {
-		p.addr = h.Listen
-		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: h.Listen}) {
+	// Learn every address the peer claims, plus the one we actually see it coming from. The primary
+	// (what we persist) only changes when a dial to a different address succeeds, so a stale DNS name
+	// advertised by the peer cannot clobber an address that works.
+	learned := append([]string{h.Listen}, h.Addrs...)
+	if !l.outbound {
+		if host, _, err := net.SplitHostPort(l.conn.RemoteAddr()); err == nil {
+			if _, port, err := net.SplitHostPort(h.Listen); err == nil && port != "" {
+				learned = append(learned, net.JoinHostPort(host, port))
+			}
+		}
+	}
+	hadAddr := p.addr != ""
+	addCandidates(p, learned...)
+	if !hadAddr && p.addr != "" {
+		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr}) {
 			if err := n.cfg.Save(); err != nil {
 				n.logf("save config: %v", err)
 			}
@@ -489,7 +566,7 @@ func (n *Node) reconcileSubscriptions() {
 			}
 			continue
 		}
-		if p.addr == "" || p.dialing || now.Before(p.nextDial) {
+		if len(p.addrs) == 0 || p.dialing || now.Before(p.nextDial) {
 			continue
 		}
 		p.dialing = true
@@ -760,10 +837,11 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			changed = n.cfg.AddPeer(a)
 			if p := n.peers[a.MachineID]; p != nil {
 				p.addr = a.Addr
+				p.addrs = promote(p.addrs, a.Addr)
 				p.nextDial = time.Time{}
 				p.backoff = 0
 			} else if a.MachineID != "" && a.MachineID != n.cfg.MachineID {
-				n.peers[a.MachineID] = &peerState{id: a.MachineID, addr: a.Addr}
+				n.peers[a.MachineID] = &peerState{id: a.MachineID, addr: a.Addr, addrs: []string{a.Addr}}
 			}
 		} else {
 			changed = n.cfg.RemovePeer(a.MachineID)
@@ -965,7 +1043,7 @@ func (n *Node) loadCache() {
 		e.Via = "cache"
 		n.store[id] = e
 		if _, ok := n.peers[id]; !ok && e.Snapshot.Listen != "" {
-			n.peers[id] = &peerState{id: id, addr: e.Snapshot.Listen}
+			n.peers[id] = &peerState{id: id, addr: e.Snapshot.Listen, addrs: []string{e.Snapshot.Listen}}
 		}
 	}
 }
