@@ -105,7 +105,7 @@ daemon/                 Go module: vineyardd
   internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
   internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
   internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
-  internal/service      launchd / systemd / schtasks installers
+  internal/service      launchd / systemd / Task Scheduler installers (Windows needs no elevation: XML logon task, then HKCU Run key)
 src/core                wire types + formatting shared by the extension
 src/extension           VS Code extension: daemon client, fleet store, tree, chat panel host, setup over SSH
 src/webview             chat panel UI (bundled separately; marked for Markdown)

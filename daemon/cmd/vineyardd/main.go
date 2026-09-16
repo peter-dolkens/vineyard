@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -140,7 +142,14 @@ func cmdRun() error {
 	if err != nil {
 		return fmt.Errorf("load config (run `vineyardd init` first): %w", err)
 	}
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	var logOut io.Writer = os.Stderr
+	if runtime.GOOS == "windows" {
+		// The scheduled task / Run key give the daemon no useful stderr; keep a file as well.
+		if f, err := os.OpenFile(service.LogFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+			logOut = io.MultiWriter(os.Stderr, f)
+		}
+	}
+	logger := log.New(logOut, "", log.LstdFlags)
 	service.CleanStaged() // leftovers from a previous self-upgrade
 	collector := claude.NewCollector(cfg.ClaudeDir, cfg.TailLines)
 	var node *mesh.Node

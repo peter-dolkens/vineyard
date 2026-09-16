@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 )
@@ -157,7 +159,14 @@ func sameFile(a, b string) (bool, error) {
 
 func Install() (string, error) {
 	if runtime.GOOS == "windows" {
-		_ = run("schtasks", "/End", "/TN", "Vineyard") // a running exe cannot be replaced
+		// A running exe cannot be replaced. Only kill by image name when we are not that image
+		// ourselves (an in-place `vineyardd.exe install` would otherwise terminate here).
+		_ = run("schtasks", "/End", "/TN", "Vineyard")
+		if self, err := os.Executable(); err == nil {
+			if same, _ := sameFile(self, InstalledBinary()); !same {
+				_ = run("taskkill", "/IM", binName+".exe", "/F")
+			}
+		}
 	}
 	bin, err := EnsureBinary()
 	if err != nil {
@@ -187,9 +196,8 @@ func Uninstall() (string, error) {
 		_ = run("systemctl", "--user", "daemon-reload")
 		return "systemd user unit removed", nil
 	case "windows":
-		_ = run("schtasks", "/End", "/TN", "Vineyard")
-		_ = run("schtasks", "/Delete", "/TN", "Vineyard", "/F")
-		return "scheduled task removed", nil
+		uninstallWindows()
+		return "scheduled task / Run entry removed", nil
 	}
 	return "", fmt.Errorf("unsupported OS %s", runtime.GOOS)
 }
@@ -202,8 +210,7 @@ func Restart() error {
 	case "linux":
 		return run("systemctl", "--user", "restart", "vineyardd.service")
 	case "windows":
-		_ = run("schtasks", "/End", "/TN", "Vineyard")
-		return run("schtasks", "/Run", "/TN", "Vineyard")
+		return restartWindows()
 	}
 	return fmt.Errorf("unsupported OS %s", runtime.GOOS)
 }
@@ -306,16 +313,129 @@ WantedBy=default.target
 }
 
 // ---- Windows -------------------------------------------------------------------------------------
+//
+// A logon task is the Windows equivalent of a launchd agent, but `schtasks /Create /SC ONLOGON` is
+// refused for non-elevated users ("Access is denied"). Creating the task from XML with a logon trigger
+// scoped to the current user works without elevation, so that is tried first; the plain command is
+// kept for elevated shells, and the per-user Run registry key is the last resort.
+
+const runKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 
 func installSchtasks(bin string) (string, error) {
 	_ = run("schtasks", "/End", "/TN", "Vineyard")
 	_ = run("schtasks", "/Delete", "/TN", "Vineyard", "/F")
+	_ = run("reg", "delete", runKey, "/v", "Vineyard", "/f")
 	tr := fmt.Sprintf(`"%s" run`, bin)
-	if err := run("schtasks", "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", "Vineyard", "/TR", tr); err != nil {
+
+	var errs []string
+	if xmlPath, err := writeTaskXML(bin); err == nil {
+		defer os.Remove(xmlPath)
+		if err := run("schtasks", "/Create", "/F", "/TN", "Vineyard", "/XML", xmlPath); err == nil {
+			if err := run("schtasks", "/Run", "/TN", "Vineyard"); err != nil {
+				return "", err
+			}
+			return "scheduled task 'Vineyard' installed and started (logs: " + LogFile() + ")", nil
+		} else {
+			errs = append(errs, err.Error())
+		}
+	} else {
+		errs = append(errs, err.Error())
+	}
+	if err := run("schtasks", "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", "Vineyard", "/TR", tr); err == nil {
+		if err := run("schtasks", "/Run", "/TN", "Vineyard"); err != nil {
+			return "", err
+		}
+		return "scheduled task 'Vineyard' installed and started (logs: " + LogFile() + ")", nil
+	} else {
+		errs = append(errs, err.Error())
+	}
+	// No task scheduler access at all: start at logon from the Run key and launch it now.
+	if err := run("reg", "add", runKey, "/v", "Vineyard", "/t", "REG_SZ", "/d", tr, "/f"); err != nil {
+		errs = append(errs, err.Error())
+		return "", fmt.Errorf("could not register a logon task or Run key:\n  %s", strings.Join(errs, "\n  "))
+	}
+	if err := startHidden(bin); err != nil {
 		return "", err
 	}
-	if err := run("schtasks", "/Run", "/TN", "Vineyard"); err != nil {
+	return "registered in HKCU Run (task scheduler refused: " + errs[0] + ") and started (logs: " + LogFile() + ")", nil
+}
+
+// startHidden launches the daemon detached, without a console window.
+func startHidden(bin string) error {
+	return run("powershell", "-NoProfile", "-Command", fmt.Sprintf(`Start-Process -WindowStyle Hidden -FilePath '%s' -ArgumentList 'run'`, strings.ReplaceAll(bin, "'", "''")))
+}
+
+func hasTask() bool { return run("schtasks", "/Query", "/TN", "Vineyard") == nil }
+
+func restartWindows() error {
+	if hasTask() {
+		_ = run("schtasks", "/End", "/TN", "Vineyard")
+		return run("schtasks", "/Run", "/TN", "Vineyard")
+	}
+	_ = run("taskkill", "/IM", binName+".exe", "/F")
+	return startHidden(InstalledBinary())
+}
+
+func uninstallWindows() {
+	_ = run("schtasks", "/End", "/TN", "Vineyard")
+	_ = run("schtasks", "/Delete", "/TN", "Vineyard", "/F")
+	_ = run("reg", "delete", runKey, "/v", "Vineyard", "/f")
+	_ = run("taskkill", "/IM", binName+".exe", "/F")
+}
+
+// writeTaskXML writes a Task Scheduler definition (UTF-16LE, as schtasks expects) for a logon task
+// that runs as the current user with least privilege, never times out, and restarts if it dies.
+func writeTaskXML(bin string) (string, error) {
+	u, err := user.Current()
+	if err != nil {
 		return "", err
 	}
-	return "scheduled task 'Vineyard' installed and started (logs: " + LogFile() + ")", nil
+	xml := taskXML(bin, u.Username)
+	path := filepath.Join(config.Dir(), "vineyard-task.xml")
+	if err := os.WriteFile(path, xml, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func taskXML(bin, username string) []byte {
+	esc := func(s string) string {
+		return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
+	}
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Vineyard agent daemon</Description></RegistrationInfo>
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled><UserId>%s</UserId></LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author"><UserId>%s</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>10</Count></RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec><Command>%s</Command><Arguments>run</Arguments></Exec>
+  </Actions>
+</Task>
+`, esc(username), esc(username), esc(bin))
+	// UTF-16LE with BOM.
+	runes := utf16.Encode([]rune(body))
+	out := make([]byte, 0, 2*len(runes)+2)
+	out = append(out, 0xFF, 0xFE)
+	for _, r := range runes {
+		out = append(out, byte(r), byte(r>>8))
+	}
+	return out
 }
