@@ -1,0 +1,95 @@
+# Builds the VS Code extension with the daemon binaries for every platform bundled inside, and
+# publishes the .vsix (plus standalone binaries) as a GitHub Release.
+#
+# Trigger: push a tag like v0.2.0, or run manually from the Actions tab (produces a pre-release
+# named after the commit).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: daemon/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Work out the version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: npm ci
+
+      - name: Stamp package.json version
+        run: npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Cross-compile vineyardd for all platforms
+        run: VERSION="${{ steps.ver.outputs.version }}" sh scripts/build-daemon.sh
+
+      - name: Tests
+        run: |
+          npm run typecheck
+          node --test test/
+          cd daemon && go test ./...
+
+      - name: Bundle extension
+        run: node esbuild.mjs --production
+
+      - name: Package .vsix (binaries included)
+        run: npx vsce package --no-dependencies -o "vineyard-${{ steps.ver.outputs.version }}.vsix"
+
+      - name: Checksums
+        run: |
+          cp bin/* .
+          sha256sum vineyard-*.vsix vineyardd-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vineyard-${{ steps.ver.outputs.version }}
+          path: |
+            vineyard-*.vsix
+            vineyardd-*
+            SHA256SUMS.txt
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', steps.ver.outputs.version) }}
+          name: Vineyard ${{ steps.ver.outputs.version }}
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            vineyard-*.vsix
+            vineyardd-*
+            SHA256SUMS.txt
+          body: |
+            **Install the extension:** download `vineyard-${{ steps.ver.outputs.version }}.vsix`, then in VS Code run
+            *Extensions: Install from VSIX…* (or `code --install-extension vineyard-${{ steps.ver.outputs.version }}.vsix`).
+            The daemon binaries for macOS (arm64, x64), Linux and Windows (arm64, x64, x86) are bundled inside; the extension
+            installs the right one when you run **Set Up This Machine**, **Join Fleet with Invite Code** or **Add Machine**.
+
+            The standalone `vineyardd-*` binaries are the same builds, for manual installs (`vineyardd init && vineyardd install`).

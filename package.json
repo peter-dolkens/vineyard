@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "dolkens",
   "private": true,
   "license": "MIT",
@@ -57,7 +57,7 @@
       },
       {
         "view": "vineyard.fleet",
-        "contents": "Connecting to the local daemon\u2026",
+        "contents": "Connecting to the local daemon…",
         "when": "vineyard.daemonState == 'connecting'"
       }
     ],

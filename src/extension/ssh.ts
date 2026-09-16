@@ -20,7 +20,7 @@ export interface ExecResult {
 }
 
 export type RemoteOS = 'darwin' | 'linux' | 'windows';
-export type RemoteArch = 'arm64' | 'amd64';
+export type RemoteArch = 'arm64' | 'amd64' | '386';
 
 export function sshUserHost(t: SshTarget): string {
   return t.user ? `${t.user}@${t.host}` : t.host;
@@ -88,12 +88,13 @@ export async function detectRemote(t: SshTarget, log?: vscode.OutputChannel): Pr
   const out = u.stdout.trim();
   if (u.code === 0 && /^(Darwin|Linux)\s/.test(out)) {
     const [os, machine] = out.split(/\s+/);
-    const arch: RemoteArch = /arm64|aarch64/i.test(machine ?? '') ? 'arm64' : 'amd64';
+    const arch: RemoteArch = /arm64|aarch64/i.test(machine ?? '') ? 'arm64' : /^(i[3-6]86|x86)$/i.test(machine ?? '') ? '386' : 'amd64';
     return { os: os === 'Darwin' ? 'darwin' : 'linux', arch };
   }
   const p = await ssh(t, 'powershell -NoProfile -Command "$env:PROCESSOR_ARCHITECTURE"', { timeoutMs: 20_000, log });
   if (p.code === 0 && p.stdout.trim()) {
-    return { os: 'windows', arch: /arm64/i.test(p.stdout) ? 'arm64' : 'amd64' };
+    const a = p.stdout.trim().toUpperCase();
+    return { os: 'windows', arch: a === 'ARM64' ? 'arm64' : a === 'X86' ? '386' : 'amd64' };
   }
   const why = failed(u) ?? failed(p) ?? 'unknown platform';
   throw new Error(`Could not detect the remote platform: ${why}`);

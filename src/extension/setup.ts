@@ -12,7 +12,7 @@ import type { FleetService, MachineView } from './fleet.ts';
 import { detectRemote, effectiveHost, failed, run, scp, ssh, type RemoteArch, type RemoteOS, type SshTarget } from './ssh.ts';
 
 const PLATFORM_OS: Record<string, RemoteOS> = { darwin: 'darwin', linux: 'linux', win32: 'windows' };
-const PLATFORM_ARCH: Record<string, RemoteArch> = { arm64: 'arm64', x64: 'amd64' };
+const PLATFORM_ARCH: Record<string, RemoteArch> = { arm64: 'arm64', x64: 'amd64', ia32: '386' };
 
 export class Setup {
   constructor(

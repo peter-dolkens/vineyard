@@ -81,8 +81,23 @@ daemon/                 Go module: vineyardd
   internal/service      launchd / systemd / schtasks installers
 src/core                wire types + formatting shared by the extension
 src/extension           VS Code extension: daemon client, fleet store, tree, transcript, setup over SSH
-scripts/build-daemon.sh cross-compiles vineyardd into bin/ for darwin/linux/windows × arm64/amd64
+scripts/build-daemon.sh cross-compiles vineyardd into bin/: macOS arm64/amd64, Linux and Windows arm64/amd64/386
 ```
+
+## Install from GitHub
+
+Every tagged release on the [Releases page](https://github.com/peter-dolkens/vineyard/releases)
+carries a `vineyard-<version>.vsix` with the daemon binaries for all platforms bundled inside, plus
+the standalone `vineyardd-*` binaries and a `SHA256SUMS.txt`. Install with *Extensions: Install from
+VSIX…* or:
+
+```sh
+code --install-extension vineyard-<version>.vsix
+```
+
+To cut a release: `git tag v0.2.0 && git push --tags`. The **Release** workflow cross-compiles the
+daemon, runs the tests, packages the extension and publishes the release. Running the workflow
+manually from the Actions tab produces a pre-release named after the commit.
 
 ## Build and run
 
