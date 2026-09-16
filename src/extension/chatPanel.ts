@@ -162,8 +162,13 @@ class ChatPanel {
           await this.fleet.client.request('interrupt', this.machine.id, { sessionId: this.agent.sessionId }, 10_000);
           break;
         case 'stop': {
-          const ok = await vscode.window.showWarningMessage(`Stop ${agentLabel(this.agent)} on ${this.machine.name}?`, { modal: true }, 'Stop');
-          if (ok) await this.fleet.client.request('stop', this.machine.id, { sessionId: this.agent.sessionId }, 10_000);
+          const managed = !!this.agent.managed && !this.agent.managed.exited;
+          const ok = await vscode.window.showWarningMessage(
+            `${managed ? 'Stop' : 'Terminate'} ${agentLabel(this.agent)} on ${this.machine.name}?`,
+            { modal: true, detail: managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is terminated. Its transcript stays on disk and can be resumed.' },
+            managed ? 'Stop' : 'Terminate',
+          );
+          if (ok) await this.fleet.client.request(managed ? 'stop' : 'kill', this.machine.id, { sessionId: this.agent.sessionId }, 15_000);
           break;
         }
         case 'configure': {

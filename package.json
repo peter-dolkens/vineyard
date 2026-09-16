@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "private": true,
@@ -193,7 +193,7 @@
       },
       {
         "command": "vineyard.stopAgent",
-        "title": "Stop Agent",
+        "title": "Stop / Terminate Session",
         "category": "Vineyard",
         "icon": "$(debug-stop)"
       },
@@ -212,6 +212,12 @@
         "command": "vineyard.checkForUpdates",
         "title": "Check for Extension Updates",
         "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.resumeFromHistory",
+        "title": "Resume a Past Session…",
+        "category": "Vineyard",
+        "icon": "$(history)"
       }
     ],
     "menus": {
@@ -224,12 +230,17 @@
         {
           "command": "vineyard.addMachine",
           "when": "view == vineyard.fleet",
+          "group": "navigation@3"
+        },
+        {
+          "command": "vineyard.resumeFromHistory",
+          "when": "view == vineyard.fleet",
           "group": "navigation@2"
         },
         {
           "command": "vineyard.createInvite",
           "when": "view == vineyard.fleet",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "vineyard.toggleHistorical",
@@ -355,13 +366,23 @@
         },
         {
           "command": "vineyard.stopAgent",
-          "when": "view == vineyard.fleet && viewItem =~ /managed$/",
-          "group": "1_act@0"
+          "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!exited)/",
+          "group": "inline@3"
         },
         {
           "command": "vineyard.showRawTranscript",
           "when": "view == vineyard.fleet && viewItem =~ /^agent/",
           "group": "2_copy@0"
+        },
+        {
+          "command": "vineyard.resumeFromHistory",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
+          "group": "0_agent@2"
+        },
+        {
+          "command": "vineyard.resumeFromHistory",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "0_agent@2"
         }
       ],
       "commandPalette": [

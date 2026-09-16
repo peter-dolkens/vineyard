@@ -996,6 +996,52 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.handleUpgrade(a)
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
+	case "sessions":
+		var a protocol.SessionsArgs
+		if len(r.Args) > 0 {
+			if err := json.Unmarshal(r.Args, &a); err != nil {
+				return nil, err
+			}
+		}
+		list, err := claude.ListSessions(n.opts.ClaudeDir, a.Cwd, a.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"sessions": list})
+	case "kill":
+		// End any session on this machine: managed ones through their control channel, observed
+		// ones by signalling the process the registry reports for that session id.
+		var a protocol.SendArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
+			if err := n.opts.Managed.Stop(a.SessionID); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"managed":true}`), nil
+		}
+		n.mu.Lock()
+		pid := 0
+		if e, ok := n.store[n.cfg.MachineID]; ok {
+			for _, ag := range e.Snapshot.Agents {
+				if ag.SessionID == a.SessionID {
+					pid = ag.PID
+					break
+				}
+			}
+		}
+		n.mu.Unlock()
+		if pid <= 0 {
+			return nil, fmt.Errorf("no running process is known for session %s", a.SessionID)
+		}
+		if err := claude.Terminate(pid); err != nil {
+			return nil, err
+		}
+		n.logf("killed session %s (pid %d) on request", a.SessionID, pid)
+		time.AfterFunc(1500*time.Millisecond, n.kickCollector)
+		return json.Marshal(map[string]any{"pid": pid})
 	case "transcript":
 		var a protocol.TranscriptArgs
 		if len(r.Args) > 0 {

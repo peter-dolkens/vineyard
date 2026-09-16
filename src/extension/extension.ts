@@ -9,7 +9,7 @@ import { TRANSCRIPT_SCHEME, TranscriptProvider, transcriptUri } from './transcri
 import { Setup } from './setup.ts';
 import { ChatPanels } from './chatPanel.ts';
 import { Updater } from './updater.ts';
-import { agentLabel, basename } from '../core/format.ts';
+import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 
 export function activate(context: vscode.ExtensionContext): void {
   const log = vscode.window.createOutputChannel('Vineyard');
@@ -194,53 +194,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ---- managed sessions ---------------------------------------------------------------------
 
-  const spawnFlow = async (machine: MachineView, cwd: string, resume?: Agent) => {
+  /**
+   * Start (or resume) a managed session with no questions asked: default model and effort, the
+   * configured permission mode, no first prompt. Everything is adjustable afterwards from the chat.
+   */
+  const spawnFlow = async (machine: MachineView, cwd: string, resume?: string) => {
     if (!machine.online) throw new Error(`${machine.name} is offline`);
-    const prompt = await vscode.window.showInputBox({
-      title: resume ? `Resume ${agentLabel(resume)} under Vineyard control` : `New agent in ${basename(cwd)} on ${machine.name}`,
-      prompt: resume ? 'Optional first message for the resumed session' : 'What should the agent do? (leave empty to start it idle)',
-      ignoreFocusOut: true,
-    });
-    if (prompt === undefined) return;
     const cfg = vscode.workspace.getConfiguration('vineyard');
-    const modelPick = await vscode.window.showQuickPick(
-      [
-        { label: 'Default model', description: 'whatever Claude Code is configured to use', value: '' },
-        { label: 'Fable 5.1', value: 'claude-fable-5-1' },
-        { label: 'Opus 5', value: 'claude-opus-5' },
-        { label: 'Sonnet 5', value: 'claude-sonnet-5' },
-        { label: 'Haiku 4.5', value: 'claude-haiku-4-5-20251001' },
-      ],
-      { title: 'Model', placeHolder: 'Model for this agent', ignoreFocusOut: true },
-    );
-    if (!modelPick) return;
-    const effortPick = await vscode.window.showQuickPick(
-      [
-        { label: 'Default effort', description: 'whatever Claude Code is configured to use', value: '' },
-        { label: 'low', value: 'low' },
-        { label: 'medium', value: 'medium' },
-        { label: 'high', value: 'high' },
-        { label: 'xhigh', value: 'xhigh' },
-        { label: 'max', value: 'max' },
-      ],
-      { title: 'Reasoning effort', placeHolder: 'Effort for this agent (changeable later from the chat)', ignoreFocusOut: true },
-    );
-    if (!effortPick) return;
-    const modePick = await vscode.window.showQuickPick(
-      [
-        { label: 'default', description: 'ask before edits and commands (you approve here in Vineyard)', value: 'default' },
-        { label: 'acceptEdits', description: 'auto-accept file edits, ask for commands', value: 'acceptEdits' },
-        { label: 'plan', description: 'read-only planning until you approve the plan', value: 'plan' },
-        { label: 'auto', description: 'Claude Code auto mode', value: 'auto' },
-        { label: 'bypassPermissions', description: 'no prompts at all — use with care', value: 'bypassPermissions' },
-      ],
-      { title: 'Permission mode', placeHolder: cfg.get<string>('spawn.defaultPermissionMode', 'default'), ignoreFocusOut: true },
-    );
-    if (!modePick) return;
     const res = await fleet.client.request<{ sessionId: string }>(
       'spawn',
       machine.id,
-      { cwd, prompt, model: modelPick.value || undefined, effort: effortPick.value || undefined, permissionMode: modePick.value, resume: resume?.sessionId, name: resume ? undefined : `vineyard-${basename(cwd)}` },
+      { cwd, permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default'), resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
       30_000,
     );
     // Wait briefly for the agent to appear in the fleet, then open its chat.
@@ -258,6 +222,18 @@ export function activate(context: vscode.ExtensionContext): void {
     tryOpen();
   };
 
+  /** Pick a workspace on a machine: a known one, or any path. Returns undefined when cancelled. */
+  const workspaceOf = async (machine: MachineView, allowAll: boolean): Promise<string | undefined> => {
+    const known = machine.entry.snapshot.workspaces.map((w) => w.path);
+    const items: (vscode.QuickPickItem & { value: string })[] = known.map((p) => ({ label: basename(p), description: p, value: p }));
+    if (allowAll) items.unshift({ label: '$(list-flat) All workspaces', description: 'every session on this machine', value: '*' });
+    items.push({ label: '$(folder) Other path…', description: '', value: '' });
+    const pick = await vscode.window.showQuickPick(items, { title: `Workspace on ${machine.name}`, ignoreFocusOut: true });
+    if (!pick) return undefined;
+    if (pick.value) return pick.value;
+    return vscode.window.showInputBox({ title: 'Workspace path', prompt: `Absolute path on ${machine.name}`, ignoreFocusOut: true });
+  };
+
   cmd('vineyard.newAgent', async (node?: Node) => {
     let machine: MachineView | undefined;
     let cwd: string | undefined;
@@ -267,13 +243,56 @@ export function activate(context: vscode.ExtensionContext): void {
     } else {
       machine = await machineOf(node);
       if (!machine) return;
-      const known = machine.entry.snapshot.workspaces.map((w) => w.path);
-      const pick = await vscode.window.showQuickPick([...known.map((p) => ({ label: basename(p), description: p, value: p })), { label: '$(folder) Other path…', description: '', value: '' }], { title: `Workspace on ${machine.name}`, ignoreFocusOut: true });
-      if (!pick) return;
-      cwd = pick.value || (await vscode.window.showInputBox({ title: 'Workspace path', prompt: `Absolute path on ${machine.name}`, ignoreFocusOut: true }));
+      cwd = await workspaceOf(machine, false);
     }
     if (!machine || !cwd) return;
     await spawnFlow(machine, cwd);
+  });
+
+  interface SessionSummary {
+    sessionId: string;
+    cwd: string;
+    mtime: number;
+    title?: string;
+    firstPrompt?: string;
+    lastPrompt?: string;
+    model?: string;
+    gitBranch?: string;
+    turns?: number;
+  }
+
+  // Resume any past session on a machine from its transcripts on disk, not just live agents.
+  cmd('vineyard.resumeFromHistory', async (node?: Node) => {
+    const machine = node?.machine ?? (await machineOf(undefined));
+    if (!machine) return;
+    if (!machine.online) throw new Error(`${machine.name} is offline`);
+    const cwd = node?.kind === 'workspace' || node?.kind === 'agent' ? pathOf(node) : await workspaceOf(machine, true);
+    if (cwd === undefined) return;
+    const scope = cwd === '*' ? undefined : cwd;
+    const { sessions } = await fleet.client.request<{ sessions: SessionSummary[] }>('sessions', machine.id, { cwd: scope, limit: 80 }, 30_000);
+    if (!sessions.length) {
+      void vscode.window.showInformationMessage(`No past sessions found${scope ? ` in ${basename(scope)}` : ''} on ${machine.name}.`);
+      return;
+    }
+    const live = new Set(machine.entry.snapshot.agents.filter((a) => a.alive).map((a) => a.sessionId));
+    const items = sessions.map((s) => ({
+      label: `${live.has(s.sessionId) ? '$(circle-large-filled) ' : ''}${s.title || s.firstPrompt || s.sessionId.slice(0, 8)}`,
+      description: [relativeTime(s.mtime), s.model ? shortModel(s.model) : '', s.gitBranch, s.turns ? `${s.turns} turn${s.turns === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '),
+      detail: `${scope ? '' : tildify(s.cwd, machine.entry.snapshot.host.home) + '  ·  '}${s.lastPrompt && s.lastPrompt !== s.firstPrompt ? s.lastPrompt : s.sessionId}`,
+      s,
+    }));
+    const pick = await vscode.window.showQuickPick(items, { title: `Resume a session on ${machine.name}`, placeHolder: 'Newest first. Type to filter by title, prompt, branch or model.', matchOnDescription: true, matchOnDetail: true, ignoreFocusOut: true });
+    if (!pick) return;
+    if (live.has(pick.s.sessionId)) {
+      const found = fleet.findAgent(`${machine.id}::${pick.s.sessionId}`);
+      const ok = await vscode.window.showWarningMessage('That session is still running. Resuming it in a second process would have two writers on one transcript. Open its chat instead?', { modal: true }, 'Open chat', 'Resume anyway');
+      if (!ok) return;
+      if (ok === 'Open chat' && found) {
+        chats.open(found.machine, found.agent);
+        return;
+      }
+    }
+    await spawnFlow(machine, pick.s.cwd, pick.s.sessionId);
   });
 
   cmd('vineyard.resumeManaged', async (node?: Node) => {
@@ -283,17 +302,21 @@ export function activate(context: vscode.ExtensionContext): void {
       const ok = await vscode.window.showWarningMessage(`${agentLabel(a.agent)} is still running on ${a.machine.name}. Resuming it in a second process would have two writers on one transcript. Stop it there first, or continue anyway?`, { modal: true }, 'Continue anyway');
       if (!ok) return;
     }
-    await spawnFlow(a.machine, a.agent.workspacePath, a.agent);
+    await spawnFlow(a.machine, a.agent.workspacePath, a.agent.sessionId);
   });
 
+  // Ends any live session: managed ones through their control channel, others by terminating the
+  // Claude Code process on that machine.
   cmd('vineyard.stopAgent', async (node?: Node) => {
     const a = await agentOf(node);
-    if (!a?.agent.managed || a.agent.managed.exited) {
-      void vscode.window.showInformationMessage('Only sessions started by Vineyard can be stopped from here.');
-      return;
-    }
-    const ok = await vscode.window.showWarningMessage(`Stop ${agentLabel(a.agent)} on ${a.machine.name}?`, { modal: true }, 'Stop');
-    if (ok) await fleet.client.request('stop', a.machine.id, { sessionId: a.agent.sessionId }, 10_000);
+    if (!a || !a.agent.alive) return;
+    const managed = !!a.agent.managed && !a.agent.managed.exited;
+    const ok = await vscode.window.showWarningMessage(
+      `${managed ? 'Stop' : 'Terminate'} ${agentLabel(a.agent)} on ${a.machine.name}?`,
+      { modal: true, detail: managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is sent SIGTERM (killed after 5 s if it ignores it). Its transcript stays on disk and can be resumed.' },
+      managed ? 'Stop' : 'Terminate',
+    );
+    if (ok) await fleet.client.request(managed ? 'stop' : 'kill', a.machine.id, { sessionId: a.agent.sessionId }, 15_000);
   });
 
   cmd('vineyard.copySessionId', async (node?: Node) => {

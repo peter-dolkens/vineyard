@@ -25,8 +25,13 @@ be added.
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear
   as cards in the chat and are answered there. They still write the normal registry and transcript.
-  The composer carries pickers for **model, reasoning effort and permission mode** that change the
-  running session in place, like the ones in the Claude Code pane.
+  New agents start with no questions asked (default model and effort, the configured permission
+  mode, no first prompt); the composer carries pickers for **model, reasoning effort and permission
+  mode** that change the running session in place, like the ones in the Claude Code pane.
+* **Resume a past session** (*Resume a Past Session…*, the history button) from the transcripts on
+  any machine, newest first with title, first/last prompt, model and branch, whether or not an agent
+  is currently attached to it. **Stop / Terminate** ends any live session: managed ones cleanly over
+  their control channel, others by terminating the Claude Code process (transcript kept).
 * **Join machines without SSH** with a single-use invite code.
 * **Self-updating fleet**: install a newer extension on one machine and it upgrades every daemon
   over the mesh (see *Staying up to date*).
@@ -186,7 +191,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions

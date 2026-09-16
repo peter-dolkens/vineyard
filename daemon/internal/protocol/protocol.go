@@ -186,6 +186,12 @@ type ConfigureArgs struct {
 	PermissionMode *string `json:"permissionMode,omitempty"`
 }
 
+// SessionsArgs lists past transcripts on the target machine (Cwd narrows to one workspace).
+type SessionsArgs struct {
+	Cwd   string `json:"cwd,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`

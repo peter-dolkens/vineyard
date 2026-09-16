@@ -587,7 +587,8 @@ function renderHeader() {
   document.getElementById('sub')!.textContent = `${bits.join(' — ')}   ·   ${meta.join(' · ')}`;
 
   const managedLive = !!agent.managed && !agent.managed.exited;
-  btnStop.hidden = !managedLive;
+  btnStop.hidden = !(agent.alive && machine.online);
+  btnStop.title = managedLive ? 'Stop this session' : 'Terminate this session';
   btnInterrupt.hidden = !managedLive;
   const canSend = machine.online && agent.alive;
   btnSend.disabled = !canSend || sending;
