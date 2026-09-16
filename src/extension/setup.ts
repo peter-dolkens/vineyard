@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { DEFAULT_PORT, readLocalConfig, vineyardDir, type DaemonClient, type PeerAddr } from './daemonClient.ts';
 import type { FleetService, MachineView } from './fleet.ts';
-import { detectRemote, failed, run, scp, ssh, type RemoteArch, type RemoteOS, type SshTarget } from './ssh.ts';
+import { detectRemote, effectiveHost, failed, run, scp, ssh, type RemoteArch, type RemoteOS, type SshTarget } from './ssh.ts';
 
 const PLATFORM_OS: Record<string, RemoteOS> = { darwin: 'darwin', linux: 'linux', win32: 'windows' };
 const PLATFORM_ARCH: Record<string, RemoteArch> = { arm64: 'arm64', x64: 'amd64' };
@@ -103,7 +103,8 @@ export class Setup {
     const cfg = readLocalConfig();
     if (!cfg) throw new Error('Local Vineyard config missing; run "Set Up This Machine" first.');
     const port = this.port();
-    const advertise = `${target.host}:${port}`;
+    const advertiseHost = await effectiveHost(target);
+    const advertise = `${advertiseHost}:${port}`;
     const name = machineId.split('.')[0] ?? machineId;
     const peers = this.knownPeers(machineId);
 
@@ -125,7 +126,7 @@ export class Setup {
       } else {
         check(await ssh(target, 'mkdir -p ~/.vineyard/bin && chmod 700 ~/.vineyard', { log: this.log }), 'create directory');
       }
-      const newBin = plat.os === 'windows' ? '.vineyard/bin/vineyardd.new.exe' : '.vineyard/bin/vineyardd.new';
+      const newBin = plat.os === 'windows' ? '.vineyard/bin/vineyardd.upload.exe' : '.vineyard/bin/vineyardd.upload';
       check(await scp(target, bin, newBin, this.log), 'copy binary');
       check(await scp(target, path.join(cfg.dir, 'fleet.crt'), '.vineyard/fleet.crt', this.log), 'copy certificate');
       check(await scp(target, path.join(cfg.dir, 'fleet.key'), '.vineyard/fleet.key', this.log), 'copy key');
@@ -134,7 +135,7 @@ export class Setup {
       const initArgs = `init --machine-id ${q(machineId)} --name ${q(name)} --port ${port} --advertise ${q(advertise)}`;
       const peerCmds = peers.map((p) => ({ id: p.machineId, addr: p.addr }));
       if (plat.os === 'windows') {
-        const exe = '$HOME\\.vineyard\\bin\\vineyardd.new.exe';
+        const exe = '$HOME\\.vineyard\\bin\\vineyardd.upload.exe';
         const script = [
           `if (!(Test-Path $HOME\\.vineyard\\config.json)) { & ${exe} ${initArgs}; if ($LASTEXITCODE -ne 0) { exit 1 } }`,
           ...peerCmds.map((p) => `& ${exe} peer add ${q(p.id)} ${q(p.addr)}`),
@@ -142,9 +143,11 @@ export class Setup {
           `Remove-Item ${exe} -ErrorAction SilentlyContinue`,
           `& $HOME\\.vineyard\\bin\\vineyardd.exe version`,
         ].join('; ');
-        check(await ssh(target, `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, { log: this.log, timeoutMs: 120_000 }), 'install');
+        const r = await ssh(target, `powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, { log: this.log, timeoutMs: 120_000 });
+        check(r, 'install');
+        verifyVersion(r.stdout);
       } else {
-        const exe = '~/.vineyard/bin/vineyardd.new';
+        const exe = '~/.vineyard/bin/vineyardd.upload';
         const script = [
           `chmod 600 ~/.vineyard/fleet.crt ~/.vineyard/fleet.key`,
           `chmod +x ${exe}`,
@@ -154,13 +157,21 @@ export class Setup {
           `rm -f ${exe}`,
           `~/.vineyard/bin/vineyardd version`,
         ].join(' && ');
-        check(await ssh(target, `sh -c ${q(script)}`, { log: this.log, timeoutMs: 120_000 }), 'install');
+        const r = await ssh(target, `sh -c ${q(script)}`, { log: this.log, timeoutMs: 120_000 });
+        check(r, 'install');
+        verifyVersion(r.stdout);
       }
 
       progress.report({ message: 'registering peer locally' });
       await this.client.request('addpeer', undefined, { machineId, addr: advertise }, 10_000);
+      progress.report({ message: `waiting for ${name} to connect` });
+      const online = await this.waitOnline(machineId, 20_000);
+      if (!online) {
+        const m = this.fleet.machine(machineId);
+        throw new Error(`Daemon installed on ${name} but it is not reachable at ${advertise}${m?.peer?.lastError ? ` (${m.peer.lastError})` : ''}. Check firewall/port ${port} and the daemon log.`);
+      }
     });
-    void vscode.window.showInformationMessage(`Vineyard daemon installed on ${name}.`);
+    void vscode.window.showInformationMessage(`Vineyard daemon installed on ${name} and connected.`);
   }
 
   // ---- invites (no SSH needed) ----------------------------------------------------------------
@@ -210,6 +221,22 @@ export class Setup {
     void vscode.window.showInformationMessage(`Joined the fleet. ${hostname} will appear on the other machines as soon as they look.`);
   }
 
+  private waitOnline(machineId: string, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const done = (v: boolean) => {
+        clearTimeout(timer);
+        sub.dispose();
+        resolve(v);
+      };
+      const check = () => {
+        if (this.fleet.machine(machineId)?.online) done(true);
+      };
+      const sub = this.fleet.onDidChange(check);
+      const timer = setTimeout(() => done(false), timeoutMs);
+      check();
+    });
+  }
+
   async updateMachine(m: MachineView): Promise<void> {
     if (m.local) return this.setupLocal();
     return this.installRemote({ host: m.host }, m.id);
@@ -252,6 +279,14 @@ export class Setup {
     const term = vscode.window.createTerminal({ name: `vineyardd log: ${m.name}` });
     term.sendText(`ssh -t ${m.host} 'tail -n 200 -f ~/.vineyard/vineyardd.log'`);
     term.show();
+  }
+}
+
+/** The install script ends with `vineyardd version`; an empty result means the binary is broken. */
+function verifyVersion(stdout: string): void {
+  const last = stdout.trim().split('\n').pop() ?? '';
+  if (!/^[0-9A-Za-z.\-+]+$/.test(last)) {
+    throw new Error(`installed daemon did not report a version (output: ${JSON.stringify(last.slice(0, 80))}); the binary may be corrupt`);
   }
 }
 

@@ -98,3 +98,16 @@ export async function detectRemote(t: SshTarget, log?: vscode.OutputChannel): Pr
   const why = failed(u) ?? failed(p) ?? 'unknown platform';
   throw new Error(`Could not detect the remote platform: ${why}`);
 }
+
+/**
+ * The address the daemon should advertise for this host. Honours ~/.ssh/config: if `HostName` there
+ * points at an IP (as it does when local DNS is stale), peers dial that IP instead of the DNS name.
+ */
+export async function effectiveHost(t: SshTarget): Promise<string> {
+  const r = await run('ssh', ['-G', ...extraArgs(), sshUserHost(t)], { timeoutMs: 10_000 });
+  if (r.code !== 0) return t.host;
+  const line = r.stdout.split('\n').find((l) => l.startsWith('hostname '));
+  const resolved = line?.slice('hostname '.length).trim();
+  if (!resolved || resolved.toLowerCase() === t.host.toLowerCase()) return t.host;
+  return /^[\d.]+$|:/.test(resolved) ? resolved : t.host;
+}

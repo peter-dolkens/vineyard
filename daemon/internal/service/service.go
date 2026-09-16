@@ -45,7 +45,12 @@ func EnsureBinary() (string, error) {
 	if err := os.MkdirAll(BinDir(), 0o755); err != nil {
 		return "", err
 	}
-	tmp := dst + ".new"
+	// Never reuse a fixed temp name: the bootstrap flows upload the binary next to the destination and
+	// run it from there, and truncating our own executable copies zero bytes.
+	tmp := fmt.Sprintf("%s.tmp-%d", dst, os.Getpid())
+	if same, _ := sameFile(self, tmp); same {
+		return "", fmt.Errorf("refusing to overwrite the running executable %s", self)
+	}
 	in, err := os.Open(self)
 	if err != nil {
 		return "", err
@@ -55,12 +60,19 @@ func EnsureBinary() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, in)
+	if err != nil {
 		out.Close()
+		os.Remove(tmp)
 		return "", err
 	}
 	if err := out.Close(); err != nil {
+		os.Remove(tmp)
 		return "", err
+	}
+	if n < 1<<20 {
+		os.Remove(tmp)
+		return "", fmt.Errorf("copied only %d bytes of %s; refusing to install a truncated binary", n, self)
 	}
 	if runtime.GOOS == "windows" {
 		_ = os.Remove(dst) // rename over a running exe fails; the task is stopped before install
