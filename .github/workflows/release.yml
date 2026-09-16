@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Work out the version
@@ -52,7 +52,7 @@ jobs:
       - name: Tests
         run: |
           npm run typecheck
-          node --test test/
+          node --test 'test/**/*.test.ts'
           cd daemon && go test ./...
 
       - name: Bundle extension

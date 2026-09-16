@@ -7,7 +7,8 @@
   "private": true,
   "license": "MIT",
   "engines": {
-    "vscode": "^1.104.0"
+    "vscode": "^1.104.0",
+    "node": ">=24"
   },
   "categories": [
     "Other"
@@ -57,7 +58,7 @@
       },
       {
         "view": "vineyard.fleet",
-        "contents": "Connecting to the local daemon…",
+        "contents": "Connecting to the local daemon\u2026",
         "when": "vineyard.daemonState == 'connecting'"
       }
     ],
@@ -369,7 +370,7 @@
     "build:all": "npm run build:daemon && npm run build",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/ && cd daemon && go test ./...",
+    "test": "node --test 'test/**/*.test.ts' && cd daemon && go test ./...",
     "package": "vsce package --no-dependencies",
     "check": "npm run typecheck && npm test && npm run build"
   },

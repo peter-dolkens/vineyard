@@ -15,11 +15,11 @@ jobs:
           go-version-file: daemon/go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: node --test test/
+      - run: node --test 'test/**/*.test.ts'
       - run: cd daemon && go vet ./... && go test ./...
       - name: Build everything (no publish)
         run: npm run build:all
