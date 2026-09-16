@@ -103,11 +103,20 @@ type TranscriptArgs struct {
 	Path      string `json:"path,omitempty"`
 	Cwd       string `json:"cwd,omitempty"`
 	Lines     int    `json:"lines,omitempty"`
+	// Offset, when > 0, asks for only the complete lines written after this byte offset (as returned
+	// in a previous TranscriptData.Offset). Lets a viewer stream a live transcript cheaply.
+	Offset int64 `json:"offset,omitempty"`
 }
 
 type TranscriptData struct {
 	Path    string            `json:"path"`
 	Entries []json.RawMessage `json:"entries"`
+	// Offset is the byte position just after the last complete line returned; pass it back to get
+	// only newer lines. Size is the file size at read time.
+	Offset int64 `json:"offset"`
+	Size   int64 `json:"size"`
+	// Truncated is true when the file shrank or was replaced since the caller's offset (re-read).
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // Join is the only message an unauthenticated (no client certificate) connection may send, and only
@@ -140,3 +149,16 @@ type Invite struct {
 }
 
 const InvitePrefix = "vineyard:"
+
+// SendArgs posts a message into a running session on the target machine.
+type SendArgs struct {
+	SessionID string `json:"sessionId"`
+	Text      string `json:"text"`
+}
+
+// RespondArgs answers a managed session's pending control request.
+type RespondArgs struct {
+	SessionID string          `json:"sessionId"`
+	RequestID string          `json:"requestId"`
+	Response  json.RawMessage `json:"response"` // {"behavior":"allow","updatedInput":{...}} | {"behavior":"deny","message":"..."}
+}

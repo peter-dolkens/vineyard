@@ -19,6 +19,7 @@ import (
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
+	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
@@ -47,6 +48,8 @@ type Options struct {
 	Collect func() model.Snapshot
 	// ClaudeDir is used to sandbox transcript reads.
 	ClaudeDir string
+	// Managed runs daemon-controlled sessions (optional).
+	Managed *managed.Manager
 }
 
 type link struct {
@@ -630,6 +633,9 @@ func (n *Node) pingAndReap() {
 
 // ---- collector -----------------------------------------------------------------------------------
 
+// Kick asks the collector to re-read state now (used when managed sessions change).
+func (n *Node) Kick() { n.kickCollector() }
+
 func (n *Node) kickCollector() {
 	select {
 	case n.wake <- struct{}{}:
@@ -875,6 +881,69 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			}
 		}
 		return json.RawMessage(`{"ok":true}`), nil
+	case "send":
+		var a protocol.SendArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
+			if err := n.opts.Managed.Send(a.SessionID, a.Text); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"managed":true}`), nil
+		}
+		id, err := claude.SendToSession(n.opts.ClaudeDir, a.SessionID, a.Text)
+		if err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.Marshal(map[string]any{"msgId": id})
+	case "spawn":
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var o managed.SpawnOptions
+		if err := json.Unmarshal(r.Args, &o); err != nil {
+			return nil, err
+		}
+		sid, err := n.opts.Managed.Spawn(o)
+		if err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.Marshal(map[string]any{"sessionId": sid})
+	case "respond":
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var a protocol.RespondArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if err := n.opts.Managed.Respond(a.SessionID, a.RequestID, a.Response); err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"ok":true}`), nil
+	case "interrupt", "stop":
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var a protocol.SendArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		var err error
+		if r.Op == "interrupt" {
+			err = n.opts.Managed.Interrupt(a.SessionID)
+		} else {
+			err = n.opts.Managed.Stop(a.SessionID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{"ok":true}`), nil
 	case "transcript":
 		var a protocol.TranscriptArgs
 		if len(r.Args) > 0 {
@@ -908,14 +977,28 @@ func (n *Node) readTranscript(a protocol.TranscriptArgs) (json.RawMessage, error
 	if lines <= 0 {
 		lines = 400
 	}
-	raw, err := claude.TailLines(abs, lines, 8<<20)
+	var raw [][]byte
+	var offset, size int64
+	truncated := false
+	if a.Offset > 0 {
+		raw, offset, size, err = claude.ReadFrom(abs, a.Offset, 8<<20)
+		if err == nil && size < a.Offset {
+			// File shrank or was replaced: start over with a tail.
+			truncated = true
+			raw, offset, err = claude.TailWithOffset(abs, lines, 8<<20)
+			size = offset
+		}
+	} else {
+		raw, offset, err = claude.TailWithOffset(abs, lines, 8<<20)
+		size = offset
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("no transcript at %s", abs)
 		}
 		return nil, err
 	}
-	out := protocol.TranscriptData{Path: abs, Entries: make([]json.RawMessage, 0, len(raw))}
+	out := protocol.TranscriptData{Path: abs, Entries: make([]json.RawMessage, 0, len(raw)), Offset: offset, Size: size, Truncated: truncated}
 	for _, ln := range raw {
 		if json.Valid(ln) {
 			out.Entries = append(out.Entries, json.RawMessage(ln))

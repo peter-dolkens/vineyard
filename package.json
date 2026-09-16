@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "dolkens",
   "private": true,
   "license": "MIT",
@@ -58,7 +58,7 @@
       },
       {
         "view": "vineyard.fleet",
-        "contents": "Connecting to the local daemon\u2026",
+        "contents": "Connecting to the local daemon…",
         "when": "vineyard.daemonState == 'connecting'"
       }
     ],
@@ -141,9 +141,9 @@
       },
       {
         "command": "vineyard.showTranscript",
-        "title": "Show Transcript",
+        "title": "Open Chat",
         "category": "Vineyard",
-        "icon": "$(book)"
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "vineyard.resumeSession",
@@ -176,6 +176,29 @@
       {
         "command": "vineyard.focus",
         "title": "Focus Vineyard",
+        "category": "Vineyard"
+      },
+      {
+        "command": "vineyard.newAgent",
+        "title": "New Agent Here…",
+        "category": "Vineyard",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vineyard.resumeManaged",
+        "title": "Resume Under Vineyard Control…",
+        "category": "Vineyard",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "vineyard.stopAgent",
+        "title": "Stop Agent",
+        "category": "Vineyard",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vineyard.showRawTranscript",
+        "title": "Show Raw Transcript (Markdown)",
         "category": "Vineyard"
       }
     ],
@@ -292,6 +315,31 @@
           "command": "vineyard.copyPath",
           "when": "view == vineyard.fleet && viewItem =~ /^agent/",
           "group": "2_copy@2"
+        },
+        {
+          "command": "vineyard.newAgent",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "inline@0"
+        },
+        {
+          "command": "vineyard.newAgent",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
+          "group": "0_agent@1"
+        },
+        {
+          "command": "vineyard.resumeManaged",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!.*managed)/",
+          "group": "1_act@0"
+        },
+        {
+          "command": "vineyard.stopAgent",
+          "when": "view == vineyard.fleet && viewItem =~ /managed$/",
+          "group": "1_act@0"
+        },
+        {
+          "command": "vineyard.showRawTranscript",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent/",
+          "group": "2_copy@0"
         }
       ],
       "commandPalette": [
@@ -309,6 +357,14 @@
         },
         {
           "command": "vineyard.removeMachine",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.stopAgent",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.resumeManaged",
           "when": "false"
         }
       ]
@@ -359,6 +415,18 @@
           },
           "default": [],
           "description": "Extra arguments for the ssh/scp calls used to bootstrap machines."
+        },
+        "vineyard.spawn.defaultPermissionMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "auto",
+            "bypassPermissions"
+          ],
+          "default": "default",
+          "description": "Pre-selected permission mode when starting a new agent from Vineyard."
         }
       }
     }
@@ -377,6 +445,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "^1.104.0",
+    "@vscode/codicons": "^0.0.46-24",
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.28.0",
     "typescript": "^5.9.0"
@@ -384,5 +453,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/peter-dolkens/vineyard"
+  },
+  "dependencies": {
+    "marked": "^15.0.0"
   }
 }

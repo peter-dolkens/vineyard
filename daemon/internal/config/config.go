@@ -36,8 +36,11 @@ type Config struct {
 	Advertise string              `json:"advertise,omitempty"` // host:port peers should dial
 	Peers     []protocol.PeerAddr `json:"peers"`
 	ClaudeDir string              `json:"claudeDir,omitempty"`
-	TailLines int                 `json:"tailLines,omitempty"`
-	LogLevel  string              `json:"logLevel,omitempty"`
+	ClaudeBin string              `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
+	// DisableManaged turns off spawning sessions from Vineyard on this machine.
+	DisableManaged bool   `json:"disableManaged,omitempty"`
+	TailLines      int    `json:"tailLines,omitempty"`
+	LogLevel       string `json:"logLevel,omitempty"`
 }
 
 func Dir() string {

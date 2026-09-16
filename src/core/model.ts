@@ -66,6 +66,38 @@ export interface Agent {
   contextTokens?: number;
   pendingTools: PendingTool[];
   transcriptPath?: string;
+  /** Set when the daemon on that machine spawned the session and controls it. */
+  managed?: ManagedInfo;
+}
+
+export interface PendingRequest {
+  requestId: string;
+  toolName: string;
+  displayName?: string;
+  input?: Record<string, unknown>;
+  toolUseId?: string;
+  requiresUserInteraction?: boolean;
+  suggestions?: unknown[];
+  description?: string;
+  at: number;
+}
+
+export interface ManagedInfo {
+  sessionId: string;
+  pid: number;
+  cwd: string;
+  name?: string;
+  model?: string;
+  permissionMode?: string;
+  startedAt: number;
+  ready: boolean;
+  resumed?: boolean;
+  pending?: PendingRequest;
+  turns: number;
+  costUsd?: number;
+  exited: boolean;
+  exitedAt?: number;
+  lastError?: string;
 }
 
 export interface Workspace {

@@ -525,3 +525,30 @@ func Interpret(machineID string, r *Report, now int64) ([]model.Agent, []model.W
 	sort.Slice(workspaces, func(i, j int) bool { return workspaces[i].Path < workspaces[j].Path })
 	return agents, workspaces
 }
+
+// Regroup rebuilds workspace agent lists from an (annotated or extended) agent slice, keeping the
+// history counts the collector found.
+func Regroup(machineID string, agents []model.Agent, workspaces []model.Workspace) []model.Workspace {
+	byPath := map[string]*model.Workspace{}
+	for i := range workspaces {
+		workspaces[i].Agents = []model.Agent{}
+		byPath[workspaces[i].Path] = &workspaces[i]
+	}
+	var extra []model.Workspace
+	for _, a := range agents {
+		key := normalisePath(a.WorkspacePath)
+		w, ok := byPath[key]
+		if !ok {
+			extra = append(extra, model.Workspace{ID: machineID + "::" + key, MachineID: machineID, Path: key, Agents: []model.Agent{}})
+			w = &extra[len(extra)-1]
+			byPath[key] = w
+		}
+		w.Agents = append(w.Agents, a)
+		if a.LastActivityAt > w.LastActivityAt {
+			w.LastActivityAt = a.LastActivityAt
+		}
+	}
+	out := append(workspaces, extra...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}

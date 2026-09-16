@@ -2,6 +2,8 @@
 // JSON field names are camelCase to match the TypeScript side exactly.
 package model
 
+import "encoding/json"
+
 // AgentState describes what an agent is doing, ordered roughly by how urgently the human is needed.
 type AgentState string
 
@@ -60,6 +62,40 @@ type Agent struct {
 	ContextTokens  int64         `json:"contextTokens,omitempty"`
 	PendingTools   []PendingTool `json:"pendingTools"`
 	TranscriptPath string        `json:"transcriptPath,omitempty"`
+	// Managed is set when this daemon spawned the session and controls it over stream-json.
+	Managed *ManagedInfo `json:"managed,omitempty"`
+}
+
+// PendingRequest is a control_request the managed session is blocked on: a permission prompt or an
+// AskUserQuestion. Input is the tool input as Claude proposed it.
+type PendingRequest struct {
+	RequestID               string          `json:"requestId"`
+	ToolName                string          `json:"toolName"`
+	DisplayName             string          `json:"displayName,omitempty"`
+	Input                   json.RawMessage `json:"input,omitempty"`
+	ToolUseID               string          `json:"toolUseId,omitempty"`
+	RequiresUserInteraction bool            `json:"requiresUserInteraction,omitempty"`
+	Suggestions             json.RawMessage `json:"suggestions,omitempty"`
+	Description             string          `json:"description,omitempty"`
+	At                      int64           `json:"at"`
+}
+
+type ManagedInfo struct {
+	SessionID      string          `json:"sessionId"`
+	PID            int             `json:"pid"`
+	Cwd            string          `json:"cwd"`
+	Name           string          `json:"name,omitempty"`
+	Model          string          `json:"model,omitempty"`
+	PermissionMode string          `json:"permissionMode,omitempty"`
+	StartedAt      int64           `json:"startedAt"`
+	Ready          bool            `json:"ready"`
+	Resumed        bool            `json:"resumed,omitempty"`
+	Pending        *PendingRequest `json:"pending,omitempty"`
+	Turns          int             `json:"turns"`
+	CostUSD        float64         `json:"costUsd,omitempty"`
+	Exited         bool            `json:"exited"`
+	ExitedAt       int64           `json:"exitedAt,omitempty"`
+	LastError      string          `json:"lastError,omitempty"`
 }
 
 type Workspace struct {

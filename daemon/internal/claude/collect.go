@@ -86,6 +86,14 @@ type Collector struct {
 
 	mu       sync.Mutex
 	cwdCache map[string]cwdEntry // project dir → cwd (keyed by latest transcript path+mtime)
+	// tailCache avoids re-reading a transcript whose size and mtime have not changed since last poll.
+	tailCache map[string]tailEntry
+}
+
+type tailEntry struct {
+	size    int64
+	mtime   int64
+	entries []map[string]any
 }
 
 type cwdEntry struct {
@@ -100,7 +108,7 @@ func NewCollector(claudeDir string, tailLines int) *Collector {
 	if tailLines <= 0 {
 		tailLines = 80
 	}
-	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}}
+	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}}
 }
 
 func (c *Collector) Collect() *Report {
@@ -159,6 +167,15 @@ func (c *Collector) collectSessions(r *Report) {
 	if err != nil {
 		return
 	}
+	defer func() {
+		c.mu.Lock()
+		for sid := range c.tailCache {
+			if _, live := r.Transcripts[sid]; !live {
+				delete(c.tailCache, sid)
+			}
+		}
+		c.mu.Unlock()
+	}()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -196,16 +213,26 @@ func (c *Collector) collectSessions(r *Report) {
 		if err != nil {
 			continue
 		}
-		lines, err := TailLines(tpath, c.TailLines, MaxTailBytes)
-		if err != nil {
-			continue
-		}
 		t := RawTranscript{SessionID: sid, Mtime: st.ModTime().UnixMilli(), Size: st.Size(), Path: tpath}
-		for _, ln := range lines {
-			var m map[string]any
-			if json.Unmarshal(ln, &m) == nil && m != nil {
-				t.Entries = append(t.Entries, m)
+		c.mu.Lock()
+		cached, ok := c.tailCache[sid]
+		c.mu.Unlock()
+		if ok && cached.size == t.Size && cached.mtime == t.Mtime {
+			t.Entries = cached.entries // unchanged since last poll: one stat, no read
+		} else {
+			lines, err := TailLines(tpath, c.TailLines, MaxTailBytes)
+			if err != nil {
+				continue
 			}
+			for _, ln := range lines {
+				var m map[string]any
+				if json.Unmarshal(ln, &m) == nil && m != nil {
+					t.Entries = append(t.Entries, m)
+				}
+			}
+			c.mu.Lock()
+			c.tailCache[sid] = tailEntry{size: t.Size, mtime: t.Mtime, entries: t.Entries}
+			c.mu.Unlock()
 		}
 		r.Transcripts[sid] = t
 	}
@@ -315,4 +342,55 @@ func TailLines(path string, n int, maxBytes int64) ([][]byte, error) {
 		out = out[len(out)-n:]
 	}
 	return out, nil
+}
+
+// ReadFrom returns every complete line starting at byte offset `from`, plus the offset just past the
+// last complete line. It reads at most maxBytes; if more is pending the caller loops.
+func ReadFrom(path string, from int64, maxBytes int64) (lines [][]byte, next int64, size int64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, from, 0, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, from, 0, err
+	}
+	size = st.Size()
+	if from >= size {
+		return nil, from, size, nil
+	}
+	end := size
+	if end-from > maxBytes {
+		end = from + maxBytes
+	}
+	buf := make([]byte, end-from)
+	if _, err := f.ReadAt(buf, from); err != nil && err != io.EOF {
+		return nil, from, size, err
+	}
+	last := bytes.LastIndexByte(buf, '\n')
+	if last < 0 {
+		return nil, from, size, nil // no complete line yet
+	}
+	next = from + int64(last) + 1
+	for _, p := range bytes.Split(buf[:last], []byte{'\n'}) {
+		p = bytes.TrimRight(p, "\r")
+		if len(bytes.TrimSpace(p)) > 0 {
+			lines = append(lines, p)
+		}
+	}
+	return lines, next, size, nil
+}
+
+// TailWithOffset is TailLines plus the end-of-file offset so callers can continue with ReadFrom.
+func TailWithOffset(path string, n int, maxBytes int64) ([][]byte, int64, error) {
+	lines, err := TailLines(path, n, maxBytes)
+	if err != nil {
+		return nil, 0, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	return lines, st.Size(), nil
 }

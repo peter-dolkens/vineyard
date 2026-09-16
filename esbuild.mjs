@@ -17,9 +17,23 @@ const options = {
   logLevel: 'info',
 };
 
+/** @type {esbuild.BuildOptions} */
+const webview = {
+  entryPoints: ['src/webview/main.ts'],
+  bundle: true,
+  outfile: 'dist/webview.js',
+  platform: 'browser',
+  target: 'es2022',
+  format: 'iife',
+  sourcemap: !production,
+  minify: production,
+  logLevel: 'info',
+};
+
 if (watch) {
   const ctx = await esbuild.context(options);
-  await ctx.watch();
+  const ctx2 = await esbuild.context(webview);
+  await Promise.all([ctx.watch(), ctx2.watch()]);
 } else {
-  await esbuild.build(options);
+  await Promise.all([esbuild.build(options), esbuild.build(webview)]);
 }

@@ -198,10 +198,12 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const { agent } = node;
     const item = new vscode.TreeItem(agentLabel(agent), vscode.TreeItemCollapsibleState.None);
     item.id = `agent:${agent.id}`;
-    item.contextValue = agent.alive ? `agent-${agent.state}` : 'agent-exited';
+    const managedLive = !!agent.managed && !agent.managed.exited;
+    item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '');
     item.iconPath = stateIcon(agent.state);
 
     const bits: string[] = [STATE_LABEL[agent.state]];
+    if (managedLive) bits.push('managed');
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
     if (agent.lastActivityAt) bits.push(relativeTime(agent.lastActivityAt));

@@ -9,6 +9,28 @@ or resume a session from wherever you happen to be sitting.
 Only Claude Code is supported today; the model, daemon and tree are provider-agnostic so others can
 be added.
 
+## What you can do
+
+* **See every agent** on every machine, grouped Machines › Workspaces › Agents, with live state,
+  model, effort, context size, title and last prompt.
+* **Open a chat** for any agent: a panel styled like the Claude Code pane that streams the transcript
+  as it grows (railway margin with coloured event markers, the current prompt pinned while you
+  scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
+  busy) with an info strip for model, effort, mode, prompt-cache hit rate, token totals and a map of
+  spawned subagents.
+* **Message any running agent** from the composer. For sessions you drive elsewhere (the Claude
+  extension, a terminal) the text is delivered over Claude Code's cross-session messaging socket and
+  read between tool calls or when the agent is idle.
+* **Start agents from Vineyard** in any workspace on any machine (*New Agent Here…*), or **resume** an
+  existing session under Vineyard's control. These *managed* sessions run as children of that
+  machine's daemon over the stream-json control protocol, so permission prompts and questions appear
+  as cards in the chat and are answered there. They still write the normal registry and transcript.
+* **Join machines without SSH** with a single-use invite code.
+
+Observed sessions (started outside Vineyard) cannot have their permission prompts or questions
+answered from here: Claude Code only accepts those in the originating UI. The chat shows a card
+explaining that and offers to open the workspace on that machine.
+
 ## Design
 
 ```
@@ -76,11 +98,13 @@ turn"; `idle` mid-turn for >30 s = "interrupted"). See `daemon/internal/claude/d
 ```
 daemon/                 Go module: vineyardd
   cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join
-  internal/claude       collector (reads ~/.claude) + state derivation (+ tests)
+  internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
+  internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
   internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
   internal/service      launchd / systemd / schtasks installers
 src/core                wire types + formatting shared by the extension
-src/extension           VS Code extension: daemon client, fleet store, tree, transcript, setup over SSH
+src/extension           VS Code extension: daemon client, fleet store, tree, chat panel host, setup over SSH
+src/webview             chat panel UI (bundled separately; marked for Markdown)
 scripts/build-daemon.sh cross-compiles vineyardd into bin/: macOS arm64/amd64, Linux and Windows arm64/amd64/386
 ```
 
@@ -138,8 +162,19 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript`, `probe`, `addpeer`, `removepeer`, `invite` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `probe`, `addpeer`, `removepeer`, `invite` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
+
+## Managed vs observed sessions
+
+| | Observed (Claude extension, terminal) | Managed (started or resumed from Vineyard) |
+| --- | --- | --- |
+| How state is read | transcript tail + registry, polled 1/s while watched (stat-cached) | same, plus control events from the process |
+| Send a prompt | cross-session messaging socket | stdin (stream-json) |
+| Permission prompts | shown; answer in the originating UI | Allow / Allow-and-remember / Deny cards |
+| AskUserQuestion | shown; answer in the originating UI | option buttons + free text |
+| Interrupt / stop | no | yes |
+| Lifetime | independent | child of the daemon; ends if the daemon restarts |
 
 ## Known gaps
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
+	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/mesh"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
@@ -141,14 +142,29 @@ func cmdRun() error {
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	collector := claude.NewCollector(cfg.ClaudeDir, cfg.TailLines)
-	node, err := mesh.New(mesh.Options{
+	var node *mesh.Node
+	var mgr *managed.Manager
+	if !cfg.DisableManaged {
+		mgr = managed.New(logger, func() {
+			if node != nil {
+				node.Kick()
+			}
+		})
+		mgr.ClaudeBin = cfg.ClaudeBin
+	}
+	node, err = mesh.New(mesh.Options{
 		Config:    cfg,
 		Version:   Version,
 		Log:       logger,
 		ClaudeDir: collector.ClaudeDir,
+		Managed:   mgr,
 		Collect: func() model.Snapshot {
 			r := collector.Collect()
 			agents, workspaces := claude.Interpret(cfg.MachineID, r, time.Now().UnixMilli())
+			if mgr != nil {
+				agents = mgr.Merge(cfg.MachineID, agents)
+				workspaces = claude.Regroup(cfg.MachineID, agents, workspaces)
+			}
 			return model.Snapshot{Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude}
 		},
 	})
