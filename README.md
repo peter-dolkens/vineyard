@@ -12,7 +12,9 @@ be added.
 ## What you can do
 
 * **See every agent** on every machine, grouped Machines › Workspaces › Agents, with live state,
-  model, effort, context size, title and last prompt.
+  model, effort, context size, title and last prompt. Each tier's order is yours to choose
+  (`vineyard.sort.machines` / `.workspaces` / `.agents`: status, name, recent or attention-first) with
+  stable tie-breaks, so rows stay put while agents work. *Vineyard: Settings* opens all of them.
 * **Open a chat** for any agent: a panel styled like the Claude Code pane that streams the transcript
   as it grows (railway margin with coloured event markers, the current prompt pinned while you
   scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
@@ -73,6 +75,10 @@ explaining that and offers to open the workspace on that machine.
   plus one 30 s ping per connection. When the last viewer leaves (30 s grace for reloads) everything is
   unsubscribed and torn down. There is no gossip and no periodic re-broadcast, so N machines cost at most
   N-1 connections per watching machine and zero bytes when nobody is looking.
+* **A watched Mac stays awake.** A Mac that idle-sleeps only surfaces for ~45 s per Wake on Demand,
+  so its link flaps and its agents stall. While anyone is subscribed to a machine, its daemon holds a
+  `caffeinate -s` assertion (macOS only, `keepAwakeWhileWatched` in config.json to opt out); the moment
+  the last viewer leaves it is released. Nothing is held while nobody is looking.
 * **Stateless connections.** A fresh connection carries everything it needs: hello, then subscribe.
   Reconnects use exponential backoff (2 s → 60 s) only while someone is watching. Offline or
   unreachable machines show their last-known snapshot from `~/.vineyard/cache.json`.

@@ -101,27 +101,63 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     return this.showExited ? w.agents : w.agents.filter((a) => a.alive);
   }
 
+  private sortMode(tier: 'machines' | 'workspaces' | 'agents', def: string): string {
+    return vscode.workspace.getConfiguration('vineyard').get<string>(`sort.${tier}`, def);
+  }
+
+  /**
+   * Every tier has a user-chosen order (vineyard.sort.*) with a stable name/id tie-break, so rows only
+   * move when the chosen key changes, not on every snapshot.
+   */
   getChildren(element?: Node): Node[] {
     if (!element) {
-      return this.fleet.machines().map((machine) => ({ kind: 'machine', machine }));
+      const mode = this.sortMode('machines', 'status');
+      const machines = [...this.fleet.machines()].sort((a, b) => {
+        if (a.local !== b.local) return a.local ? -1 : 1; // this machine always first
+        if (mode === 'status' && a.online !== b.online) return a.online ? -1 : 1;
+        if (mode === 'recent') {
+          const d = (b.entry.snapshot.at ?? 0) - (a.entry.snapshot.at ?? 0);
+          if (d) return d;
+        }
+        return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+      });
+      return machines.map((machine) => ({ kind: 'machine', machine }));
     }
     if (element.kind === 'machine') {
       const { machine } = element;
+      const mode = this.sortMode('workspaces', 'name');
       return machine.entry.snapshot.workspaces
         .filter((w) => this.visibleAgents(w).length > 0 || (this.showHistorical && w.historyCount > 0))
         .sort((a, b) => {
-          const sa = dominantState(this.visibleAgents(a));
-          const sb = dominantState(this.visibleAgents(b));
-          if ((sa === undefined) !== (sb === undefined)) return sa === undefined ? 1 : -1;
-          if (sa !== undefined && sb !== undefined && STATE_PRIORITY[sa] !== STATE_PRIORITY[sb]) return STATE_PRIORITY[sa] - STATE_PRIORITY[sb];
-          return (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0);
+          if (mode === 'attention') {
+            const sa = dominantState(this.visibleAgents(a));
+            const sb = dominantState(this.visibleAgents(b));
+            if ((sa === undefined) !== (sb === undefined)) return sa === undefined ? 1 : -1;
+            if (sa !== undefined && sb !== undefined && STATE_PRIORITY[sa] !== STATE_PRIORITY[sb]) return STATE_PRIORITY[sa] - STATE_PRIORITY[sb];
+          }
+          if (mode === 'recent' || mode === 'attention') {
+            const d = (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0);
+            if (d) return d;
+          }
+          return basename(a.path).localeCompare(basename(b.path)) || a.path.localeCompare(b.path);
         })
         .map((workspace) => ({ kind: 'workspace', machine, workspace }));
     }
     if (element.kind === 'workspace') {
       const { machine, workspace } = element;
+      const mode = this.sortMode('agents', 'recent');
       return this.visibleAgents(workspace)
-        .sort((a, b) => STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state] || (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0))
+        .sort((a, b) => {
+          if (mode === 'attention') {
+            const d = STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state];
+            if (d) return d;
+          }
+          if (mode === 'recent' || mode === 'attention') {
+            const d = (b.startedAt ?? 0) - (a.startedAt ?? 0);
+            if (d) return d;
+          }
+          return agentLabel(a).localeCompare(agentLabel(b)) || a.id.localeCompare(b.id);
+        })
         .map((agent) => ({ kind: 'agent', machine, workspace, agent }));
     }
     return [];

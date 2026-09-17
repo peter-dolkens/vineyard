@@ -41,7 +41,12 @@ type Config struct {
 	DisableManaged bool   `json:"disableManaged,omitempty"`
 	TailLines      int    `json:"tailLines,omitempty"`
 	LogLevel       string `json:"logLevel,omitempty"`
+	// KeepAwakeWhileWatched (macOS): hold off idle sleep while a viewer or peer is subscribed to this
+	// machine, so a dozing Mac stays reachable exactly as long as someone is looking. Default true.
+	KeepAwakeWhileWatched *bool `json:"keepAwakeWhileWatched,omitempty"`
 }
+
+func (c *Config) KeepAwake() bool { return c.KeepAwakeWhileWatched == nil || *c.KeepAwakeWhileWatched }
 
 func Dir() string {
 	if d := os.Getenv("VINEYARD_DIR"); d != "" {

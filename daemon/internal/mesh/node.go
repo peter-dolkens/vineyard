@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
 // Timing knobs. The design goal is silence when nobody is looking: an idle daemon holds no
@@ -106,6 +108,7 @@ type Node struct {
 	subscribers int // links that want our self snapshot
 	invites     map[string]invite
 	upgrade     upgrader
+	awake       service.Awake
 
 	wake chan struct{}
 }
@@ -143,6 +146,7 @@ func New(opts Options) (*Node, error) {
 		},
 	}
 	n.serverTLS.Certificates = srv.Certificates
+	n.awake.Disabled = !opts.Config.KeepAwake()
 	for _, p := range opts.Config.Peers {
 		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: []string{p.Addr}}
 	}
@@ -675,8 +679,13 @@ func (n *Node) collectorActive() bool {
 // otherwise blocks with no timer at all.
 func (n *Node) collectorLoop(ctx context.Context) {
 	force := true
+	defer n.awake.Set(false)
 	for {
 		if !n.collectorActive() {
+			if n.awake.Held() {
+				n.awake.Set(false)
+				n.logf("nobody watching; letting the machine sleep")
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -684,6 +693,10 @@ func (n *Node) collectorLoop(ctx context.Context) {
 				force = true
 				continue
 			}
+		}
+		if !n.awake.Held() && !n.awake.Disabled && runtime.GOOS == "darwin" {
+			n.awake.Set(true)
+			n.logf("being watched; holding off idle sleep")
 		}
 		n.collectSelf(force)
 		force = false

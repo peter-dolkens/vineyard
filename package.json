@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "license": "MIT",
@@ -238,6 +238,12 @@
         "title": "Rename Session…",
         "category": "Vineyard",
         "icon": "$(edit)"
+      },
+      {
+        "command": "vineyard.openSettings",
+        "title": "Settings",
+        "category": "Vineyard",
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
@@ -296,6 +302,11 @@
           "command": "vineyard.checkForUpdates",
           "when": "view == vineyard.fleet",
           "group": "2_setup@5"
+        },
+        {
+          "command": "vineyard.openSettings",
+          "when": "view == vineyard.fleet",
+          "group": "1_view@3"
         }
       ],
       "view/item/context": [
@@ -510,6 +521,51 @@
           "type": "boolean",
           "default": true,
           "description": "Once a day, ask GitHub Releases whether a newer Vineyard extension exists and offer to install it. This is the only time Vineyard talks to the internet."
+        },
+        "vineyard.sort.machines": {
+          "type": "string",
+          "enum": [
+            "status",
+            "name",
+            "recent"
+          ],
+          "enumDescriptions": [
+            "This machine, then online machines, then offline; alphabetical within each group.",
+            "Alphabetical (this machine first).",
+            "Most recently reported first (this machine first)."
+          ],
+          "default": "status",
+          "description": "How machines are ordered in the Vineyard tree."
+        },
+        "vineyard.sort.workspaces": {
+          "type": "string",
+          "enum": [
+            "name",
+            "recent",
+            "attention"
+          ],
+          "enumDescriptions": [
+            "Alphabetical by folder name.",
+            "Most recent activity first.",
+            "Workspaces whose agents need you first, then by activity."
+          ],
+          "default": "name",
+          "description": "How workspaces are ordered under each machine."
+        },
+        "vineyard.sort.agents": {
+          "type": "string",
+          "enum": [
+            "recent",
+            "name",
+            "attention"
+          ],
+          "enumDescriptions": [
+            "Newest session first (stable while agents work).",
+            "Alphabetical by title.",
+            "Agents that need you first, then newest."
+          ],
+          "default": "recent",
+          "description": "How agents are ordered under each workspace."
         }
       }
     }

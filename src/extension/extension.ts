@@ -120,6 +120,13 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   cmd('vineyard.reconnect', () => client.reconnectNow());
 
+  cmd('vineyard.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:peter-dolkens.vineyard'));
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('vineyard.sort') || e.affectsConfiguration('vineyard.showHistoricalWorkspaces') || e.affectsConfiguration('vineyard.showExitedAgents')) tree.refresh();
+    }),
+  );
+
   cmd('vineyard.toggleHistorical', () => {
     tree.showHistorical = !tree.showHistorical;
     tree.refresh();
