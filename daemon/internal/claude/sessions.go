@@ -22,6 +22,8 @@ type SessionSummary struct {
 	Model       string `json:"model,omitempty"`
 	GitBranch   string `json:"gitBranch,omitempty"`
 	Turns       int    `json:"turns,omitempty"` // user prompts seen in the head+tail sample (lower bound)
+
+	aiTitle, customTitle string
 }
 
 const (
@@ -126,8 +128,14 @@ func absorb(s *SessionSummary, e map[string]any, fromHead bool) {
 	switch str(e["type"]) {
 	case "ai-title":
 		if t := str(e["aiTitle"]); t != "" {
-			s.Title = t
+			s.aiTitle = t
 		}
+		s.Title = PreferredTitle(s.customTitle, s.aiTitle)
+	case "custom-title":
+		if t := str(e["customTitle"]); t != "" {
+			s.customTitle = t
+		}
+		s.Title = PreferredTitle(s.customTitle, s.aiTitle)
 	case "last-prompt":
 		if p := str(e["lastPrompt"]); p != "" {
 			s.LastPrompt = clip(p, 160)

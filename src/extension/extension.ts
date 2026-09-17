@@ -350,6 +350,14 @@ export function activate(context: vscode.ExtensionContext): void {
     fleet.refreshAll();
   });
 
+  cmd('vineyard.renameSession', async (node?: Node) => {
+    const a = await agentOf(node);
+    if (!a) return;
+    const title = await vscode.window.showInputBox({ title: `Rename session on ${a.machine.name}`, value: a.agent.title || a.agent.name || '', prompt: 'New session title', ignoreFocusOut: true });
+    if (!title?.trim()) return;
+    await fleet.client.request('rename', a.machine.id, { sessionId: a.agent.sessionId, title: title.trim(), path: a.agent.transcriptPath || undefined, cwd: a.agent.workspacePath }, 20_000);
+  });
+
   cmd('vineyard.copySessionId', async (node?: Node) => {
     const a = await agentOf(node);
     if (a) await vscode.env.clipboard.writeText(a.agent.sessionId);

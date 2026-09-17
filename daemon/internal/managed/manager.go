@@ -363,6 +363,19 @@ func (m *Manager) SetEffort(sid, effort string) error {
 	return nil
 }
 
+// Rename gives the session a custom title; Claude Code records it in the transcript itself.
+func (m *Manager) Rename(sid, title string) error {
+	p, err := m.get(sid)
+	if err != nil {
+		return err
+	}
+	if err := m.control(p, map[string]any{"subtype": "rename_session", "title": title}); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	m.changed()
+	return nil
+}
+
 // SetPermissionMode switches how the session asks before acting (default | acceptEdits | plan | auto | bypassPermissions).
 func (m *Manager) SetPermissionMode(sid, mode string) error {
 	p, err := m.get(sid)

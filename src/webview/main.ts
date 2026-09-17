@@ -105,7 +105,8 @@ app.innerHTML = `
   <div class="hdr-main">
     <span class="state-dot" id="stateIcon"></span>
     <div class="hdr-text">
-      <div class="title" id="title"></div>
+      <div class="title" id="title" title="Click to rename this session" tabindex="0"></div>
+      <input class="title-edit" id="titleEdit" hidden maxlength="120" />
       <div class="sub" id="sub"></div>
     </div>
   </div>
@@ -207,6 +208,35 @@ selModel.onchange = () => configure({ model: selModel.value });
 selEffort.onchange = () => configure({ effort: selEffort.value });
 selMode.onchange = () => configure({ permissionMode: selMode.value });
 
+// Click the title to rename the session, like the Claude Code pane.
+const titleEl = document.getElementById('title')!;
+const titleEdit = document.getElementById('titleEdit') as HTMLInputElement;
+function beginRename() {
+  if (!agent || !machine?.online) return;
+  titleEdit.value = agent.title || agent.name || '';
+  titleEl.hidden = true;
+  titleEdit.hidden = false;
+  titleEdit.focus();
+  titleEdit.select();
+}
+function endRename(commit: boolean) {
+  const value = titleEdit.value.trim();
+  titleEdit.hidden = true;
+  titleEl.hidden = false;
+  if (commit && value && value !== (agent?.title || agent?.name || '')) {
+    titleEl.textContent = value;
+    vscode.postMessage({ type: 'rename', title: value });
+  }
+}
+titleEl.onclick = beginRename;
+titleEl.onkeydown = (e) => {
+  if (e.key === 'Enter') beginRename();
+};
+titleEdit.onkeydown = (e) => {
+  if (e.key === 'Enter') endRename(true);
+  else if (e.key === 'Escape') endRename(false);
+};
+titleEdit.onblur = () => endRename(true);
 document.getElementById('btnTerminal')!.onclick = () => vscode.postMessage({ type: 'openTerminal' });
 document.getElementById('btnWorkspace')!.onclick = () => vscode.postMessage({ type: 'openWorkspace' });
 document.getElementById('btnInfo')!.onclick = () => {
@@ -581,7 +611,7 @@ function outputBlock(text: string, isError: boolean): HTMLElement {
 function renderHeader() {
   if (!agent || !machine) return;
   const title = agent.title || agent.name || agent.sessionId.slice(0, 8);
-  document.getElementById('title')!.textContent = title;
+  if (titleEdit.hidden) titleEl.textContent = title;
   const st = agent.alive ? agent.state : 'exited';
   const icon = document.getElementById('stateIcon')!;
   icon.className = `state-dot state-${st}`;

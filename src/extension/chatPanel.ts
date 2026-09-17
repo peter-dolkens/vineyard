@@ -34,6 +34,7 @@ type FromWebview =
   | { type: 'stop' }
   | { type: 'configure'; model?: string; effort?: string; permissionMode?: string }
   | { type: 'login' }
+  | { type: 'rename'; title: string }
   | { type: 'openWorkspace' }
   | { type: 'openTerminal' }
   | { type: 'reload' };
@@ -200,6 +201,14 @@ class ChatPanel {
         case 'login':
           await vscode.commands.executeCommand('vineyard.login', { kind: 'machine', machine: this.machine });
           break;
+        case 'rename': {
+          const title = m.title.trim();
+          if (!title) break;
+          await this.fleet.client.request('rename', this.machine.id, { sessionId: this.agent.sessionId, title, path: this.agent.transcriptPath || undefined, cwd: this.agent.workspacePath }, 20_000);
+          this.panel.title = title;
+          this.post({ type: 'status', text: `Renamed to “${title}”.`, kind: 'ok' });
+          break;
+        }
         case 'openWorkspace':
           await vscode.commands.executeCommand('vineyard.openWorkspace', { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } });
           break;

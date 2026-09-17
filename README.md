@@ -32,6 +32,9 @@ be added.
   any machine, newest first with title, first/last prompt, model and branch, whether or not an agent
   is currently attached to it. **Stop / Terminate** ends any live session: managed ones cleanly over
   their control channel, others by terminating the Claude Code process (transcript kept).
+* **Rename a session** by clicking its title in the chat (or *Rename Session…* in the tree). Managed
+  sessions are renamed through Claude Code's `rename_session` control request; for others Vineyard
+  appends the same `custom-title` transcript line `/rename` writes, so Claude Code shows the new name too.
 * **Sign a machine in to Claude from wherever you are** (*Sign In to Claude on Machine…*, or the card
   the chat shows when a session reports an expired OAuth session). The daemon there runs
   `claude auth login` without a browser, Vineyard opens the sign-in URL in *your* browser and passes
@@ -204,7 +207,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions

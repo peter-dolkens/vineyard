@@ -201,6 +201,14 @@ type LoginArgs struct {
 	Console bool   `json:"console,omitempty"` // Anthropic Console (API billing) instead of a Claude subscription
 }
 
+// RenameArgs gives a session a custom title (what /rename does in Claude Code).
+type RenameArgs struct {
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title"`
+	Path      string `json:"path,omitempty"` // transcript path, for sessions this daemon does not manage
+	Cwd       string `json:"cwd,omitempty"`  // used to locate the transcript when Path is empty
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`

@@ -123,6 +123,7 @@ type Derived struct {
 	PermissionMode string
 	GitBranch      string
 	Title          string
+	CustomTitle    string // set by /rename or Vineyard; wins over the AI title
 	LastPrompt     string
 	Version        string
 	LastActivityAt int64
@@ -144,6 +145,10 @@ func DeriveFromTranscript(entries []map[string]any) Derived {
 		case "ai-title":
 			if s := str(e["aiTitle"]); s != "" {
 				d.Title = s
+			}
+		case "custom-title":
+			if s := str(e["customTitle"]); s != "" {
+				d.CustomTitle = s
 			}
 		case "last-prompt":
 			if s := str(e["lastPrompt"]); s != "" {
@@ -398,7 +403,7 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 	a.Effort = d.Effort
 	a.PermissionMode = d.PermissionMode
 	a.GitBranch = d.GitBranch
-	a.Title = d.Title
+	a.Title = PreferredTitle(d.CustomTitle, d.Title)
 	a.LastPrompt = d.LastPrompt
 	if d.Version != "" {
 		a.Version = d.Version
@@ -566,4 +571,13 @@ func Regroup(machineID string, agents []model.Agent, workspaces []model.Workspac
 	out := append(workspaces, extra...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// PreferredTitle picks what to show: a custom title (from /rename or Vineyard) beats the AI one, except
+// for the "vineyard-<workspace>" names Vineyard gives sessions it spawns, which are only a fallback.
+func PreferredTitle(custom, ai string) string {
+	if custom != "" && (ai == "" || !strings.HasPrefix(custom, "vineyard-")) {
+		return custom
+	}
+	return ai
 }

@@ -999,6 +999,34 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.handleUpgrade(a)
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
+	case "rename":
+		var a protocol.RenameArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(a.Title) == "" {
+			return nil, errors.New("title is empty")
+		}
+		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
+			if err := n.opts.Managed.Rename(a.SessionID, strings.TrimSpace(a.Title)); err == nil {
+				n.kickCollector()
+				return json.RawMessage(`{"managed":true}`), nil
+			} else {
+				n.logf("rename via control channel failed (%v); appending to the transcript instead", err)
+			}
+		}
+		path := a.Path
+		if path == "" {
+			if a.Cwd == "" {
+				return nil, errors.New("path or cwd is required")
+			}
+			path = filepath.Join(n.opts.ClaudeDir, "projects", claude.EncodeProjectDir(a.Cwd), a.SessionID+".jsonl")
+		}
+		if err := claude.AppendCustomTitle(n.opts.ClaudeDir, path, a.SessionID, a.Title); err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"ok":true}`), nil
 	case "login":
 		if n.opts.Auth == nil {
 			return nil, errors.New("sign-in relay is disabled on this daemon")
