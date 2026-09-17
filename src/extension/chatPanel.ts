@@ -23,7 +23,8 @@ type ToWebview =
   | { type: 'agent'; agent: Agent; machine: { id: string; name: string; online: boolean } }
   | { type: 'entries'; entries: Record<string, unknown>[]; reset: boolean }
   | { type: 'status'; text: string; kind: 'info' | 'error' | 'ok' }
-  | { type: 'sending'; busy: boolean };
+  | { type: 'sending'; busy: boolean }
+  | { type: 'sendFailed' };
 
 type FromWebview =
   | { type: 'ready' }
@@ -32,6 +33,7 @@ type FromWebview =
   | { type: 'interrupt' }
   | { type: 'stop' }
   | { type: 'configure'; model?: string; effort?: string; permissionMode?: string }
+  | { type: 'login' }
   | { type: 'openWorkspace' }
   | { type: 'openTerminal' }
   | { type: 'reload' };
@@ -195,6 +197,9 @@ class ChatPanel {
           }
           break;
         }
+        case 'login':
+          await vscode.commands.executeCommand('vineyard.login', { kind: 'machine', machine: this.machine });
+          break;
         case 'openWorkspace':
           await vscode.commands.executeCommand('vineyard.openWorkspace', { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } });
           break;
@@ -206,6 +211,7 @@ class ChatPanel {
       const msg = (err as Error).message;
       this.log.appendLine(`[chat ${this.agent.sessionId}] ${msg}`);
       this.post({ type: 'status', text: msg, kind: 'error' });
+      if (m.type === 'send') this.post({ type: 'sendFailed' });
     } finally {
       if (m.type === 'send') this.post({ type: 'sending', busy: false });
     }

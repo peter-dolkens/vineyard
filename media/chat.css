@@ -137,7 +137,9 @@ textarea { width: 100%; border: none; background: transparent; color: var(--vsco
 .ev-system > .marker { border-color: var(--vscode-descriptionForeground); border-style: dashed; }
 .ev-user > .marker { border-color: var(--vscode-focusBorder); background: var(--vscode-focusBorder); }
 .ev.echo { opacity: 0.55; }
-.ev.echo .bubble { margin-left: auto; max-width: 85%; }
+.ev.echo .bubble { margin-left: auto; max-width: 85%; white-space: pre-wrap; }
+.ev.echo .echo-meta { font-size: 10px; opacity: 0.6; text-align: right; margin-top: 2px; }
+.card.auth { border-color: var(--vscode-charts-orange, #d18616); }
 
 /* sticky prompt at the head of each turn */
 .turn-prompt { position: sticky; top: 0; z-index: 1; background: var(--vscode-editor-background); padding: 6px 0 4px; cursor: pointer; }

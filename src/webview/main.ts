@@ -279,9 +279,10 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-function md(text: string): HTMLElement {
+/** Markdown → element. breaks=true keeps single newlines (user prompts are plain text, not Markdown). */
+function md(text: string, breaks = false): HTMLElement {
   const d = el('div', 'md');
-  d.innerHTML = marked.parse(text) as string;
+  d.innerHTML = marked.parse(text, { breaks }) as string;
   for (const a of d.querySelectorAll('a')) a.setAttribute('target', '_blank');
   return d;
 }
@@ -390,25 +391,36 @@ function turnFor(): HTMLElement {
 
 // ---- transcript rendering -------------------------------------------------------------------------
 
+/**
+ * Show what was just sent straight away. The row stays (marked "queued") until the transcript shows
+ * the agent picking it up: a busy agent only reads messages between tool calls or at the end of its
+ * turn, which can be minutes later.
+ */
 function appendLocalEcho(text: string) {
   const bubble = el('div', 'bubble', text);
   const row = rail('user', bubble);
   row.classList.add('echo');
-  row.dataset.echo = '1';
+  row.dataset.echo = text.replace(/\s+/g, ' ').trim();
+  const meta = el('div', 'meta echo-meta', agent?.managed && !agent.managed.exited ? 'sent' : 'queued · read between tool calls or when idle');
+  row.appendChild(meta);
   turnFor().appendChild(row);
   afterAppend();
 }
 
-function clearEchoes() {
-  for (const e of turnsEl.querySelectorAll('[data-echo]')) e.remove();
+/** Drop echoes the transcript has now caught up with (or all of them when asked). */
+function clearEchoes(matching?: string) {
+  const norm = matching?.replace(/\s+/g, ' ').trim();
+  for (const e of turnsEl.querySelectorAll<HTMLElement>('[data-echo]')) {
+    if (norm === undefined || (e.dataset.echo && norm.includes(e.dataset.echo))) e.remove();
+  }
 }
 
 function startTurn(promptText: string, time: string, cross: boolean) {
-  clearEchoes();
+  clearEchoes(promptText);
   const turn = el('section', 'turn');
   const sticky = el('div', 'turn-prompt');
   const bubble = el('div', 'bubble' + (cross ? ' cross' : ''));
-  bubble.appendChild(md(promptText));
+  bubble.appendChild(md(promptText, true));
   const marker = el('span', 'marker');
   sticky.appendChild(marker);
   sticky.appendChild(bubble);
@@ -681,9 +693,22 @@ function escapeHtml(s: string): string {
 
 // ---- cards ---------------------------------------------------------------------------------------
 
+const AUTH_RE = /authenticat|oauth|not logged in|log ?in|api key|invalid.*token|401/i;
+
 function renderCards() {
   cardsEl.innerHTML = '';
   if (!agent || !machine) return;
+  const authText = [agent.stateDetail, agent.managed?.lastError].filter(Boolean).join(' ');
+  if (agent.alive && AUTH_RE.test(authText)) {
+    const c = el('div', 'card auth');
+    c.appendChild(el('div', 'card-title', `Claude on ${machine.name} needs to sign in`));
+    c.appendChild(el('div', 'card-text', authText.slice(0, 300)));
+    c.appendChild(el('div', 'card-hint', `Vineyard runs the sign-in on ${machine.name}, opens the page in this browser, and passes the code back. Then send your message again.`));
+    const b = el('button', 'primary', `Sign in on ${machine.name} from here`);
+    b.onclick = () => vscode.postMessage({ type: 'login' });
+    c.appendChild(b);
+    cardsEl.appendChild(c);
+  }
   const pending = agent.managed && !agent.managed.exited ? agent.managed.pending : undefined;
   if (pending) {
     cardsEl.appendChild(pending.toolName === 'AskUserQuestion' ? questionCard(pending) : permissionCard(pending));
@@ -834,7 +859,9 @@ window.addEventListener('message', (ev) => {
     case 'sending':
       sending = m.busy;
       btnSend.disabled = sending;
-      if (!sending) clearEchoes();
+      break;
+    case 'sendFailed':
+      clearEchoes();
       break;
   }
 });

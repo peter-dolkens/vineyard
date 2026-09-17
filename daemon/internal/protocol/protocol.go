@@ -192,6 +192,15 @@ type SessionsArgs struct {
 	Limit int    `json:"limit,omitempty"`
 }
 
+// LoginArgs drives `claude auth login` on the target: "start" returns {id, url} for the viewer to open
+// in its own browser, "code" delivers the pasted authorization code, "cancel" abandons the attempt.
+type LoginArgs struct {
+	Action  string `json:"action"`
+	ID      string `json:"id,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Console bool   `json:"console,omitempty"` // Anthropic Console (API billing) instead of a Claude subscription
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`

@@ -19,6 +19,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
@@ -162,12 +163,15 @@ func cmdRun() error {
 		})
 		mgr.ClaudeBin = cfg.ClaudeBin
 	}
+	authMgr := auth.New(logger)
+	authMgr.ClaudeBin = cfg.ClaudeBin
 	node, err = mesh.New(mesh.Options{
 		Config:    cfg,
 		Version:   Version,
 		Log:       logger,
 		ClaudeDir: collector.ClaudeDir,
 		Managed:   mgr,
+		Auth:      authMgr,
 		Collect: func() model.Snapshot {
 			r := collector.Collect()
 			agents, workspaces := claude.Interpret(cfg.MachineID, r, time.Now().UnixMilli())

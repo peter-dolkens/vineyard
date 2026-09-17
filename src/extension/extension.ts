@@ -319,6 +319,37 @@ export function activate(context: vscode.ExtensionContext): void {
     if (ok) await fleet.client.request(managed ? 'stop' : 'kill', a.machine.id, { sessionId: a.agent.sessionId }, 15_000);
   });
 
+  // Sign a machine in to Claude from here: the daemon there runs `claude auth login`, we open its URL
+  // in this browser and relay the code it shows back.
+  cmd('vineyard.login', async (node?: Node) => {
+    const machine = node?.machine ?? (await machineOf(undefined));
+    if (!machine) return;
+    if (!machine.online) throw new Error(`${machine.name} is offline`);
+    const kind = await vscode.window.showQuickPick(
+      [
+        { label: 'Claude subscription', description: 'claude.ai account (Pro / Max / Team)', console: false },
+        { label: 'Anthropic Console', description: 'API usage billing', console: true },
+      ],
+      { title: `Sign in to Claude on ${machine.name}`, ignoreFocusOut: true },
+    );
+    if (!kind) return;
+    const start = await fleet.client.request<{ id: string; url: string }>('login', machine.id, { action: 'start', console: kind.console }, 60_000);
+    await vscode.env.openExternal(vscode.Uri.parse(start.url));
+    const code = await vscode.window.showInputBox({
+      title: `Sign in on ${machine.name}`,
+      prompt: 'Finish signing in in the browser that just opened, then paste the code it shows you here.',
+      placeHolder: 'authorization code',
+      ignoreFocusOut: true,
+    });
+    if (!code?.trim()) {
+      await fleet.client.request('login', machine.id, { action: 'cancel', id: start.id }, 10_000).catch(() => undefined);
+      return;
+    }
+    const res = await fleet.client.request<{ ok: boolean; message: string }>('login', machine.id, { action: 'code', id: start.id, code: code.trim() }, 150_000);
+    void vscode.window.showInformationMessage(`Claude on ${machine.name}: ${res.message}`);
+    fleet.refreshAll();
+  });
+
   cmd('vineyard.copySessionId', async (node?: Node) => {
     const a = await agentOf(node);
     if (a) await vscode.env.clipboard.writeText(a.agent.sessionId);

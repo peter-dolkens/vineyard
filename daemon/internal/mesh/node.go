@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
@@ -50,6 +51,8 @@ type Options struct {
 	ClaudeDir string
 	// Managed runs daemon-controlled sessions (optional).
 	Managed *managed.Manager
+	// Auth relays `claude auth login` for viewers on other machines (optional).
+	Auth *auth.Manager
 }
 
 type link struct {
@@ -996,6 +999,33 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.handleUpgrade(a)
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
+	case "login":
+		if n.opts.Auth == nil {
+			return nil, errors.New("sign-in relay is disabled on this daemon")
+		}
+		var a protocol.LoginArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		switch a.Action {
+		case "start":
+			id, url, err := n.opts.Auth.Start(a.Console)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]any{"id": id, "url": url})
+		case "code":
+			msg, err := n.opts.Auth.Code(a.ID, a.Code)
+			if err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.Marshal(map[string]any{"ok": true, "message": msg})
+		case "cancel":
+			n.opts.Auth.Cancel(a.ID)
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		return nil, fmt.Errorf("unknown login action %q", a.Action)
 	case "sessions":
 		var a protocol.SessionsArgs
 		if len(r.Args) > 0 {

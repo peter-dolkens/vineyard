@@ -487,9 +487,23 @@ func Interpret(machineID string, r *Report, now int64) ([]model.Agent, []model.W
 		}
 	}
 
+	// Sessions running in a scratchpad belong to the project that spawned them.
+	known := map[string]string{}
+	for _, p := range r.Projects {
+		if p.Cwd != "" && !scratchRe.MatchString(p.Cwd) {
+			known[EncodeProjectDir(p.Cwd)] = p.Cwd
+		}
+	}
+	unscratch := func(path string) string {
+		if parent, ok := ScratchpadParent(path, known); ok {
+			return parent
+		}
+		return path
+	}
+
 	wsMap := map[string]*model.Workspace{}
 	ws := func(path string) *model.Workspace {
-		key := normalisePath(path)
+		key := normalisePath(unscratch(path))
 		if w, ok := wsMap[key]; ok {
 			return w
 		}
@@ -509,6 +523,7 @@ func Interpret(machineID string, r *Report, now int64) ([]model.Agent, []model.W
 	}
 	agents := make([]model.Agent, 0, len(byID))
 	for _, a := range byID {
+		a.WorkspacePath = normalisePath(unscratch(a.WorkspacePath))
 		agents = append(agents, *a)
 		w := ws(a.WorkspacePath)
 		w.Agents = append(w.Agents, *a)

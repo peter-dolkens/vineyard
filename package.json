@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "private": true,
@@ -218,6 +218,12 @@
         "title": "Resume a Past Session…",
         "category": "Vineyard",
         "icon": "$(history)"
+      },
+      {
+        "command": "vineyard.login",
+        "title": "Sign In to Claude on Machine…",
+        "category": "Vineyard",
+        "icon": "$(key)"
       }
     ],
     "menus": {
@@ -383,6 +389,11 @@
           "command": "vineyard.resumeFromHistory",
           "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
           "group": "0_agent@2"
+        },
+        {
+          "command": "vineyard.login",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
+          "group": "1_manage@0"
         }
       ],
       "commandPalette": [

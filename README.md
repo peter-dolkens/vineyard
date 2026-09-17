@@ -32,6 +32,10 @@ be added.
   any machine, newest first with title, first/last prompt, model and branch, whether or not an agent
   is currently attached to it. **Stop / Terminate** ends any live session: managed ones cleanly over
   their control channel, others by terminating the Claude Code process (transcript kept).
+* **Sign a machine in to Claude from wherever you are** (*Sign In to Claude on Machine…*, or the card
+  the chat shows when a session reports an expired OAuth session). The daemon there runs
+  `claude auth login` without a browser, Vineyard opens the sign-in URL in *your* browser and passes
+  the code it shows back over the mesh.
 * **Join machines without SSH** with a single-use invite code.
 * **Self-updating fleet**: install a newer extension on one machine and it upgrades every daemon
   over the mesh (see *Staying up to date*).
@@ -98,6 +102,9 @@ explaining that and offers to open the workspace on that machine.
 | last assistant block is `thinking`, turn not ended | `thinking` |
 | assistant `stop_reason: end_turn` | `idle` |
 | registry `shell` | `shell` |
+
+Sessions whose working directory is a Claude Code scratchpad (`…/claude-<uid>/<encoded project>/<session>/scratchpad`)
+are shown under the project that spawned them; the encoded name is decoded against the filesystem.
 
 Registry and transcript disagreements are reconciled (e.g. `busy` after `end_turn` = "starting next
 turn"; `idle` mid-turn for >30 s = "interrupted"). See `daemon/internal/claude/derive.go` and its tests.
@@ -191,7 +198,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions
