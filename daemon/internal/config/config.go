@@ -44,7 +44,12 @@ type Config struct {
 	// KeepAwakeWhileWatched (macOS): hold off idle sleep while a viewer or peer is subscribed to this
 	// machine, so a dozing Mac stays reachable exactly as long as someone is looking. Default true.
 	KeepAwakeWhileWatched *bool `json:"keepAwakeWhileWatched,omitempty"`
+	// WakePeers: send Wake-on-LAN / a sleep-proxy nudge to peers that do not answer while someone is
+	// watching. Default true.
+	WakePeersEnabled *bool `json:"wakePeers,omitempty"`
 }
+
+func (c *Config) WakePeers() bool { return c.WakePeersEnabled == nil || *c.WakePeersEnabled }
 
 func (c *Config) KeepAwake() bool { return c.KeepAwakeWhileWatched == nil || *c.KeepAwakeWhileWatched }
 

@@ -357,6 +357,29 @@ export function activate(context: vscode.ExtensionContext): void {
     fleet.refreshAll();
   });
 
+  cmd('vineyard.wakeMachine', async (node?: Node) => {
+    const m = await machineOf(node);
+    if (!m) return;
+    if (m.online) {
+      void vscode.window.showInformationMessage(`${m.name} is already awake.`);
+      return;
+    }
+    const res = await fleet.client.request<{ awake: boolean; hardwareAddresses?: number }>('wake', undefined, { machineId: m.id, addr: '' }, 10_000);
+    if (res.awake) return;
+    void vscode.window.setStatusBarMessage(`Vineyard: waking ${m.name}${res.hardwareAddresses ? ' (Wake-on-LAN)' : ' (sleep-proxy nudge)'}…`, 8000);
+    const online = await new Promise<boolean>((resolve) => {
+      const done = (v: boolean) => {
+        clearTimeout(t);
+        sub.dispose();
+        resolve(v);
+      };
+      const sub = fleet.onDidChange(() => fleet.machine(m.id)?.online && done(true));
+      const t = setTimeout(() => done(false), 45_000);
+    });
+    if (online) void vscode.window.showInformationMessage(`${m.name} is awake.`);
+    else void vscode.window.showWarningMessage(`${m.name} did not wake within 45 s. It may be powered off, on a different network, or not set to wake for network access.`);
+  });
+
   cmd('vineyard.renameSession', async (node?: Node) => {
     const a = await agentOf(node);
     if (!a) return;

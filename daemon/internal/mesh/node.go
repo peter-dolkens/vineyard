@@ -79,6 +79,8 @@ type peerState struct {
 	backoff  time.Duration
 	lastErr  string
 	lastSeen time.Time
+	macs     []string // hardware addresses the peer has reported, for Wake-on-LAN
+	lastWake time.Time
 }
 
 type pendingReq struct {
@@ -244,8 +246,12 @@ func (n *Node) dial(p *peerState) {
 			p.backoff = min(p.backoff*2, backoffMax)
 		}
 		p.nextDial = time.Now().Add(p.backoff)
+		watching := n.wantFleet
 		n.mu.Unlock()
 		n.broadcastPeerStatus()
+		if watching {
+			n.maybeWake(p, false)
+		}
 		return
 	}
 	p.backoff = 0
@@ -795,6 +801,9 @@ func (n *Node) dispatch(l *link, b []byte) {
 		n.store[l.peerID] = entry
 		if p := n.peers[l.peerID]; p != nil {
 			p.lastSeen = time.Now()
+			if macs := normaliseMACs(m.Snapshot.Host.MACs); len(macs) > 0 {
+				p.macs = macs
+			}
 		}
 		n.markCacheDirty()
 		n.mu.Unlock()
@@ -1012,6 +1021,29 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.handleUpgrade(a)
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
+	case "wake":
+		// Manual wake of a sleeping peer: send the wake signals now and dial again right away.
+		var a protocol.PeerAddr
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		n.mu.Lock()
+		p := n.peers[a.MachineID]
+		if p == nil {
+			n.mu.Unlock()
+			return nil, fmt.Errorf("unknown machine %s", a.MachineID)
+		}
+		if p.link != nil {
+			n.mu.Unlock()
+			return json.Marshal(map[string]any{"awake": true})
+		}
+		p.nextDial = time.Time{}
+		p.backoff = 0
+		macs := len(p.macs)
+		n.mu.Unlock()
+		n.maybeWake(p, true)
+		n.reconcileSubscriptions()
+		return json.Marshal(map[string]any{"awake": false, "hardwareAddresses": macs})
 	case "rename":
 		var a protocol.RenameArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {
@@ -1296,6 +1328,9 @@ func (n *Node) loadCache() {
 		n.store[id] = e
 		if _, ok := n.peers[id]; !ok && e.Snapshot.Listen != "" {
 			n.peers[id] = &peerState{id: id, addr: e.Snapshot.Listen, addrs: []string{e.Snapshot.Listen}}
+		}
+		if p := n.peers[id]; p != nil && len(p.macs) == 0 {
+			p.macs = normaliseMACs(e.Snapshot.Host.MACs)
 		}
 	}
 }

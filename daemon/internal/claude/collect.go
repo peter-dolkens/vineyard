@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -122,6 +123,7 @@ func (c *Collector) Collect() *Report {
 			Home:      home,
 			ClaudeDir: c.ClaudeDir,
 			Now:       time.Now().UnixMilli(),
+			MACs:      hardwareAddrs(),
 		},
 		Transcripts: map[string]RawTranscript{},
 	}
@@ -393,4 +395,30 @@ func TailWithOffset(path string, n int, maxBytes int64) ([][]byte, int64, error)
 		return nil, 0, err
 	}
 	return lines, st.Size(), nil
+}
+
+// hardwareAddrs lists the MAC addresses of up, non-loopback interfaces that carry an IPv4 address
+// (so virtual and idle interfaces do not get magic packets they can never act on).
+func hardwareAddrs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || len(ifc.HardwareAddr) != 6 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		has4 := false
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLinkLocalUnicast() {
+				has4 = true
+			}
+		}
+		if has4 {
+			out = append(out, ifc.HardwareAddr.String())
+		}
+	}
+	return out
 }

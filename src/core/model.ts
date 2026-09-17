@@ -118,6 +118,7 @@ export interface HostInfo {
   home?: string;
   claudeDir?: string;
   now?: number;
+  macs?: string[];
 }
 
 export interface Snapshot {

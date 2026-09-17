@@ -116,6 +116,9 @@ type HostInfo struct {
 	Home      string `json:"home,omitempty"`
 	ClaudeDir string `json:"claudeDir,omitempty"`
 	Now       int64  `json:"now,omitempty"`
+	// MACs are the hardware addresses of this machine's active interfaces, so peers can send
+	// Wake-on-LAN when it sleeps.
+	MACs []string `json:"macs,omitempty"`
 }
 
 // Snapshot is one machine's complete self-report. It is idempotent: a newer At always supersedes.

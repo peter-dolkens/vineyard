@@ -75,6 +75,11 @@ explaining that and offers to open the workspace on that machine.
   plus one 30 s ping per connection. When the last viewer leaves (30 s grace for reloads) everything is
   unsubscribed and torn down. There is no gossip and no periodic re-broadcast, so N machines cost at most
   N-1 connections per watching machine and zero bytes when nobody is looking.
+* **Sleeping machines are woken.** Daemons report their hardware addresses; when a watched peer stops
+  answering, its neighbours send Wake-on-LAN magic packets for those addresses (LAN broadcast plus
+  unicast) and open a connection to its SSH port so a Bonjour sleep proxy wakes it, at most once every
+  45 s and only while a viewer is attached. *Wake Machine* on an offline machine does it on demand.
+  `wakePeers: false` in config.json opts out.
 * **A watched Mac stays awake.** A Mac that idle-sleeps only surfaces for ~45 s per Wake on Demand,
   so its link flaps and its agents stall. While anyone is subscribed to a machine, its daemon holds a
   `caffeinate -s` assertion (macOS only, `keepAwakeWhileWatched` in config.json to opt out); the moment
@@ -213,7 +218,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions
