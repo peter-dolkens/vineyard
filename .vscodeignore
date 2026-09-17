@@ -9,3 +9,5 @@ esbuild.mjs
 tsconfig.json
 **/*.map
 .gitignore
+.env
+.env.*

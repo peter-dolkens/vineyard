@@ -67,6 +67,20 @@ jobs:
           sha256sum vineyard-*.vsix vineyardd-* > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Publish to the Visual Studio Marketplace (tagged releases only)
+        if: github.ref_type == 'tag'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then echo "VSCE_PAT secret not set; skipping Marketplace publish"; exit 0; fi
+          # Idempotent: a version published by hand must not fail the release.
+          if npx vsce show peter-dolkens.vineyard --json | node -e '
+            let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);process.exit((j.versions||[]).some(v=>v.version===process.env.VERSION)?0:1)})'; then
+            echo "v$VERSION is already on the Marketplace; skipping"; exit 0
+          fi
+          npx vsce publish --packagePath "vineyard-$VERSION.vsix" -p "$VSCE_PAT"
+
       - uses: actions/upload-artifact@v4
         with:
           name: vineyard-${{ steps.ver.outputs.version }}

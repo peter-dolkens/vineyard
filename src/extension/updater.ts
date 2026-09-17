@@ -209,6 +209,9 @@ export class Updater implements vscode.Disposable {
   async checkExtensionUpdate(interactive: boolean): Promise<void> {
     if (!interactive) {
       if (!this.cfg('checkForUpdates', true)) return;
+      // Marketplace installs are kept current by VS Code itself; only VSIX installs need our check.
+      const meta = (this.context.extension.packageJSON as { __metadata?: { source?: string } }).__metadata;
+      if (meta?.source === 'gallery') return;
       const last = this.context.globalState.get<number>(LAST_CHECK_KEY, 0);
       if (Date.now() - last < CHECK_EVERY_MS) return;
     }

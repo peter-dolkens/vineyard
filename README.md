@@ -124,29 +124,35 @@ src/webview             chat panel UI (bundled separately; marked for Markdown)
 scripts/build-daemon.sh cross-compiles vineyardd into bin/: macOS arm64/amd64, Linux and Windows arm64/amd64/386
 ```
 
-## Install from GitHub
+## Install
 
-Every tagged release on the [Releases page](https://github.com/peter-dolkens/vineyard/releases)
-carries a `vineyard-<version>.vsix` with the daemon binaries for all platforms bundled inside, plus
-the standalone `vineyardd-*` binaries and a `SHA256SUMS.txt`. Install with *Extensions: Install from
+Vineyard is on the Visual Studio Marketplace as
+[`peter-dolkens.vineyard`](https://marketplace.visualstudio.com/items?itemName=peter-dolkens.vineyard);
+search for "Vineyard" in the Extensions view. VS Code then keeps it up to date on its own, and each
+new extension build brings the fleet's daemons along (see *Staying up to date*).
+
+Every tagged release is also on the [Releases page](https://github.com/peter-dolkens/vineyard/releases)
+as a `vineyard-<version>.vsix` with the daemon binaries for all platforms bundled inside, plus the
+standalone `vineyardd-*` binaries and a `SHA256SUMS.txt`. Install with *Extensions: Install from
 VSIX…* or:
 
 ```sh
 code --install-extension vineyard-<version>.vsix
 ```
 
-To cut a release: `git tag v0.2.0 && git push --tags`. The **Release** workflow cross-compiles the
-daemon, runs the tests, packages the extension and publishes the release. Running the workflow
+To cut a release: bump `version` in package.json, `git tag v0.3.6 && git push --tags`. The **Release**
+workflow cross-compiles the daemon, runs the tests, packages the extension, publishes the GitHub
+release and pushes the VSIX to the Marketplace (secret `VSCE_PAT`; skipped for pre-releases). Running the workflow
 manually from the Actions tab produces a pre-release named after the commit.
 
 ## Staying up to date
 
 Updates flow from the extension outwards, so upgrading one VS Code is enough to upgrade the fleet:
 
-* **Extension.** At most once a day the extension asks the GitHub Releases API whether a newer
-  version exists and offers to download and install the `.vsix` (`vineyard.checkForUpdates`, or run
-  *Vineyard: Check for Extension Updates*). That single request is the only time Vineyard talks to
-  anything outside your machines.
+* **Extension.** Installed from the Marketplace, VS Code updates it itself. For VSIX installs the
+  extension asks the GitHub Releases API at most once a day whether a newer version exists and offers
+  to download and install it (`vineyard.checkForUpdates`, or run *Vineyard: Check for Extension
+  Updates*). That single request is the only time Vineyard talks to anything outside your machines.
 * **Daemons.** The extension bundles a `vineyardd` build for every platform. When a Vineyard view is
   open and it sees an online machine reporting an older daemon than the bundled one, it streams the
   matching binary to that machine over the existing mesh connection (the `upgrade` request, relayed by

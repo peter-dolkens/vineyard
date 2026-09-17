@@ -2,11 +2,19 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
-  "private": true,
   "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/peter-dolkens/vineyard"
+  },
+  "bugs": {
+    "url": "https://github.com/peter-dolkens/vineyard/issues"
+  },
+  "homepage": "https://github.com/peter-dolkens/vineyard#readme",
   "engines": {
     "vscode": "^1.104.0",
     "node": ">=24"
@@ -513,10 +521,6 @@
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.28.0",
     "typescript": "^5.9.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/peter-dolkens/vineyard"
   },
   "dependencies": {
     "marked": "^15.0.0"

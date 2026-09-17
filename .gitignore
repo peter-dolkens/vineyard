@@ -3,3 +3,4 @@ dist/
 bin/
 *.vsix
 .DS_Store
+.env
