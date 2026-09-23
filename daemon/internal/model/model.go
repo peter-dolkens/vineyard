@@ -35,13 +35,20 @@ type PendingTool struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Summary string `json:"summary,omitempty"`
+	// Input is the full tool input for an AskUserQuestion (questions, options), so a viewer can show
+	// the question and, after a takeover, ask it again; omitted for every other tool.
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 type Agent struct {
-	ID             string     `json:"id"` // machineId::sessionId
-	Provider       string     `json:"provider"`
-	MachineID      string     `json:"machineId"`
-	WorkspacePath  string     `json:"workspacePath"`
+	ID            string `json:"id"` // machineId::sessionId
+	Provider      string `json:"provider"`
+	MachineID     string `json:"machineId"`
+	WorkspacePath string `json:"workspacePath"`
+	// Cwd is the directory the process actually runs in. It differs from WorkspacePath only for a
+	// session inside a Claude Code scratchpad, which is shown under the project that spawned it; a
+	// resume must run where the session ran.
+	Cwd            string     `json:"cwd,omitempty"`
 	SessionID      string     `json:"sessionId"`
 	PID            int        `json:"pid,omitempty"`
 	Alive          bool       `json:"alive"`
@@ -123,7 +130,9 @@ type PendingRequest struct {
 	Description             string          `json:"description,omitempty"`
 	At                      int64           `json:"at"`
 	// Kind says what is being asked: "" or PendingPermission for a can_use_tool prompt (including
-	// AskUserQuestion), PendingElicitation for an MCP server's question, carried in Elicitation.
+	// AskUserQuestion), PendingElicitation for an MCP server's question, carried in Elicitation, or
+	// PendingRecovered for an AskUserQuestion the session was blocked on when Vineyard took it over:
+	// there is no control_request behind it, so the answer is sent as a user message instead.
 	Kind        string              `json:"kind,omitempty"`
 	Elicitation *ElicitationRequest `json:"elicitation,omitempty"`
 }
@@ -131,6 +140,7 @@ type PendingRequest struct {
 const (
 	PendingPermission  = "permission"
 	PendingElicitation = "elicitation"
+	PendingRecovered   = "recovered"
 )
 
 // ElicitationRequest is an MCP server's question to the user, relayed by Claude Code as a
@@ -188,11 +198,15 @@ type ManagedInfo struct {
 	Ready          bool            `json:"ready"`
 	Resumed        bool            `json:"resumed,omitempty"`
 	Pending        *PendingRequest `json:"pending,omitempty"`
-	Turns          int             `json:"turns"`
-	CostUSD        float64         `json:"costUsd,omitempty"`
-	Exited         bool            `json:"exited"`
-	ExitedAt       int64           `json:"exitedAt,omitempty"`
-	LastError      string          `json:"lastError,omitempty"`
+	// RecoveredDone is the tool_use id of a recovered question that has been answered (or waved off
+	// with a prompt). The transcript keeps that AskUserQuestion dangling for a moment after the
+	// answer is sent, until Claude Code appends the prompt; Merge hides it meanwhile.
+	RecoveredDone string  `json:"recoveredDone,omitempty"`
+	Turns         int     `json:"turns"`
+	CostUSD       float64 `json:"costUsd,omitempty"`
+	Exited        bool    `json:"exited"`
+	ExitedAt      int64   `json:"exitedAt,omitempty"`
+	LastError     string  `json:"lastError,omitempty"`
 	// Models is what this session's Claude Code offers in its model picker; empty until the harness
 	// has answered the initialize request sent at spawn.
 	Models []ModelInfo `json:"models,omitempty"`

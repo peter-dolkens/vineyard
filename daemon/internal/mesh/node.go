@@ -1179,6 +1179,63 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return json.Marshal(map[string]any{"sessions": list})
+	case "takeover":
+		// Bring an observed session under this daemon: end its process, wait for it to be gone
+		// (two writers on one transcript interleave), then resume it as a managed child with no
+		// model/effort/mode overrides, so Claude Code restores the session's own. A question it was
+		// blocked on travels along and is asked again from the chat.
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var a protocol.SendArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if n.opts.Managed.Has(a.SessionID) {
+			return nil, fmt.Errorf("session %s is already managed by this daemon", a.SessionID)
+		}
+		var target *model.Agent
+		n.mu.Lock()
+		if e, ok := n.store[n.cfg.MachineID]; ok {
+			for i := range e.Snapshot.Agents {
+				if e.Snapshot.Agents[i].SessionID == a.SessionID {
+					cp := e.Snapshot.Agents[i]
+					target = &cp
+					break
+				}
+			}
+		}
+		n.mu.Unlock()
+		if target == nil || target.WorkspacePath == "" {
+			return nil, fmt.Errorf("no session %s is known on this machine", a.SessionID)
+		}
+		cwd := target.Cwd // where it really ran: a scratchpad session is listed under its parent project
+		if cwd == "" {
+			cwd = target.WorkspacePath
+		}
+		o := managed.SpawnOptions{Cwd: cwd, Resume: a.SessionID}
+		for _, pt := range target.PendingTools {
+			if pt.Name == "AskUserQuestion" && len(pt.Input) > 0 {
+				o.Recover = &managed.RecoveredQuestion{ToolUseID: pt.ID, Input: pt.Input}
+				break
+			}
+		}
+		if target.Alive && target.PID > 0 {
+			if err := claude.Terminate(target.PID); err != nil {
+				return nil, err
+			}
+			if !claude.WaitExit(target.PID, 8*time.Second) {
+				return nil, fmt.Errorf("process %d of session %s did not exit", target.PID, a.SessionID)
+			}
+			n.logf("takeover: ended session %s (pid %d)", a.SessionID, target.PID)
+		}
+		sid, err := n.opts.Managed.Spawn(o)
+		if err != nil {
+			return nil, err
+		}
+		n.logf("takeover: resumed session %s as a managed child (question carried: %v)", sid, o.Recover != nil)
+		n.kickCollector()
+		return json.Marshal(map[string]any{"sessionId": sid, "recovered": o.Recover != nil})
 	case "kill":
 		// End any session on this machine: managed ones through their control channel, observed
 		// ones by signalling the process the registry reports for that session id.

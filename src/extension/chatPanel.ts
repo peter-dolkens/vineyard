@@ -50,6 +50,8 @@ type FromWebview =
   | { type: 'login' }
   | { type: 'rename'; title: string }
   | { type: 'openWorkspace' }
+  /** Bring this observed session under Vineyard's control (vineyard.takeOver). */
+  | { type: 'takeOver' }
   | { type: 'openTerminal' }
   | { type: 'reload' }
   | { type: 'attach' }
@@ -280,6 +282,9 @@ class ChatPanel {
         }
         case 'openWorkspace':
           await vscode.commands.executeCommand('vineyard.openWorkspace', { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } });
+          break;
+        case 'takeOver':
+          await vscode.commands.executeCommand('vineyard.takeOver', { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } });
           break;
         case 'openTerminal':
           await vscode.commands.executeCommand('vineyard.openTerminal', { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } });

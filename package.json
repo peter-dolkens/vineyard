@@ -194,6 +194,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "vineyard.takeOver",
+        "title": "Take Over Session",
+        "category": "Vineyard",
+        "icon": "$(debug-step-into)"
+      },
+      {
         "command": "vineyard.resumeManaged",
         "title": "Resume Under Vineyard Control…",
         "category": "Vineyard",
@@ -397,9 +403,14 @@
           "group": "0_agent@1"
         },
         {
+          "command": "vineyard.takeOver",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!exited)(?!.*managed)/",
+          "group": "1_act@0"
+        },
+        {
           "command": "vineyard.resumeManaged",
           "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!.*managed)/",
-          "group": "1_act@0"
+          "group": "1_act@1"
         },
         {
           "command": "vineyard.stopAgent",
@@ -479,6 +490,10 @@
           "when": "false"
         },
         {
+          "command": "vineyard.takeOver",
+          "when": "false"
+        },
+        {
           "command": "vineyard.resumeManaged",
           "when": "false"
         }
@@ -547,6 +562,19 @@
           ],
           "default": "default",
           "description": "Pre-selected permission mode when starting a new agent from Vineyard."
+        },
+        "vineyard.chat.observed": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "takeOver"
+          ],
+          "enumDescriptions": [
+            "Open the chat as an observer: messages go over Claude Code's cross-session socket; permission prompts and questions are answered in the pane or terminal where the session runs. Take Over Session is still there for when you want it.",
+            "Take the session over when you open its chat: its process is ended and the session resumed as a child of that machine's daemon, so prompts, questions and permissions are answered from here. Idle sessions and ones waiting on a question are taken silently; a session mid-turn asks first, since the running tool's output is lost."
+          ],
+          "default": "observe",
+          "description": "What opening the chat of a session Vineyard did not start does."
         },
         "vineyard.chat.openIn": {
           "type": "string",

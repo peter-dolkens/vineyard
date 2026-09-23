@@ -238,6 +238,7 @@ export function buildActions(c: ActionContext): Action[] {
     { id: 'copySessionId', group: GROUP.session, label: 'Copy session ID' },
     { id: 'openWorkspace', group: GROUP.session, label: 'Open workspace in VS Code' },
     { id: 'openTerminal', group: GROUP.session, label: `Open terminal on ${c.machineName}` },
+    ...(c.managedLive ? [] : [{ id: 'takeOver', group: GROUP.session, label: 'Take over session', detail: 'Resume it as a child of that machine\'s daemon, so questions and permissions are answered here. The pane or terminal it runs in loses it.', disabled: !c.online || !c.alive || c.subagent }]),
     { id: 'resumeTerminal', group: GROUP.session, label: 'Resume in a terminal', detail: 'claude --resume in a terminal on that machine.', disabled: c.subagent },
     { id: 'rawTranscript', group: GROUP.session, label: 'Show raw transcript' },
   ];

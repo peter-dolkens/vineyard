@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strconv"
@@ -221,7 +222,10 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 		}
 	}
 
-	// Pending tool calls: tool_use blocks with no later tool_result.
+	// Pending tool calls: tool_use blocks with no later tool_result. A tool_use older than the latest
+	// user prompt is not pending either: the prompt closed that turn (a question the user left when
+	// the process was killed and later resumed never gets its tool_result; the answer arrives as a
+	// prompt, and Claude Code drops the dangling call from what the model sees).
 	seen := map[string]bool{}
 	var pending []model.PendingTool
 	for i := len(entries) - 1; i >= 0; i-- {
@@ -231,10 +235,15 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 		}
 		switch str(e["type"]) {
 		case "user":
+			results := false
 			for _, b := range blocks(e) {
 				if str(b["type"]) == "tool_result" {
 					seen[str(b["tool_use_id"])] = true
+					results = true
 				}
+			}
+			if !results && isPrompt(e) {
+				i = -1 // stop: nothing before a prompt is still pending
 			}
 		case "assistant":
 			for _, b := range blocks(e) {
@@ -246,7 +255,13 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 						if name == "" {
 							name = "tool"
 						}
-						pending = append([]model.PendingTool{{ID: id, Name: name, Summary: SummarizeToolInput(name, input)}}, pending...)
+						pt := model.PendingTool{ID: id, Name: name, Summary: SummarizeToolInput(name, input)}
+						if name == "AskUserQuestion" && input != nil {
+							if raw, err := json.Marshal(input); err == nil {
+								pt.Input = raw
+							}
+						}
+						pending = append([]model.PendingTool{pt}, pending...)
 					}
 				}
 			}
@@ -388,6 +403,7 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 		Provider:       "claude",
 		MachineID:      machineID,
 		WorkspacePath:  cwd,
+		Cwd:            cwd,
 		SessionID:      sid,
 		PID:            s.PID,
 		Alive:          s.Alive,
@@ -611,4 +627,23 @@ func PreferredTitle(custom, ai string) string {
 		return custom
 	}
 	return ai
+}
+
+// isPrompt reports whether a user entry is something the user (or a host) typed: a string content
+// or a text block, as opposed to a tool_result batch. Cross-session messages and Vineyard prompts
+// look exactly like typed ones.
+func isPrompt(e map[string]any) bool {
+	m := msg(e)
+	if m == nil {
+		return false
+	}
+	if s, ok := m["content"].(string); ok {
+		return strings.TrimSpace(s) != ""
+	}
+	for _, b := range blocks(e) {
+		if str(b["type"]) == "text" {
+			return true
+		}
+	}
+	return false
 }

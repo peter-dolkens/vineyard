@@ -36,6 +36,18 @@ type SpawnOptions struct {
 	Resume         string   `json:"resume,omitempty"` // existing session id to continue
 	Name           string   `json:"name,omitempty"`
 	AllowedTools   []string `json:"allowedTools,omitempty"`
+	// Recover is the AskUserQuestion the session was blocked on when it was taken over (its
+	// transcript's dangling tool_use). The question is shown again as a pending request of kind
+	// PendingRecovered and the answer goes in as a user message, since there is no control_request
+	// to reply to; the resumed Claude still has the question in its context and reads the answer
+	// as such (verified against Claude Code 2.1.280).
+	Recover *RecoveredQuestion `json:"recover,omitempty"`
+}
+
+// RecoveredQuestion is a pending AskUserQuestion carried over a takeover: the tool_use id and input.
+type RecoveredQuestion struct {
+	ToolUseID string          `json:"toolUseId"`
+	Input     json.RawMessage `json:"input"`
 }
 
 type proc struct {
@@ -205,6 +217,9 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 		cmd: cmd, stdin: stdin, done: make(chan struct{}), ctl: map[string]chan ctlReply{},
 		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
 	}
+	if o.Resume != "" && o.Recover != nil && len(o.Recover.Input) > 0 {
+		p.info.Pending = recoveredPending(o.Recover, time.Now().UnixMilli())
+	}
 	m.mu.Lock()
 	m.procs[sid] = p
 	m.mu.Unlock()
@@ -262,11 +277,13 @@ func (m *Manager) Has(sid string) bool {
 }
 
 // Send delivers a user prompt; Claude reads it between tool calls or starts a new turn when idle.
+// A recovered question still on show is taken as answered in prose and cleared.
 func (m *Manager) Send(sid, text string) error {
 	p, err := m.get(sid)
 	if err != nil {
 		return err
 	}
+	m.clearRecovered(p)
 	return m.write(p, map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": []map[string]any{{"type": "text", "text": text}}},
@@ -286,8 +303,28 @@ func (m *Manager) Respond(sid, requestID string, response json.RawMessage) error
 		m.mu.Unlock()
 		return fmt.Errorf("request %s is not pending", requestID)
 	}
+	recovered := p.info.Pending.Kind == model.PendingRecovered
+	pending := p.info.Pending
 	p.info.Pending = nil
+	if recovered {
+		p.info.RecoveredDone = pending.ToolUseID
+	}
 	m.mu.Unlock()
+	if recovered {
+		// No control_request exists for a question carried over a takeover: the answer is a prompt,
+		// worded like the tool_result Claude Code writes when the user answers in its own UI.
+		text := recoveredAnswerText(pending.Input, response)
+		if text == "" {
+			m.changed()
+			return nil // dismissed without an answer: Claude asks again if it still needs one
+		}
+		err = m.write(p, map[string]any{
+			"type":    "user",
+			"message": map[string]any{"role": "user", "content": []map[string]any{{"type": "text", "text": text}}},
+		})
+		m.changed()
+		return err
+	}
 	err = m.write(p, map[string]any{
 		"type":     "control_response",
 		"response": map[string]any{"subtype": "success", "request_id": requestID, "response": response},
@@ -805,6 +842,22 @@ func (m *Manager) Merge(machineID string, agents []model.Agent) []model.Agent {
 				a.ContextAt = info.Context.At
 			}
 		}
+		if info.RecoveredDone != "" {
+			// The answered question is still a dangling tool_use in the transcript until Claude Code
+			// appends the prompt that carries the answer (about a second); do not show it as pending.
+			kept := a.PendingTools[:0:0]
+			for _, pt := range a.PendingTools {
+				if pt.ID != info.RecoveredDone {
+					kept = append(kept, pt)
+				}
+			}
+			if len(kept) != len(a.PendingTools) {
+				a.PendingTools = kept
+				if a.State == model.StateQuestion {
+					a.State, a.StateDetail = model.StateWorking, "Responding to prompt…"
+				}
+			}
+		}
 		if info.Pending != nil {
 			if info.Pending.Kind == model.PendingElicitation {
 				a.State = model.StateQuestion
@@ -831,4 +884,71 @@ func questionSummary(input json.RawMessage) string {
 		return v.Questions[0].Question
 	}
 	return "Waiting for your answer"
+}
+
+// recoveredPending is the pending request shown for a question carried over a takeover. Its request
+// id is derived from the tool_use id so a viewer can tell it apart and Respond can find it.
+func recoveredPending(r *RecoveredQuestion, now int64) *model.PendingRequest {
+	return &model.PendingRequest{
+		RequestID: "recovered:" + r.ToolUseID, ToolName: "AskUserQuestion", DisplayName: "AskUserQuestion",
+		Input: r.Input, ToolUseID: r.ToolUseID, RequiresUserInteraction: true, At: now, Kind: model.PendingRecovered,
+	}
+}
+
+func (m *Manager) clearRecovered(p *proc) {
+	m.mu.Lock()
+	cleared := p.info.Pending != nil && p.info.Pending.Kind == model.PendingRecovered
+	if cleared {
+		p.info.RecoveredDone = p.info.Pending.ToolUseID
+		p.info.Pending = nil
+	}
+	m.mu.Unlock()
+	if cleared {
+		m.changed()
+	}
+}
+
+// recoveredAnswerText turns the webview's answer to a recovered question ({"behavior":"allow",
+// "updatedInput":{...,"answers":{question:answer}}}) into the prompt that carries it, in the words
+// of the tool_result Claude Code writes for an answered AskUserQuestion. Questions are listed in the
+// order asked; "" when nothing was answered or the answer was a deny.
+func recoveredAnswerText(input json.RawMessage, response json.RawMessage) string {
+	var resp struct {
+		Behavior     string `json:"behavior"`
+		UpdatedInput struct {
+			Answers map[string]string `json:"answers"`
+		} `json:"updatedInput"`
+	}
+	if json.Unmarshal(response, &resp) != nil || resp.Behavior == "deny" || len(resp.UpdatedInput.Answers) == 0 {
+		return ""
+	}
+	var q struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	_ = json.Unmarshal(input, &q)
+	var parts []string
+	used := map[string]bool{}
+	for _, item := range q.Questions {
+		if a, ok := resp.UpdatedInput.Answers[item.Question]; ok && strings.TrimSpace(a) != "" {
+			parts = append(parts, fmt.Sprintf("%q=%q", item.Question, a))
+			used[item.Question] = true
+		}
+	}
+	rest := make([]string, 0, len(resp.UpdatedInput.Answers))
+	for k := range resp.UpdatedInput.Answers {
+		if !used[k] && strings.TrimSpace(resp.UpdatedInput.Answers[k]) != "" {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		parts = append(parts, fmt.Sprintf("%q=%q", k, resp.UpdatedInput.Answers[k]))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[Vineyard resumed this session while your AskUserQuestion was waiting; the tool call was dropped, so here is the user's answer.]\n" +
+		"Your questions have been answered: " + strings.Join(parts, ", ") + ". You can now continue with these answers in mind."
 }

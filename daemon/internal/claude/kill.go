@@ -32,3 +32,16 @@ func Terminate(pid int) error {
 	}()
 	return nil
 }
+
+// WaitExit blocks until the process is gone or the timeout passes, reporting which. Terminate
+// escalates to SIGKILL after 5 s, so a timeout a little above that catches everything.
+func WaitExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return !processAlive(pid)
+}

@@ -50,6 +50,8 @@ export interface PendingTool {
   id: string;
   name: string;
   summary?: string;
+  /** Full tool input for an AskUserQuestion (questions, options), so the question can be shown and re-asked after a takeover. */
+  input?: unknown;
 }
 
 export interface Agent {
@@ -57,6 +59,8 @@ export interface Agent {
   provider: 'claude' | string;
   machineId: string;
   workspacePath: string;
+  /** The directory the process runs in; differs from workspacePath only for scratchpad sessions, which are listed under their parent project. */
+  cwd?: string;
   sessionId: string;
   pid?: number;
   alive: boolean;
@@ -138,7 +142,8 @@ export interface PendingRequest {
   description?: string;
   at: number;
   /** What is asked: a can_use_tool permission prompt (missing or 'permission') or an MCP server's elicitation. */
-  kind?: 'permission' | 'elicitation';
+  /** 'recovered': an AskUserQuestion carried over a takeover; no control_request behind it, the answer is sent as a prompt. */
+  kind?: 'permission' | 'elicitation' | 'recovered';
   elicitation?: ElicitationRequest;
 }
 
@@ -186,6 +191,8 @@ export interface ManagedInfo {
   ready: boolean;
   resumed?: boolean;
   pending?: PendingRequest;
+  /** Tool_use id of a recovered question already answered; the daemon hides its dangling tool_use until the transcript catches up. */
+  recoveredDone?: string;
   turns: number;
   costUsd?: number;
   exited: boolean;

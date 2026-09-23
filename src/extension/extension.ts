@@ -13,6 +13,11 @@ import { Updater } from './updater.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 import { subagentAsAgent } from '../core/subagents.ts';
 
+/** How a session's state reads in a sentence ("… is running a tool"). */
+const STATE_WORDS: Record<string, string> = {
+  working: 'working', thinking: 'thinking', tool: 'running a tool', shell: 'in a shell', permission: 'waiting for permission', question: 'asking a question', idle: 'idle',
+};
+
 export function activate(context: vscode.ExtensionContext): void {
   const log = vscode.window.createOutputChannel('Vineyard');
   const client = new DaemonClient(log);
@@ -196,7 +201,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   cmd('vineyard.showTranscript', async (node?: Node) => {
     const a = await agentOf(node);
-    if (a) chats.open(a.machine, a.agent);
+    if (!a) return;
+    if (canTakeOver(a) && vscode.workspace.getConfiguration('vineyard').get<string>('chat.observed', 'observe') === 'takeOver') {
+      await takeOverFlow(a, true);
+      return;
+    }
+    chats.open(a.machine, a.agent);
   });
 
   cmd('vineyard.showRawTranscript', async (node?: Node) => {
@@ -222,19 +232,25 @@ export function activate(context: vscode.ExtensionContext): void {
   const spawnFlow = async (machine: MachineView, cwd: string, resume?: string) => {
     if (!machine.online) throw new Error(`${machine.name} is offline`);
     const cfg = vscode.workspace.getConfiguration('vineyard');
-    const remembered = resume ? {} : sessionPrefs.get(machine.id, cwd);
+    // A resumed session keeps its own permission mode (Claude Code restores it); only new ones get
+    // the configured default.
+    const remembered = resume ? {} : { ...sessionPrefs.get(machine.id, cwd), permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default') };
     const res = await fleet.client.request<{ sessionId: string }>(
       'spawn',
       machine.id,
-      { cwd, ...remembered, permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default'), resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
+      { cwd, ...remembered, resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
       30_000,
     );
-    // Wait briefly for the agent to appear in the fleet, then open its chat.
-    const id = `${machine.id}::${res.sessionId}`;
+    openWhenManaged(machine, res.sessionId);
+  };
+
+  /** Wait briefly for a just-spawned session to report as managed, then open its chat. */
+  const openWhenManaged = (machine: MachineView, sessionId: string) => {
+    const id = `${machine.id}::${sessionId}`;
     const deadline = Date.now() + 15_000;
     const tryOpen = () => {
       const found = fleet.findAgent(id);
-      if (found) {
+      if (found && found.agent.managed && !found.agent.managed.exited) {
         chats.open(found.machine, found.agent);
         return;
       }
@@ -243,6 +259,49 @@ export function activate(context: vscode.ExtensionContext): void {
     };
     tryOpen();
   };
+
+  /** A live session on an online machine that Vineyard does not drive: the Claude pane, a terminal. */
+  const canTakeOver = (a: AgentNode): boolean =>
+    a.machine.online && a.agent.alive && a.agent.kind !== 'subagent' && !(a.agent.managed && !a.agent.managed.exited);
+
+  /**
+   * Bring an observed session under Vineyard's control: the daemon on that machine ends its process,
+   * waits for it to exit and resumes the session as its own child, carrying over a question the
+   * session was blocked on so it can be answered from the chat. Idle sessions and ones waiting on a
+   * question lose nothing; a session mid-turn loses the running tool's output (Claude continues
+   * without it), so those ask first. `auto` is the chat-open path: it offers to just watch instead.
+   */
+  const takeOverFlow = async (a: AgentNode, auto: boolean) => {
+    if (!canTakeOver(a)) {
+      chats.open(a.machine, a.agent);
+      return;
+    }
+    const quiet = a.agent.state === 'idle' || a.agent.state === 'question';
+    if (!quiet) {
+      const what = a.agent.state === 'permission' ? 'The tool waiting for permission is dropped; Claude continues without it.' : "The turn in progress is cut short: the running tool's output is lost and Claude continues without it.";
+      const pick = await vscode.window.showWarningMessage(
+        `${agentLabel(a.agent)} on ${a.machine.name} is ${STATE_WORDS[a.agent.state] ?? a.agent.state}. Take it over now?`,
+        { modal: true, detail: `${what} The pane or terminal it runs in loses the session; the transcript is kept and continues here.` },
+        'Take over',
+        ...(auto ? ['Just watch'] : []),
+      );
+      if (pick !== 'Take over') {
+        if (pick === 'Just watch') chats.open(a.machine, a.agent);
+        return;
+      }
+    }
+    const res = await fleet.client.request<{ sessionId: string; recovered?: boolean }>('takeover', a.machine.id, { sessionId: a.agent.sessionId }, 30_000);
+    openWhenManaged(a.machine, res.sessionId);
+  };
+
+  cmd('vineyard.takeOver', async (node?: Node) => {
+    const a = await agentOf(node);
+    if (!a) return;
+    sessionOnly(a, 'take over');
+    if (a.agent.managed && !a.agent.managed.exited) throw new Error("That session is already under Vineyard's control.");
+    if (!a.agent.alive) throw new Error('That session has exited; use Resume Under Vineyard Control instead.');
+    await takeOverFlow(a, false);
+  });
 
   /** Pick a workspace on a machine: a known one, or any path. Returns undefined when cancelled. */
   const workspaceOf = async (machine: MachineView, allowAll: boolean): Promise<string | undefined> => {

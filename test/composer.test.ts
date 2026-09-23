@@ -145,6 +145,8 @@ test('an observed session keeps the settings rows but marks them off, and has no
   assert.deepEqual(off, ['compact', 'clear', 'model', 'effort', 'mode', 'interrupt']);
   assert.ok(!acts.some((a) => a.id.startsWith('slash:')));
   assert.equal(acts.find((a) => a.id === 'stop')!.label, 'Terminate session');
+  assert.ok(acts.find((a) => a.id === 'takeOver') && !acts.find((a) => a.id === 'takeOver')!.disabled, 'an observed session can be taken over');
+  assert.ok(!buildActions(base).some((a) => a.id === 'takeOver'), 'a managed session has no take-over row');
   assert.match(acts.find((a) => a.id === 'model')!.detail!, /Only sessions started by Vineyard/);
 });
 
@@ -154,7 +156,7 @@ test('offline and subagent views are mostly read-only', () => {
   assert.match(offline.find((a) => a.id === 'attach')!.detail!, /falcon is offline/);
   assert.ok(offline.find((a) => a.id === 'login')!.disabled);
   const sub = buildActions({ ...base, subagent: true, managedLive: false });
-  for (const id of ['attach', 'rename', 'stop', 'resumeTerminal']) assert.ok(sub.find((a) => a.id === id)!.disabled, id);
+  for (const id of ['attach', 'rename', 'stop', 'resumeTerminal', 'takeOver']) assert.ok(sub.find((a) => a.id === id)!.disabled, id);
   assert.ok(!sub.find((a) => a.id === 'rawTranscript')!.disabled);
 });
 

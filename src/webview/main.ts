@@ -232,6 +232,7 @@ function runAction(id: string, arg?: string) {
     case 'stop':
     case 'login':
     case 'openWorkspace':
+    case 'takeOver':
     case 'openTerminal':
       vscode.postMessage({ type: id });
       break;
@@ -840,14 +841,27 @@ function renderCards() {
     return;
   }
   const q = agent.pendingTools.find((t) => t.name === 'AskUserQuestion');
-  if (q && agent.alive && agent.state === 'question') {
+  if (q && agent.alive && agent.state === 'question' && !(agent.managed && !agent.managed.exited)) {
     cardsEl.appendChild(observedQuestionCard(q.summary ?? 'The agent asked a question'));
   } else if (agent.alive && agent.state === 'permission' && !agent.managed) {
     const c = el('div', 'card notice');
     c.appendChild(el('div', 'card-title', 'Waiting for permission in its own UI'));
     c.appendChild(el('div', 'card-text', `${agent.stateDetail ?? ''} — approve it in the Claude Code pane or terminal on ${machine.name}. Messages you send here are read once it continues.`));
+    c.appendChild(el('div', 'card-hint', 'Taking the session over drops this tool call; Claude continues without it and asks again here if it still needs it.'));
+    c.appendChild(takeOverButton('Take over anyway', false));
     cardsEl.appendChild(c);
   }
+}
+
+/** The button that brings an observed session under Vineyard's control (see vineyard.takeOver). */
+function takeOverButton(label: string, primary: boolean): HTMLElement {
+  const b = el('button', primary ? 'primary' : undefined, label);
+  b.title = `End the process on ${machine?.name} and resume the session as a child of its daemon`;
+  b.onclick = () => {
+    b.setAttribute('disabled', '');
+    vscode.postMessage({ type: 'takeOver' });
+  };
+  return b;
 }
 
 function questionCard(p: Pending): HTMLElement {
@@ -855,6 +869,7 @@ function questionCard(p: Pending): HTMLElement {
   const qs: any[] = Array.isArray(p.input?.questions) ? p.input.questions : [];
   const answers: Record<string, string> = {};
   card.appendChild(el('div', 'card-title', qs.length > 1 ? `Claude has ${qs.length} questions` : 'Claude has a question'));
+  if (p.kind === 'recovered') card.appendChild(el('div', 'card-hint', 'Asked before Vineyard took this session over. Your answer goes to Claude as a message; it still has the question in mind.'));
   for (const q of qs) {
     const wrap = el('div', 'q');
     if (q.header) wrap.appendChild(el('div', 'q-header', String(q.header)));
@@ -909,10 +924,13 @@ function observedQuestionCard(summary: string): HTMLElement {
   const card = el('div', 'card question observed');
   card.appendChild(el('div', 'card-title', 'Claude asked a question in its own UI'));
   card.appendChild(el('div', 'card-text', summary));
-  card.appendChild(el('div', 'card-hint', `Claude Code only accepts the answer in the pane or terminal where the session runs (${machine?.name}). Open the workspace there, or send a message below; it is read once the question is dismissed.`));
-  const b = el('button', 'primary', `Open on ${machine?.name}`);
+  card.appendChild(el('div', 'card-hint', `Claude Code only accepts the answer in the pane or terminal where the session runs (${machine?.name}). Take the session over and the question is asked again here, or open the workspace there.`));
+  const row = el('div', 'btn-row');
+  row.appendChild(takeOverButton('Take over and answer here', true));
+  const b = el('button', undefined, `Open on ${machine?.name}`);
   b.onclick = () => vscode.postMessage({ type: 'openWorkspace' });
-  card.appendChild(b);
+  row.appendChild(b);
+  card.appendChild(row);
   return card;
 }
 

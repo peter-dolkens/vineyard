@@ -27,6 +27,7 @@ const (
 	toolResult   = `{"type":"user","timestamp":"2026-09-16T14:32:17.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}`
 	finalText    = `{"type":"assistant","timestamp":"2026-09-16T14:32:20.000Z","effort":"high","message":{"model":"claude-fable-5-1","role":"assistant","content":[{"type":"text","text":"# Done\nAll good."}],"stop_reason":"end_turn"}}`
 	question     = `{"type":"assistant","timestamp":"2026-09-16T14:32:21.000Z","message":{"model":"claude-fable-5-1","role":"assistant","content":[{"type":"tool_use","id":"toolu_q","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","header":"DB"}]}}],"stop_reason":"tool_use"}}`
+	answerPrompt = `{"type":"user","timestamp":"2026-09-16T14:32:25.000Z","permissionMode":"default","cwd":"/w","sessionId":"s1","version":"2.1.280","message":{"role":"user","content":"Postgres"}}`
 	title        = `{"type":"ai-title","aiTitle":"Do the thing","sessionId":"s1"}`
 	lastPrompt   = `{"type":"last-prompt","lastPrompt":"do the thing","sessionId":"s1"}`
 	compacted    = `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info","timestamp":"2026-09-16T14:32:30.000Z","compactMetadata":{"trigger":"manual","preTokens":49996}}`
@@ -47,6 +48,10 @@ func TestDeriveStates(t *testing.T) {
 		{"finished", []string{userPrompt, thinking, toolUse, toolResult, finalText, title, lastPrompt}, model.StateIdle, "Done"},
 		{"question", []string{userPrompt, toolUse, toolResult, question}, model.StateQuestion, "Which database?"},
 		{"sidechain ignored", []string{userPrompt, toolUse, toolResult, finalText, sidechainUse}, model.StateIdle, "Done"},
+		// A question left unanswered when the process was killed: after a resume the answer arrives as
+		// a prompt and the tool_use never gets a result. The prompt closes it.
+		{"question answered by a later prompt", []string{userPrompt, question, answerPrompt}, model.StateWorking, "Responding to prompt…"},
+		{"question closed, turn finished", []string{userPrompt, question, answerPrompt, finalText}, model.StateIdle, "Done"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -117,5 +122,24 @@ func TestDeriveContextTokens(t *testing.T) {
 	d = DeriveFromTranscript(parse(t, userPrompt, compacted, thinking))
 	if d.ContextTokens != 2+28336+21658 {
 		t.Fatalf("the next call's usage should count again, got %d", d.ContextTokens)
+	}
+}
+
+// The pending AskUserQuestion carries its full input, so a viewer (or a takeover) can ask it again;
+// other tools carry only the summary.
+func TestPendingQuestionCarriesInput(t *testing.T) {
+	d := DeriveFromTranscript(parse(t, userPrompt, toolUse, toolResult, question))
+	if len(d.PendingTools) != 1 || d.PendingTools[0].Name != "AskUserQuestion" {
+		t.Fatalf("pending = %+v", d.PendingTools)
+	}
+	var in struct {
+		Questions []struct{ Question, Header string } `json:"questions"`
+	}
+	if err := json.Unmarshal(d.PendingTools[0].Input, &in); err != nil || len(in.Questions) != 1 || in.Questions[0].Question != "Which database?" {
+		t.Fatalf("input = %s (%v)", d.PendingTools[0].Input, err)
+	}
+	d = DeriveFromTranscript(parse(t, userPrompt, thinking, toolUse))
+	if len(d.PendingTools) != 1 || d.PendingTools[0].Input != nil {
+		t.Fatalf("Bash pending = %+v, want no input", d.PendingTools)
 	}
 }
