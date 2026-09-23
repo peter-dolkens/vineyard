@@ -32,7 +32,8 @@ import (
 const (
 	helloTimeout   = 10 * time.Second
 	dialTimeout    = 6 * time.Second
-	pingEvery      = 30 * time.Second // outbound side only
+	dialStagger    = 250 * time.Millisecond // head start each address gets over the next in dialPeer
+	pingEvery      = 30 * time.Second       // outbound side only
 	deadAfter      = 95 * time.Second
 	collectEvery   = 1 * time.Second
 	viewerGrace    = 30 * time.Second // keep peer subscriptions this long after the last viewer leaves
@@ -167,7 +168,7 @@ func New(opts Options) (*Node, error) {
 	n.serverTLS.Certificates = srv.Certificates
 	n.awake.Disabled = !opts.Config.KeepAwake()
 	for _, p := range opts.Config.Peers {
-		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: []string{p.Addr}}
+		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: config.MergeAddrs(p.Addr, p.Addrs, nil)}
 	}
 	n.loadCache()
 	return n, nil
@@ -238,21 +239,77 @@ func (n *Node) acceptOne(raw net.Conn) {
 	n.serve(l)
 }
 
+// dialPeer tries every candidate address, happy-eyeballs style: each gets dialStagger's head start
+// over the next, the first fleet-authenticated connection wins, and any that complete afterwards
+// are closed. A machine whose primary answers costs one connection; a dead primary costs a quarter
+// of a second instead of a whole dial timeout.
+func dialPeer(addrs []string, tcfg *tls.Config) (*tls.Conn, string, error) {
+	if len(addrs) == 0 {
+		return nil, "", errors.New("no addresses to dial")
+	}
+	type result struct {
+		tc   *tls.Conn
+		addr string
+		err  error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout+time.Duration(len(addrs)-1)*dialStagger)
+	defer cancel()
+	results := make(chan result, len(addrs))
+	failed := make(chan struct{}, len(addrs)) // lets the next address start early when one fails fast
+	started := 0
+	start := func() {
+		a := addrs[started]
+		started++
+		go func() {
+			d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: dialTimeout}, Config: tcfg}
+			c, err := d.DialContext(ctx, "tcp", a)
+			if err != nil {
+				failed <- struct{}{}
+				results <- result{addr: a, err: err}
+				return
+			}
+			results <- result{tc: c.(*tls.Conn), addr: a}
+		}()
+	}
+	start()
+	var lastErr error
+	for done := 0; done < len(addrs); {
+		var next <-chan time.Time
+		if started < len(addrs) {
+			next = time.After(dialStagger)
+		}
+		select {
+		case <-next:
+			start()
+		case <-failed:
+			if started < len(addrs) {
+				start()
+			}
+		case r := <-results:
+			done++
+			if r.err != nil {
+				lastErr = fmt.Errorf("%s: %w", r.addr, r.err)
+				continue
+			}
+			// Winner. Close whatever else is still in flight once it lands.
+			go func(pending int) {
+				for ; pending > 0; pending-- {
+					if o := <-results; o.tc != nil {
+						o.tc.Close()
+					}
+				}
+			}(started - done)
+			return r.tc, r.addr, nil
+		}
+	}
+	return nil, "", lastErr
+}
+
 func (n *Node) dial(p *peerState) {
-	d := &net.Dialer{Timeout: dialTimeout}
 	n.mu.Lock()
 	candidates := append([]string(nil), p.addrs...)
 	n.mu.Unlock()
-	var raw *tls.Conn
-	var err error
-	var used string
-	for _, addr := range candidates {
-		raw, err = tls.DialWithDialer(d, "tcp", addr, n.clientTLS)
-		if err == nil {
-			used = addr
-			break
-		}
-	}
+	raw, used, err := dialPeer(candidates, n.clientTLS)
 	n.mu.Lock()
 	if err != nil {
 		p.dialing = false
@@ -278,7 +335,7 @@ func (n *Node) dial(p *peerState) {
 		// Remember what actually worked as the primary for next time.
 		p.addr = used
 		p.addrs = promote(p.addrs, used)
-		persist = n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: used})
+		persist = n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: used, Addrs: p.addrs})
 	}
 	n.mu.Unlock()
 	if persist {
@@ -308,7 +365,8 @@ func (n *Node) dial(p *peerState) {
 	}()
 }
 
-func (n *Node) hello(role string) protocol.Hello {
+// selfAddrs is every address this machine can be reached at: the advertised name, then LAN IPs.
+func (n *Node) selfAddrs() []string {
 	_, port, _ := net.SplitHostPort(n.cfg.Listen)
 	addrs := []string{}
 	if n.cfg.Advertise != "" {
@@ -319,10 +377,61 @@ func (n *Node) hello(role string) protocol.Hello {
 			addrs = append(addrs, a)
 		}
 	}
+	return addrs
+}
+
+// hello must be called without n.mu held.
+func (n *Node) hello(role string) protocol.Hello {
 	return protocol.Hello{
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
-		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: addrs,
+		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: n.selfAddrs(),
+		Peers: n.knownPeers(),
 	}
+}
+
+// knownPeers is what our hello tells the other side about everyone else, so a machine that reaches
+// any one member learns how to reach all of them: one added over SSH, or joined from the command
+// line, shows up everywhere without ever being watched itself.
+func (n *Node) knownPeers() []protocol.PeerAddr {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]protocol.PeerAddr, 0, len(n.peers))
+	for _, p := range n.peers {
+		if len(p.addrs) > 0 {
+			out = append(out, protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: append([]string(nil), p.addrs...)})
+		}
+	}
+	return out
+}
+
+// learnPeersLocked folds a hello's peer list into what we know. Unknown machines are added (and
+// dialed by reconcileSubscriptions while someone is watching); known ones only gain candidates,
+// after their own, so second-hand news never displaces what we have seen work. Machines removed
+// here are skipped. Returns true if config changed.
+func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) bool {
+	changed := false
+	for _, pa := range peers {
+		if pa.MachineID == "" || pa.MachineID == n.cfg.MachineID || n.cfg.IsRemoved(pa.MachineID) {
+			continue
+		}
+		p := n.peers[pa.MachineID]
+		if p == nil {
+			p = &peerState{id: pa.MachineID}
+			n.peers[pa.MachineID] = p
+		}
+		p.addrs = config.MergeAddrs(p.addr, p.addrs, append([]string{pa.Addr}, pa.Addrs...))
+		if len(p.addrs) == 0 {
+			delete(n.peers, pa.MachineID)
+			continue
+		}
+		if p.addr == "" {
+			p.addr = p.addrs[0]
+		}
+		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: p.addrs}) {
+			changed = true
+		}
+	}
+	return changed
 }
 
 // promote moves addr to the front of list (adding it if absent), deduplicating.
@@ -336,19 +445,11 @@ func promote(list []string, addr string) []string {
 	return out
 }
 
-// addCandidates appends addresses we have not seen for this peer, keeping the primary first.
+// addCandidates merges addresses the peer itself reported (or we saw it at). The primary (last
+// successful dial) stays first; these count as just seen and go ahead of older candidates, so the
+// MaxAddrs cap evicts whatever has gone unused longest.
 func addCandidates(p *peerState, addrs ...string) {
-	seen := map[string]bool{}
-	for _, a := range p.addrs {
-		seen[a] = true
-	}
-	for _, a := range addrs {
-		if a == "" || seen[a] {
-			continue
-		}
-		seen[a] = true
-		p.addrs = append(p.addrs, a)
-	}
+	p.addrs = config.MergeAddrs(p.addr, addrs, p.addrs)
 	if p.addr == "" && len(p.addrs) > 0 {
 		p.addr = p.addrs[0]
 	}
@@ -437,13 +538,14 @@ func (n *Node) register(l *link, h protocol.Hello) {
 			}
 		}
 	}
-	hadAddr := p.addr != ""
 	addCandidates(p, learned...)
-	if !hadAddr && p.addr != "" {
-		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr}) {
-			if err := n.cfg.Save(); err != nil {
-				n.logf("save config: %v", err)
-			}
+	persist := p.addr != "" && n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr, Addrs: p.addrs})
+	if n.learnPeersLocked(h.Peers) {
+		persist = true
+	}
+	if persist {
+		if err := n.cfg.Save(); err != nil {
+			n.logf("save config: %v", err)
 		}
 	}
 	p.lastSeen = time.Now()

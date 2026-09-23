@@ -122,9 +122,8 @@ chmod +x vineyardd-linux-amd64
 ```
 
 `join` accepts `--name`, `--machine-id`, `--port` and `--advertise` if the defaults (hostname, 7734)
-are wrong for this machine. A machine that nobody watches from never connects out, so see
-[Other machines don't show the new one](#other-machines-dont-show-the-new-one) to make it visible
-everywhere.
+are wrong for this machine. The inviter tells every machine it connects to about the newcomer, so
+it appears on the others the next time they look.
 
 ## 2b. Add a machine over SSH
 
@@ -179,7 +178,16 @@ Repeat step 2 for each further machine, from whichever machine is convenient.
 each, in `~/.vineyard/config.json`. It starts with what setup or the invite told it. Every
 connection then also carries the other side's advertised address and LAN IPs plus the address it
 was actually seen at, and the daemon keeps whichever address works. A laptop that changes IP
-therefore keeps working without anyone editing config.
+therefore keeps working without anyone editing config. Each machine keeps up to 10 addresses per
+member, most recently used first, so one that moves between networks (home, office, VPN) finds its
+way back without the list growing forever. The daemon tries them a quarter of a second apart, in that
+order, and uses the first that answers.
+
+**Machines tell each other about the rest of the fleet.** The first message on every connection
+also lists every other machine the sender knows and how to reach it. So a machine that reaches any
+one member learns about all of them, including one added over SSH or joined from the command line
+that nobody has ever watched from. The list is sent once per connection and never passed on or
+repeated.
 
 **Only the watching machine connects out.** The machine whose VS Code has the Vineyard view open
 dials the others. A daemon that nobody is watching holds no connections at all. It still listens on
@@ -204,8 +212,10 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
 
 ## Removing, leaving and rejoining
 
-* **Remove a machine:** right-click it in the tree, then *Remove Machine*. *Remove* only forgets it on
-  this machine. *Remove and uninstall daemon* also runs `vineyardd uninstall` on it over SSH.
+* **Remove a machine:** right-click it in the tree, then *Remove Machine*. *Remove* forgets it on
+  this machine and stops this machine learning it back from the others, who still list it until you
+  remove it there too. *Remove and uninstall daemon* also runs `vineyardd uninstall` on it over SSH.
+  Adding it again, or the machine itself connecting, puts it back.
 * **Uninstall on a machine itself:** `~/.vineyard/bin/vineyardd uninstall` stops and removes the
   service. Delete `~/.vineyard` as well to remove its config and its copy of the fleet key.
 * **Rejoin or move to another fleet:** *Join Fleet with Invite Code* with a code from that fleet. You
@@ -236,11 +246,11 @@ stays in your list and connects as soon as it can.
 
 #### Other machines don't show the new one
 
-Daemons do not pass their machine lists on to each other. A member learns about a new machine only
-when the new machine connects to it, and a machine connects out only while its own Vineyard view is
-open. A joiner using VS Code does this straight away. A machine added over SSH, or joined from the
-command line, and never watched, shows only on the machine that added it. Either open Vineyard
-once on the new machine, or tell each other watching machine about it:
+A watching machine learns about a new one from any member it connects to that already knows it.
+That needs daemon 0.3.21 or later on both; older daemons update themselves the first time a Vineyard
+view sees them. If the new machine appears but stays *never seen* or *unreachable*, the watching
+machine knows about it but cannot reach it: see the addresses and firewall notes above. As a last
+resort, tell a machine about another by hand:
 
 ```sh
 ~/.vineyard/bin/vineyardd peer add orchard.local orchard.local:7734

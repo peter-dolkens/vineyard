@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,8 +36,11 @@ type Config struct {
 	Listen    string              `json:"listen"`              // e.g. ":7734"
 	Advertise string              `json:"advertise,omitempty"` // host:port peers should dial
 	Peers     []protocol.PeerAddr `json:"peers"`
-	ClaudeDir string              `json:"claudeDir,omitempty"`
-	ClaudeBin string              `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
+	// Removed lists machines removed from this machine's view. Other members still mention them in
+	// their hellos; this stops them being learned back. Adding one again takes it off the list.
+	Removed   []string `json:"removed,omitempty"`
+	ClaudeDir string   `json:"claudeDir,omitempty"`
+	ClaudeBin string   `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
 	// DisableManaged turns off spawning sessions from Vineyard on this machine.
 	DisableManaged bool   `json:"disableManaged,omitempty"`
 	TailLines      int    `json:"tailLines,omitempty"`
@@ -109,32 +113,85 @@ func (c *Config) Save() error {
 	return os.Rename(tmp, Path(ConfigFile))
 }
 
-// AddPeer merges a peer address; returns true if anything changed.
-func (c *Config) AddPeer(p protocol.PeerAddr) bool {
-	if p.MachineID == "" || p.Addr == "" || p.MachineID == c.MachineID {
-		return false
-	}
-	for i, e := range c.Peers {
-		if e.MachineID == p.MachineID {
-			if e.Addr == p.Addr {
-				return false
+// MaxAddrs caps the candidates kept per machine. The list is most recently used first, so when a
+// machine moves between networks its new addresses push out the ones it has not used for longest,
+// and a laptop that gets a new DHCP lease every day does not grow every member's config forever.
+const MaxAddrs = 10
+
+// MergeAddrs returns primary, then fresh, then old, without blanks or duplicates, capped at
+// MaxAddrs: a least-recently-used list where primary and fresh are the ones just used or seen.
+func MergeAddrs(primary string, fresh, old []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range [][]string{{primary}, fresh, old} {
+		for _, a := range list {
+			if a == "" || seen[a] || len(out) == MaxAddrs {
+				continue
 			}
-			c.Peers[i].Addr = p.Addr
-			return true
+			seen[a] = true
+			out = append(out, a)
 		}
 	}
-	c.Peers = append(c.Peers, p)
+	return out
+}
+
+// AddPeer merges what we know about a peer and returns true if anything changed. p.Addr, when set,
+// becomes the primary; p.Addrs are added as candidates. Adding a removed machine un-removes it.
+func (c *Config) AddPeer(p protocol.PeerAddr) bool {
+	if p.MachineID == "" || (p.Addr == "" && len(p.Addrs) == 0) || p.MachineID == c.MachineID {
+		return false
+	}
+	changed := c.unremove(p.MachineID)
+	for i, e := range c.Peers {
+		if e.MachineID != p.MachineID {
+			continue
+		}
+		primary := e.Addr
+		if p.Addr != "" {
+			primary = p.Addr
+		}
+		addrs := MergeAddrs(primary, p.Addrs, e.Addrs)
+		if primary == "" {
+			primary = addrs[0]
+		}
+		if primary == e.Addr && slices.Equal(addrs, e.Addrs) {
+			return changed
+		}
+		c.Peers[i].Addr = primary
+		c.Peers[i].Addrs = addrs
+		return true
+	}
+	addrs := MergeAddrs(p.Addr, p.Addrs, nil)
+	c.Peers = append(c.Peers, protocol.PeerAddr{MachineID: p.MachineID, Addr: addrs[0], Addrs: addrs})
 	return true
 }
 
+// RemovePeer forgets a machine and records it as removed, so it is not learned back from other
+// members' hellos.
 func (c *Config) RemovePeer(machineID string) bool {
+	changed := false
+	if machineID != "" && !c.IsRemoved(machineID) {
+		c.Removed = append(c.Removed, machineID)
+		changed = true
+	}
 	for i, e := range c.Peers {
 		if e.MachineID == machineID {
 			c.Peers = append(c.Peers[:i], c.Peers[i+1:]...)
 			return true
 		}
 	}
-	return false
+	return changed
+}
+
+func (c *Config) IsRemoved(machineID string) bool { return slices.Contains(c.Removed, machineID) }
+
+func (c *Config) unremove(machineID string) bool {
+	i := slices.Index(c.Removed, machineID)
+	if i < 0 {
+		return false
+	}
+	c.Removed = slices.Delete(c.Removed, i, i+1)
+	return true
 }
 
 func ShortName(host string) string {

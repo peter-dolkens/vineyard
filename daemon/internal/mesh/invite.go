@@ -170,8 +170,9 @@ func (n *Node) handleJoin(l *link) {
 		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "fleet certificate unavailable"})
 		return
 	}
+	selfAddrs := n.selfAddrs()
 	n.mu.Lock()
-	peers := []protocol.PeerAddr{{MachineID: n.cfg.MachineID, Addr: n.cfg.Advertise}}
+	peers := []protocol.PeerAddr{{MachineID: n.cfg.MachineID, Addr: n.cfg.Advertise, Addrs: selfAddrs}}
 	for _, p := range n.cfg.Peers {
 		if p.MachineID != j.MachineID {
 			peers = append(peers, p)

@@ -10,9 +10,13 @@ import (
 
 const Version = 1
 
+// PeerAddr is everything known about how to reach one machine. Addr is the primary (the last address
+// a dial succeeded on); Addrs holds up to 10 candidate host:port, most recently used or seen first,
+// primary first of all. Daemons older than 0.3.21 send and read Addr only.
 type PeerAddr struct {
-	MachineID string `json:"machineId"`
-	Addr      string `json:"addr"` // host:port
+	MachineID string   `json:"machineId"`
+	Addr      string   `json:"addr"` // host:port
+	Addrs     []string `json:"addrs,omitempty"`
 }
 
 // Envelope is decoded first to learn the message type.
@@ -30,7 +34,9 @@ type Hello struct {
 	Listen    string `json:"listen,omitempty"`
 	// Addrs lists every address the sender can be reached at (advertised name first, then LAN IPs),
 	// so peers survive stale DNS and DHCP changes without anyone editing config.
-	Addrs []string   `json:"addrs,omitempty"`
+	Addrs []string `json:"addrs,omitempty"`
+	// Peers is every other member the sender knows and how to reach it, sent once per connection so
+	// a machine that can reach any one member learns about all of them. It is never re-broadcast.
 	Peers []PeerAddr `json:"peers,omitempty"`
 }
 

@@ -30,6 +30,14 @@ use it.
   plus one 30 s ping per connection. When the last viewer leaves (30 s grace for reloads) everything is
   unsubscribed and torn down. There is no gossip and no periodic re-broadcast, so N machines cost at most
   N-1 connections per watching machine and zero bytes when nobody is looking.
+* **Membership spreads through hellos.** The hello that opens every connection carries the sender's
+  addresses and every other member it knows, with each one's candidate addresses: up to 10 per machine,
+  most recently used first (a successful dial or the machine reporting or presenting an address counts
+  as use; addresses heard second-hand queue behind, so they are evicted first). The receiver adds machines it has never heard of, and dials them while watched. Sent once per
+  connection, never forwarded, so a machine added over SSH or joined from the CLI reaches every view
+  without ever being watched itself. *Remove Machine* records the id in `removed` so other members'
+  hellos do not bring it back; adding it again or a direct connection from it clears that. Candidates
+  are dialed happy-eyeballs style, 250 ms apart, first fleet-authenticated connection wins.
 * **Sleeping machines are woken.** Daemons report their hardware addresses; when a watched peer stops
   answering, its neighbours send Wake-on-LAN magic packets for those addresses (LAN broadcast plus
   unicast) and open a connection to its SSH port so a Bonjour sleep proxy wakes it, at most once every
@@ -164,8 +172,8 @@ Press **F5** ("Run Vineyard") to launch an Extension Development Host. In the Vi
 3. **Add Machine** (alternative) – enter an SSH host. The extension detects the platform, copies the matching
    binary and the certificate, runs `init` with the current peer list, installs the service, and
    registers the new peer locally. Repeat for each machine, from any machine.
-4. Every daemon learns other peers' addresses from their hellos and persists them, so a machine that
-   was set up from `studio` can itself be the orchestrator later.
+4. Every daemon learns the other members and their addresses from hellos and persists them, so a
+   machine that was set up from `studio` can itself be the orchestrator later.
 
 Useful on any machine:
 
@@ -179,7 +187,7 @@ tail -f ~/.vineyard/vineyardd.log
 
 | Message | Direction | Purpose |
 | --- | --- | --- |
-| `hello {role: peer\|viewer, machineId, listen}` | both | identity + advertised address |
+| `hello {role: peer\|viewer, machineId, listen, addrs, peers}` | both | identity, every address it answers on, and every other member it knows (once per connection) |
 | `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
