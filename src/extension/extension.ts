@@ -8,7 +8,7 @@ import { Notifier } from './notify.ts';
 import { TRANSCRIPT_SCHEME, TranscriptProvider, transcriptUri } from './transcript.ts';
 import { Setup } from './setup.ts';
 import { ChatPanels } from './chatPanel.ts';
-import { SessionPrefStore } from './sessionPrefs.ts';
+import { SessionPrefStore, type SettingsDefaults } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 import { subagentAsAgent } from '../core/subagents.ts';
@@ -225,20 +225,27 @@ export function activate(context: vscode.ExtensionContext): void {
   // ---- managed sessions ---------------------------------------------------------------------
 
   /**
-   * Start (or resume) a managed session with no questions asked: the model and effort last chosen in
-   * that workspace (Claude Code's defaults if none), the configured permission mode, no first prompt.
-   * Everything is adjustable afterwards from the chat. A resumed session keeps its own settings.
+   * Start (or resume) a managed session with no questions asked: the model, effort and permission mode
+   * last chosen in that workspace; for the mode, vineyard.spawn.defaultPermissionMode when nothing was
+   * chosen; otherwise no flag, so Claude Code's own settings decide. No first prompt. Everything is
+   * adjustable afterwards from the chat. A resumed session keeps its own settings.
    */
   const spawnFlow = async (machine: MachineView, cwd: string, resume?: string) => {
     if (!machine.online) throw new Error(`${machine.name} is offline`);
     const cfg = vscode.workspace.getConfiguration('vineyard');
-    // A resumed session keeps its own permission mode (Claude Code restores it); only new ones get
-    // the configured default.
-    const remembered = resume ? {} : { ...sessionPrefs.get(machine.id, cwd), permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default') };
+    // A resumed session keeps its own model, effort and mode (Claude Code restores them); only new
+    // ones get the remembered choices. The basis lets the daemon drop a choice whose settings default
+    // has changed since it was made.
+    let remembered = {};
+    if (!resume) {
+      const prefs = sessionPrefs.get(machine.id, cwd);
+      remembered = { ...prefs, permissionMode: prefs.permissionMode || cfg.get<string>('spawn.defaultPermissionMode', '') || undefined };
+    }
     // No --name: a named session is treated by Claude Code as titled by the user, so it never
     // generates the AI title the pane shows after the first prompt. Left unnamed, Claude Code writes
     // an ai-title line a few seconds in (and again every turn), which the daemon already reads.
-    const res = await fleet.client.request<{ sessionId: string }>('spawn', machine.id, { cwd, ...remembered, resume }, 30_000);
+    const res = await fleet.client.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', machine.id, { cwd, ...remembered, resume }, 30_000);
+    if (!resume && res.defaults) await sessionPrefs.reconcile(machine.id, cwd, res.stale ?? [], res.defaults);
     openWhenManaged(machine, res.sessionId);
   };
 

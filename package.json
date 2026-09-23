@@ -554,14 +554,23 @@
         "vineyard.spawn.defaultPermissionMode": {
           "type": "string",
           "enum": [
+            "",
             "default",
             "acceptEdits",
             "plan",
             "auto",
             "bypassPermissions"
           ],
-          "default": "default",
-          "description": "Pre-selected permission mode when starting a new agent from Vineyard."
+          "enumItemLabels": [
+            "Claude Code's setting",
+            "default",
+            "acceptEdits",
+            "plan",
+            "auto",
+            "bypassPermissions"
+          ],
+          "default": "",
+          "markdownDescription": "Permission mode for a new agent in a workspace where none was chosen yet. A mode picked in an agent's chat is remembered for that workspace and wins over this (plan and bypass are not remembered). Left at *Claude Code's setting*, Vineyard passes no mode and Claude Code uses `permissions.defaultMode` from its settings files."
         },
         "vineyard.chat.observed": {
           "type": "string",

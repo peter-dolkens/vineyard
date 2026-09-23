@@ -187,7 +187,7 @@ function barStats(): BarStats {
     transcriptAgents: [...stats.subagents.values()],
   };
 }
-function configure(change: { model?: string; effort?: string; permissionMode?: string }) {
+function configure(change: { model?: string; effort?: string; permissionMode?: string; transient?: boolean }) {
   bar.setBusy(true);
   vscode.postMessage({ type: 'configure', ...change });
 }
@@ -1003,7 +1003,7 @@ function planCard(p: Pending): HTMLElement {
     else {
       // Claude Code offered no mode switch to ride on: approve, then change the mode ourselves.
       respond({ behavior: 'allow', updatedInput: p.input ?? {} });
-      configure({ permissionMode: 'acceptEdits' });
+      configure({ permissionMode: 'acceptEdits', transient: true });
     }
   };
   row.appendChild(always);

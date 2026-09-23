@@ -46,6 +46,8 @@ makes it work; the daemons talk only to each other, and only while you are looki
 
 * **New Agent Here…** in any workspace on any machine. It starts with the model, effort and permission
   mode you last used in that workspace, and the pickers in the chat change the running session in place.
+  Where nothing was picked yet, or after you change the default in Claude Code's settings, it follows
+  those settings.
 * **Resume a Past Session…** from the transcripts on any machine, newest first, with title, first and
   last prompt, model and branch. Or resume it in a terminal on that machine.
 * **Pause** a turn mid-flight, **Stop** a session cleanly, or **Terminate** one you did not start. The

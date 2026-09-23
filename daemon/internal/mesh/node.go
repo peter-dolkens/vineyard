@@ -993,12 +993,20 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &o); err != nil {
 			return nil, err
 		}
+		var b spawnBasis
+		if err := json.Unmarshal(r.Args, &b); err != nil {
+			return nil, err
+		}
+		// A remembered choice gives way to a settings default changed since it was made; the reply
+		// says which, so the extension can forget them.
+		defaults := claude.SettingsDefaults(n.opts.ClaudeDir, o.Cwd)
+		stale := dropStaleChoices(&o, b.Basis, defaults)
 		sid, err := n.opts.Managed.Spawn(o)
 		if err != nil {
 			return nil, err
 		}
 		n.kickCollector()
-		return json.Marshal(map[string]any{"sessionId": sid})
+		return json.Marshal(map[string]any{"sessionId": sid, "defaults": defaults, "stale": stale})
 	case "respond":
 		if n.opts.Managed == nil {
 			return nil, errors.New("managed sessions are disabled on this daemon")
@@ -1072,7 +1080,9 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			}
 		}
 		n.kickCollector()
-		return json.RawMessage(`{"ok":true}`), nil
+		// The settings defaults the choice was made against: the extension keeps them with the
+		// choice, and a later spawn drops the choice once they change.
+		return json.Marshal(map[string]any{"ok": true, "defaults": claude.SettingsDefaults(n.opts.ClaudeDir, n.opts.Managed.Cwd(a.SessionID))})
 	case "upgrade":
 		var a protocol.UpgradeArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {

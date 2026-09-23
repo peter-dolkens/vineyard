@@ -37,3 +37,34 @@ test('an undefined field leaves the memory alone', async () => {
   await prefs.remember('m1', '/a', { effort: 'low', model: undefined });
   assert.deepEqual(prefs.get('m1', '/a'), { model: 'claude-sonnet-5', effort: 'low' });
 });
+
+const DEFAULTS = { model: 'claude-fable-5-1[1m]', effort: 'high', permissionMode: '' };
+
+test('remembers the permission mode, but not plan or bypass', async () => {
+  const prefs = new SessionPrefStore(memento());
+  await prefs.remember('m1', '/a', { permissionMode: 'auto' });
+  await prefs.remember('m1', '/a', { permissionMode: 'plan' });
+  await prefs.remember('m1', '/a', { permissionMode: 'bypassPermissions' });
+  assert.deepEqual(prefs.get('m1', '/a'), { permissionMode: 'auto' });
+  await prefs.remember('m1', '/a', { permissionMode: 'default' });
+  assert.deepEqual(prefs.get('m1', '/a'), { permissionMode: 'default' });
+});
+
+test('a choice keeps the settings default it was made against', async () => {
+  const prefs = new SessionPrefStore(memento());
+  await prefs.remember('m1', '/a', { model: 'opus[1m]' }, DEFAULTS);
+  await prefs.remember('m1', '/a', { permissionMode: 'auto' }, DEFAULTS);
+  assert.deepEqual(prefs.get('m1', '/a'), { model: 'opus[1m]', permissionMode: 'auto', basis: { model: 'claude-fable-5-1[1m]', permissionMode: '' } });
+  await prefs.remember('m1', '/a', { model: '' }, DEFAULTS);
+  assert.deepEqual(prefs.get('m1', '/a'), { permissionMode: 'auto', basis: { permissionMode: '' } });
+});
+
+test('reconcile forgets stale choices and backfills a missing basis', async () => {
+  const prefs = new SessionPrefStore(memento());
+  await prefs.remember('m1', '/a', { model: 'opus[1m]', effort: 'max' });
+  await prefs.remember('m1', '/a', { permissionMode: 'auto' }, DEFAULTS);
+  await prefs.reconcile('m1', '/a', ['permissionMode'], { ...DEFAULTS, permissionMode: 'acceptEdits' });
+  assert.deepEqual(prefs.get('m1', '/a'), { model: 'opus[1m]', effort: 'max', basis: { model: 'claude-fable-5-1[1m]', effort: 'high' } });
+  await prefs.reconcile('m1', '/a', ['model', 'effort'], DEFAULTS);
+  assert.deepEqual(prefs.get('m1', '/a'), {});
+});

@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import type { Agent, Attachment, Usage } from '../core/model.ts';
 import type { FleetService, MachineView } from './fleet.ts';
-import type { SessionPrefStore } from './sessionPrefs.ts';
+import type { SessionPrefStore, SettingsDefaults } from './sessionPrefs.ts';
 import { agentLabel, basename } from '../core/format.ts';
 import { attachmentMediaType, attachmentProblem } from '../core/attachments.ts';
 
@@ -46,7 +46,8 @@ type FromWebview =
   | { type: 'respond'; requestId: string; response: unknown }
   | { type: 'interrupt' }
   | { type: 'stop' }
-  | { type: 'configure'; model?: string; effort?: string; permissionMode?: string }
+  /** `transient`: a side effect of another action (approving a plan), not a choice to carry into new sessions. */
+  | { type: 'configure'; model?: string; effort?: string; permissionMode?: string; transient?: boolean }
   | { type: 'login' }
   | { type: 'rename'; title: string }
   | { type: 'openWorkspace' }
@@ -257,11 +258,11 @@ class ChatPanel {
           if (m.effort !== undefined) args.effort = m.effort;
           if (m.permissionMode !== undefined) args.permissionMode = m.permissionMode;
           try {
-            await this.fleet.client.request('configure', this.machine.id, args, 30_000);
+            const res = await this.fleet.client.request<{ defaults?: SettingsDefaults }>('configure', this.machine.id, args, 30_000);
             const what = m.model !== undefined ? `Model set to ${m.model || 'the default'}` : m.effort !== undefined ? `Effort set to ${m.effort || 'the default'}` : `Permission mode set to ${m.permissionMode}`;
             this.post({ type: 'status', text: `${what}. Takes effect from the next request.`, kind: 'ok' });
-            // The next session in this workspace starts with the same choice.
-            if (m.model !== undefined || m.effort !== undefined) await this.prefs.remember(this.machine.id, this.agent.workspacePath, { model: m.model, effort: m.effort });
+            // The next session in this workspace starts with the same choice, until the settings default it was made against changes.
+            if (!m.transient) await this.prefs.remember(this.machine.id, this.agent.workspacePath, { model: m.model, effort: m.effort, permissionMode: m.permissionMode }, res?.defaults);
           } finally {
             // Whether it worked or not, re-send the agent so the controls show the daemon's truth.
             this.lastAgentJson = '';

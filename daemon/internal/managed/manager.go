@@ -276,6 +276,16 @@ func (m *Manager) Has(sid string) bool {
 	return ok && !p.info.Exited
 }
 
+// Cwd is the directory a managed session runs in, or "" when this daemon does not manage it.
+func (m *Manager) Cwd(sid string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.procs[sid]; ok {
+		return p.info.Cwd
+	}
+	return ""
+}
+
 // Send delivers a user prompt; Claude reads it between tool calls or starts a new turn when idle.
 // A recovered question still on show is taken as answered in prose and cleared.
 func (m *Manager) Send(sid, text string) error {
