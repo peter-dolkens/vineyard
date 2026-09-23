@@ -261,7 +261,7 @@ Blocked by Claude Code itself or by the agent living on another machine.
   project-directory encoding on Windows is a best guess.
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
-* No multi-hop relay: a machine you cannot reach directly shows last-known state only.
+* Relays are one hop: a machine that no member you reach can reach either shows last-known state only.
 
 ## Learn more
 

@@ -38,6 +38,14 @@ use it.
   without ever being watched itself. *Remove Machine* records the id in `removed` so other members'
   hellos do not bring it back; adding it again or a direct connection from it clears that. Candidates
   are dialed happy-eyeballs style, 250 ms apart, first fleet-authenticated connection wins.
+* **One-hop relay.** When no candidate answers, the watcher asks each member it holds a direct link to
+  (the last relay that worked first) to splice it through: a fresh connection whose first line is
+  `tunnel {target}`. The relay dials the target and opens with `tunnel-in`, or, if it cannot, sends
+  `tunnel-callback` over a link the target already holds to it and waits for the target to connect
+  back with `tunnel-accept`. After `tunnel-ok` the two ends run a second TLS handshake inside the
+  splice, so the relay copies ciphertext only, then the ordinary hello and serve loop. Links carry a
+  `via` (`direct` or `relay:<id>`), a direct link always replaces a relayed one, relays only use direct
+  links so tunnels never chain, and nothing is relayed unless someone watches the target.
 * **Sleeping machines are woken.** Daemons report their hardware addresses; when a watched peer stops
   answering, its neighbours send Wake-on-LAN magic packets for those addresses (LAN broadcast plus
   unicast) and open a connection to its SSH port so a Bonjour sleep proxy wakes it, at most once every
@@ -194,6 +202,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
 | `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
+| `tunnel` / `tunnel-in` / `tunnel-callback` / `tunnel-accept`, `tunnel-ok` / `tunnel-fail` | requester→relay→target | one-hop relay setup; first line of a fresh connection (callback travels on an existing link) |
 
 ## Managed vs observed sessions
 
@@ -242,5 +251,5 @@ tree, on the card an observed question or permission shows, or in the chat's / m
   Claude project-directory encoding on Windows is a best guess.
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
-* No multi-hop relay: a machine you cannot reach directly shows last-known state only.
+* Relays are one hop: a machine that no member you reach can reach either shows last-known state only.
 * Only Claude Code is detected.

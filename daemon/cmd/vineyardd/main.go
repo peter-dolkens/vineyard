@@ -312,6 +312,21 @@ func cmdStatus(args []string) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	names := map[string]string{}
+	for id, e := range entries {
+		names[id] = e.Snapshot.Name
+	}
+	via := func(v string) string {
+		for _, kind := range []string{"relay", "reported"} {
+			if id, ok := strings.CutPrefix(v, kind+":"); ok {
+				if names[id] != "" {
+					id = names[id]
+				}
+				return kind + " " + id
+			}
+		}
+		return v
+	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "MACHINE\tSTATUS\tVIA\tAGENT\tSTATE\tMODEL\tWORKSPACE\tDETAIL")
 	for _, id := range ids {
@@ -330,19 +345,23 @@ func cmdStatus(args []string) error {
 			if title == "" {
 				title = a.Name
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Snapshot.Name, status, e.Via, title, a.State, shortModel(a.Model), a.WorkspacePath, a.StateDetail)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Snapshot.Name, status, via(e.Via), title, a.State, shortModel(a.Model), a.WorkspacePath, a.StateDetail)
 		}
 		if live == 0 {
-			fmt.Fprintf(w, "%s\t%s\t%s\t-\t-\t-\t-\t%s\n", e.Snapshot.Name, status, e.Via, "no live agents")
+			fmt.Fprintf(w, "%s\t%s\t%s\t-\t-\t-\t-\t%s\n", e.Snapshot.Name, status, via(e.Via), "no live agents")
 		}
 	}
 	w.Flush()
 	if len(peers) > 0 {
 		fmt.Println()
+		sort.Slice(peers, func(i, j int) bool { return peers[i].MachineID < peers[j].MachineID })
 		for _, p := range peers {
 			state := "disconnected"
 			if p.Connected {
 				state = "connected"
+				if strings.HasPrefix(p.Via, "relay:") {
+					state += " via " + via(p.Via)
+				}
 			}
 			if p.LastError != "" {
 				state += " (" + p.LastError + ")"

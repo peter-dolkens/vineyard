@@ -304,6 +304,9 @@ export interface PeerStatus {
   machineId: string;
   addr: string;
   connected: boolean;
+  /** "direct", or "relay:<machine id>" when another member relays the link. */
+  via?: string;
+  /** Why the last dial failed; while relayed, why the direct path did not work. */
   lastError?: string;
   lastSeen?: number;
 }

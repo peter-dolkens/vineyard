@@ -299,7 +299,7 @@ type Snapshot struct {
 type FleetEntry struct {
 	Snapshot   Snapshot `json:"snapshot"`
 	Online     bool     `json:"online"`
-	Via        string   `json:"via"` // self | direct | gossip
+	Via        string   `json:"via"` // self | direct | relay:<id> | cache | reported:<id>
 	LastSeen   int64    `json:"lastSeen"`
 	ReceivedAt int64    `json:"receivedAt"`
 }

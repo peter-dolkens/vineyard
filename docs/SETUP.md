@@ -197,9 +197,13 @@ dials the others. A daemon that nobody is watching holds no connections at all. 
 on the local network. For machines on different networks, give them a route to each other: a VPN
 such as Tailscale or WireGuard is the easy way, and that network's hostname or IP works as an
 address. To change what a machine advertises, edit `advertise` in its `~/.vineyard/config.json` and
-restart its daemon (`vineyardd restart`, or *Restart Daemon* from its right-click menu). Vineyard
-does not relay through a third machine, so a member you cannot reach directly shows its last-known
-state only.
+restart its daemon (`vineyardd restart`, or *Restart Daemon* from its right-click menu).
+
+**Relaying.** When the machine you watch from cannot reach a member directly, it asks another member
+it does reach to relay: that machine connects onward and copies the traffic across, and the tooltip
+says *Online via relay through forge*. The two ends encrypt end to end inside the relay, so the
+relay only ever sees ciphertext. Relays are one hop only, and any member relays when needed. A member
+that nobody can reach, directly or through one other member, shows its last-known state.
 
 **Firewalls.** Allow inbound TCP 7734 to each machine you want to watch. For example, on Ubuntu
 `sudo ufw allow 7734/tcp`; on Windows, from an elevated PowerShell,

@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -66,7 +67,9 @@ type link struct {
 	outbound       bool
 	theySubscribed bool
 	weSubscribed   bool
-	lastSeen       time.Time
+	// via is "" for a direct link, or "relay:<id>" when another member splices it (see tunnel.go).
+	via      string
+	lastSeen time.Time
 }
 
 type peerState struct {
@@ -82,6 +85,10 @@ type peerState struct {
 	lastSeen time.Time
 	macs     []string // hardware addresses the peer has reported, for Wake-on-LAN
 	lastWake time.Time
+	// lastRelay is the member that last relayed us to this peer; asked first next time.
+	lastRelay string
+	// probing is set while a direct dial is tried under a relayed link (see probeDirect).
+	probing bool
 }
 
 type pendingReq struct {
@@ -111,6 +118,7 @@ type Node struct {
 	cfg       *config.Config
 	serverTLS *tls.Config
 	clientTLS *tls.Config
+	strictTLS *tls.Config // serverTLS without the invite exception: for the end-to-end handshake in a relay
 
 	mu          sync.Mutex
 	peers       map[string]*peerState
@@ -129,6 +137,9 @@ type Node struct {
 	upgrade     upgrader
 	dist        distributor
 	awake       service.Awake
+	callbacks   map[string]chan legConn // relay tunnels waiting for their target to call back
+	// dialFilter, when set (tests only), drops addresses this node must not be able to reach.
+	dialFilter func(addrs []string) []string
 
 	wake chan struct{}
 }
@@ -152,6 +163,7 @@ func New(opts Options) (*Node, error) {
 		store:     map[string]model.FleetEntry{},
 		pending:   map[string]pendingReq{},
 		invites:   map[string]invite{},
+		callbacks: map[string]chan legConn{},
 		wake:      make(chan struct{}, 1),
 	}
 	// Closed by default: only while an invite is outstanding may a client connect without a certificate.
@@ -166,6 +178,7 @@ func New(opts Options) (*Node, error) {
 		},
 	}
 	n.serverTLS.Certificates = srv.Certificates
+	n.strictTLS = strict
 	n.awake.Disabled = !opts.Config.KeepAwake()
 	for _, p := range opts.Config.Peers {
 		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: config.MergeAddrs(p.Addr, p.Addrs, nil)}
@@ -231,12 +244,30 @@ func (n *Node) acceptOne(raw net.Conn) {
 		return
 	}
 	_ = tc.SetDeadline(time.Time{})
-	l := &link{conn: NewConn(raw), outbound: false}
 	if len(tc.ConnectionState().PeerCertificates) == 0 {
-		n.handleJoin(l)
+		n.handleJoin(&link{conn: NewConn(raw), outbound: false})
 		return
 	}
-	n.serve(l)
+	// The first line says what this connection is: a hello for an ordinary link, or one of the relay
+	// messages in tunnel.go.
+	rd := bufio.NewReaderSize(tc, firstLineMax)
+	first, err := readLine(tc, rd, helloTimeout)
+	if err != nil {
+		raw.Close()
+		return
+	}
+	var t protocol.Tunnel
+	_ = json.Unmarshal(first, &t)
+	switch t.T {
+	case "tunnel":
+		n.handleTunnel(tc, rd, t)
+	case "tunnel-in":
+		n.handleTunnelIn(tc, rd, t)
+	case "tunnel-accept":
+		n.handleTunnelAccept(tc, rd, t)
+	default:
+		n.serveFirst(&link{conn: NewConn(bufConn{Conn: tc, rd: rd}), outbound: false}, first)
+	}
 }
 
 // dialPeer tries every candidate address, happy-eyeballs style: each gets dialStagger's head start
@@ -305,11 +336,33 @@ func dialPeer(addrs []string, tcfg *tls.Config) (*tls.Conn, string, error) {
 	return nil, "", lastErr
 }
 
+// dialAddrs is dialPeer from this node, honouring the test-only dialFilter.
+func (n *Node) dialAddrs(addrs []string) (*tls.Conn, string, error) {
+	if n.dialFilter != nil {
+		addrs = n.dialFilter(addrs)
+	}
+	return dialPeer(addrs, n.clientTLS)
+}
+
 func (n *Node) dial(p *peerState) {
 	n.mu.Lock()
 	candidates := append([]string(nil), p.addrs...)
 	n.mu.Unlock()
-	raw, used, err := dialPeer(candidates, n.clientTLS)
+	raw, used, err := n.dialAddrs(candidates)
+	var conn net.Conn = raw
+	via := ""
+	if err != nil {
+		// No direct path. Any member we do reach may be able to relay (tunnel.go).
+		if rc, relay, rerr := n.viaRelay(p.id); rerr == nil {
+			n.logf("peer %s: no direct address answered (%v); relaying through %s", p.id, trimErr(err), relay)
+			conn, via = rc, "relay:"+relay
+			n.mu.Lock()
+			p.lastRelay = relay
+			p.lastErr = "direct: " + trimErr(err)
+			n.mu.Unlock()
+			err = nil
+		}
+	}
 	n.mu.Lock()
 	if err != nil {
 		p.dialing = false
@@ -329,9 +382,11 @@ func (n *Node) dial(p *peerState) {
 		return
 	}
 	p.backoff = 0
-	p.lastErr = ""
+	if via == "" {
+		p.lastErr = ""
+	}
 	persist := false
-	if used != "" && used != p.addr {
+	if via == "" && used != "" && used != p.addr {
 		// Remember what actually worked as the primary for next time.
 		p.addr = used
 		p.addrs = promote(p.addrs, used)
@@ -347,7 +402,7 @@ func (n *Node) dial(p *peerState) {
 	// opened (as an earlier version did) let the one-second reconcile tick dial the same peer again
 	// while the hello round trip was still in flight, which produced duplicate links and, through the
 	// duplicate-resolution path in register, silently unsubscribed links.
-	l := &link{conn: NewConn(raw), outbound: true, peerID: p.id}
+	l := &link{conn: NewConn(conn), outbound: true, peerID: p.id, via: via}
 	go func() {
 		defer func() {
 			n.mu.Lock()
@@ -457,13 +512,19 @@ func addCandidates(p *peerState, addrs ...string) {
 
 // serve runs one connection to completion (either direction).
 func (n *Node) serve(l *link) {
+	first, err := l.conn.Recv(helloTimeout)
+	if err != nil {
+		n.unregister(l)
+		return
+	}
+	n.serveFirst(l, first)
+}
+
+// serveFirst is serve once the first message has been read.
+func (n *Node) serveFirst(l *link, first []byte) {
 	defer n.unregister(l)
 
 	// Handshake.
-	first, err := l.conn.Recv(helloTimeout)
-	if err != nil {
-		return
-	}
 	var h protocol.Hello
 	if json.Unmarshal(first, &h) != nil || h.T != "hello" {
 		n.logf("%s: expected hello", l.conn.RemoteAddr())
@@ -531,7 +592,7 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	// (what we persist) only changes when a dial to a different address succeeds, so a stale DNS name
 	// advertised by the peer cannot clobber an address that works.
 	learned := append([]string{h.Listen}, h.Addrs...)
-	if !l.outbound {
+	if !l.outbound && l.via == "" { // a relayed link's remote address is the relay's
 		if host, _, err := net.SplitHostPort(l.conn.RemoteAddr()); err == nil {
 			if _, port, err := net.SplitHostPort(h.Listen); err == nil && port != "" {
 				learned = append(learned, net.JoinHostPort(host, port))
@@ -550,10 +611,15 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	}
 	p.lastSeen = time.Now()
 	if p.link != nil && p.link != l {
-		// Two links to the same peer (both sides dialed). Keep the one dialed by the smaller id.
+		// Two links to the same peer. A direct link beats a relayed one; otherwise (both sides
+		// dialed) keep the one dialed by the smaller id.
 		keepOutbound := n.cfg.MachineID < l.peerID
 		old := p.link
-		if old.outbound == keepOutbound {
+		keepOld := old.outbound == keepOutbound
+		if (old.via == "") != (l.via == "") {
+			keepOld = old.via == ""
+		}
+		if keepOld {
 			n.mu.Unlock()
 			n.logf("duplicate link to %s, closing the new one", l.peerID)
 			l.conn.Close()
@@ -895,6 +961,11 @@ func (n *Node) dispatch(l *link, b []byte) {
 		return
 	}
 	switch env.T {
+	case "tunnel-callback":
+		var t protocol.Tunnel
+		if json.Unmarshal(b, &t) == nil && l.role == "peer" && l.via == "" {
+			go n.callBack(l.peerID, t)
+		}
 	case "ping":
 		_ = l.conn.Send(protocol.Ping{T: "pong"})
 	case "pong":
@@ -927,7 +998,11 @@ func (n *Node) dispatch(l *link, b []byte) {
 			return
 		}
 		now := time.Now().UnixMilli()
-		entry := model.FleetEntry{Snapshot: m.Snapshot, Online: true, Via: "direct", LastSeen: now, ReceivedAt: now}
+		via := "direct"
+		if l.via != "" {
+			via = l.via
+		}
+		entry := model.FleetEntry{Snapshot: m.Snapshot, Online: true, Via: via, LastSeen: now, ReceivedAt: now}
 		n.mu.Lock()
 		n.store[l.peerID] = entry
 		if p := n.peers[l.peerID]; p != nil {
@@ -1468,6 +1543,12 @@ func (n *Node) peerStatusLocked() []protocol.PeerStatus {
 	out := make([]protocol.PeerStatus, 0, len(n.peers))
 	for _, p := range n.peers {
 		ps := protocol.PeerStatus{MachineID: p.id, Addr: p.addr, Connected: p.link != nil, LastError: p.lastErr}
+		if p.link != nil {
+			ps.Via = "direct"
+			if p.link.via != "" {
+				ps.Via = p.link.via
+			}
+		}
 		if !p.lastSeen.IsZero() {
 			ps.LastSeen = p.lastSeen.UnixMilli()
 		}

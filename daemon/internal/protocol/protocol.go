@@ -77,8 +77,36 @@ type PeerStatus struct {
 	MachineID string `json:"machineId"`
 	Addr      string `json:"addr"`
 	Connected bool   `json:"connected"`
+	// Via is how the link runs: "direct", or "relay:<machine id>" when another member relays it.
+	Via string `json:"via,omitempty"`
+	// LastError is why the last dial failed. While relayed it says why the direct path did not work.
 	LastError string `json:"lastError,omitempty"`
 	LastSeen  int64  `json:"lastSeen,omitempty"`
+}
+
+// Tunnel messages set up a one-hop relay. Each is the first line on a fresh fleet-TLS connection,
+// except tunnel-callback, which travels on an existing link.
+//
+//	tunnel          requester -> relay   "splice me through to Target"
+//	tunnel-in       relay -> target      "this connection carries a relayed peer; be its TLS server"
+//	tunnel-callback relay -> target      "I cannot dial you: open a fresh connection to me for ID"
+//	tunnel-accept   target -> relay      that fresh connection, naming ID
+//
+// After tunnel-ok the requester and the target run their own TLS handshake inside the spliced bytes,
+// so the relay only ever copies ciphertext, and then the ordinary hello and serve loop.
+type Tunnel struct {
+	T      string `json:"t"`
+	ID     string `json:"id"`
+	Target string `json:"target,omitempty"`
+	From   string `json:"from,omitempty"`
+	Relay  string `json:"relay,omitempty"`
+}
+
+// TunnelResult is the relay's one reply to a tunnel request.
+type TunnelResult struct {
+	T     string `json:"t"` // "tunnel-ok" | "tunnel-fail"
+	ID    string `json:"id"`
+	Error string `json:"error,omitempty"`
 }
 
 type PeersUpdate struct {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relativeTime, shortModel, tokens, basename, tildify } from '../src/core/format.ts';
+import { relativeTime, shortModel, tokens, basename, tildify, describeVia } from '../src/core/format.ts';
 
 test('shortModel', () => {
   assert.equal(shortModel('claude-fable-5-1'), 'Fable 5.1');
@@ -22,4 +22,13 @@ test('tokens / paths', () => {
   assert.equal(tokens(1_500_000), '1.5M');
   assert.equal(basename('/Users/peter/Projects/vineyard/'), 'vineyard');
   assert.equal(tildify('/Users/peter/Projects/x', '/Users/peter'), '~/Projects/x');
+});
+
+test('describeVia names relays and reporters', () => {
+  const names: Record<string, string> = { 'forge.local': 'forge' };
+  const nameOf = (id: string) => names[id] ?? id;
+  assert.equal(describeVia('relay:forge.local', nameOf), 'relay through forge');
+  assert.equal(describeVia('reported:forge.local', nameOf), 'reported by forge');
+  assert.equal(describeVia('direct'), 'direct');
+  assert.equal(describeVia(undefined), '');
 });

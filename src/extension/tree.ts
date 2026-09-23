@@ -5,7 +5,7 @@ import { subagentActive, subagentChildren, subagentDescendants } from '../core/s
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
 import type { FleetService, MachineView } from './fleet.ts';
-import { STATE_LABEL, agentLabel, basename, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
+import { STATE_LABEL, agentLabel, basename, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
 
 export type Node = MachineNode | WorkspaceNode | AgentNode | SubagentNode | TaskNode;
 
@@ -265,10 +265,12 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     md.appendMarkdown(`**${m.name}**${m.local ? ' (this machine)' : ''}  \n`);
     md.appendMarkdown(`\`${snap.listen || m.host}\`  \n`);
     if (snap.host.os) md.appendMarkdown(`${snap.host.os}/${snap.host.arch ?? ''}${snap.daemonVersion ? ` · vineyardd ${snap.daemonVersion}` : ''}  \n`);
-    md.appendMarkdown(m.online ? `$(pass) Online via ${m.entry.via}` : `$(circle-slash) Offline`);
-    if (m.entry.lastSeen) md.appendMarkdown(`  \nLast seen ${relativeTime(m.entry.lastSeen)}`);
+    const nameOf = (id: string) => this.fleet.machine(id)?.name ?? id;
+    md.appendMarkdown(m.online ? `$(pass) Online via ${describeVia(m.entry.via, nameOf)}` : `$(circle-slash) Offline`);
+    if (m.entry.lastSeen) md.appendMarkdown(`  \nLast seen ${relativeTime(m.entry.lastSeen)}${!m.online && m.entry.via?.startsWith('reported:') ? `, ${describeVia(m.entry.via, nameOf)}` : ''}`);
     if (snap.at) md.appendMarkdown(`  \nSnapshot ${relativeTime(snap.at)}`);
-    if (m.peer?.lastError && !m.online) md.appendMarkdown(`  \n$(warning) ${escapeMd(m.peer.lastError)}`);
+    // Offline: why we cannot reach it. Relayed: why the direct path does not work.
+    if (m.peer?.lastError && (!m.online || m.entry.via?.startsWith('relay:'))) md.appendMarkdown(`  \n$(warning) ${escapeMd(m.peer.lastError)}`);
     const rows = usageRows(snap.usage);
     if (rows.length) {
       md.appendMarkdown('\n\n**Usage**  \n');

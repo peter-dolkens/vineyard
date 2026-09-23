@@ -72,3 +72,15 @@ export function tildify(p: string, home: string | undefined): string {
   if (home && p.startsWith(home)) return '~' + p.slice(home.length);
   return p;
 }
+
+/**
+ * How a machine's state reaches us, for the machine tooltip: "direct", "relay through forge",
+ * "reported by forge". nameOf turns a machine id into its display name.
+ */
+export function describeVia(via: string | undefined, nameOf: (id: string) => string = (id) => id): string {
+  if (!via) return '';
+  if (via.startsWith('relay:')) return `relay through ${nameOf(via.slice('relay:'.length))}`;
+  if (via.startsWith('reported:')) return `reported by ${nameOf(via.slice('reported:'.length))}`;
+  if (via === 'self') return 'this machine';
+  return via;
+}
