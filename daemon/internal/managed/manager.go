@@ -305,6 +305,26 @@ func (m *Manager) Interrupt(sid string) error {
 	return m.write(p, map[string]any{"type": "control_request", "request_id": newUUID(), "request": map[string]any{"subtype": "interrupt"}})
 }
 
+// StopTask stops one running background task of the session: a backgrounded shell command (taskID is
+// the id Claude Code handed back in the Bash tool_result) or a subagent (taskID is its agent id, the
+// <id> of subagents/agent-<id>.jsonl; Claude Code registers Agent-tool tasks under that id). It is
+// Claude Code's stop_task control request and, unlike Interrupt, waits for the answer: a wrong id or
+// a task that already finished is refused ("StopTask: Task x is not running …") and that text is
+// returned so the viewer can show it.
+func (m *Manager) StopTask(sid, taskID string) error {
+	p, err := m.get(sid)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(taskID) == "" {
+		return errors.New("task id is empty")
+	}
+	if _, err := m.control(p, map[string]any{"subtype": "stop_task", "task_id": taskID}); err != nil {
+		return err
+	}
+	return nil
+}
+
 // control sends a control_request and waits for Claude Code's control_response, so callers learn
 // whether a live change was accepted (e.g. bypassPermissions can be refused). The response body is
 // returned for requests that answer with data (initialize).

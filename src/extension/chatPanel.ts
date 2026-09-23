@@ -36,7 +36,9 @@ type ToWebview =
   | { type: 'entries'; entries: Record<string, unknown>[]; reset: boolean }
   | { type: 'status'; text: string; kind: 'info' | 'error' | 'ok' }
   | { type: 'sending'; busy: boolean }
-  | { type: 'sendFailed' };
+  | { type: 'sendFailed' }
+  /** The daemon refused a stopTask; the Agent map's row leaves its spinner. */
+  | { type: 'taskStopFailed'; taskId: string };
 
 type FromWebview =
   | { type: 'ready' }
@@ -57,7 +59,9 @@ type FromWebview =
   /** An entry of the "/" menu the extension performs: settings, help, report, copySessionId, resumeTerminal, rawTranscript. */
   | { type: 'action'; id: string }
   /** From the Agent map: open that subagent's transcript in its own chat panel. */
-  | { type: 'openSubagent'; agentId: string };
+  | { type: 'openSubagent'; agentId: string }
+  /** From the Agent map: stop a running subagent (its agent id) or background command (its task id). */
+  | { type: 'stopTask'; taskId: string };
 
 class ChatPanel {
   private offset = 0;
@@ -216,6 +220,16 @@ class ChatPanel {
           break;
         case 'interrupt':
           await this.fleet.client.request('interrupt', this.machine.id, { sessionId: this.agent.sessionId }, 10_000);
+          break;
+        case 'stopTask':
+          // The daemon waits up to 20 s for Claude Code's answer; a refusal (wrong id, task already
+          // finished) is worth a proper error, not a banner that fades.
+          try {
+            await this.fleet.client.request('stoptask', this.machine.id, { sessionId: this.agent.sessionId, taskId: m.taskId }, 25_000);
+          } catch (err) {
+            this.post({ type: 'taskStopFailed', taskId: m.taskId });
+            void vscode.window.showErrorMessage(`Could not stop task ${m.taskId} of ${agentLabel(this.agent)}: ${(err as Error).message}`);
+          }
           break;
         case 'stop': {
           const managed = !!this.agent.managed && !this.agent.managed.exited;

@@ -11,6 +11,7 @@ import { resetsIn, usageRows, usageWarning, usageWarningKey } from '../core/usag
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
+import { subagentActive } from '../core/subagents.ts';
 import { GROUP, MODES, buildActions, cacheState, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action } from '../core/composer.ts';
 
 export interface BarAgent {
@@ -77,6 +78,8 @@ export interface ComposerBar {
   isOpen(): boolean;
   close(): void;
   setBusy(busy: boolean): void;
+  /** The extension could not stop that task: take the spinner off its Stop button. */
+  taskStopFailed(taskId: string): void;
 }
 
 const ACTIVE = new Set(['working', 'thinking', 'tool', 'question', 'permission']);
@@ -374,6 +377,32 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
 
   // ---- agent map ---------------------------------------------------------------------------------
   const dotClass = (state: string) => (ACTIVE.has(state) ? 'live' : state === 'done' || state === 'idle' ? 'ok' : 'off');
+  /** Stop requests in flight: Claude Code's task id → the row's state when Stop was clicked, and when. */
+  const stopping = new Map<string, { state: string; at: number }>();
+  const STOP_WAIT_MS = 30_000; // the daemon gives up after 20 s; the extension then reports the failure
+  const STOP_NOTE = 'Stopping it needs a session started by Vineyard';
+  /**
+   * The Stop button of a running subagent or background command, for a managed-live session. It
+   * spins from the click until a snapshot changes the row's state (or the extension reports a
+   * refusal). `taskId` is what Claude Code's stop_task takes: a subagent's agent id, a command's task id.
+   */
+  function stopButton(taskId: string, state: string): HTMLButtonElement {
+    const pending = stopping.get(taskId);
+    if (pending && (pending.state !== state || Date.now() - pending.at > STOP_WAIT_MS)) stopping.delete(taskId);
+    const busy = stopping.has(taskId);
+    const b = el('button', 'amap-stop' + (busy ? ' busy' : ''));
+    b.type = 'button';
+    b.disabled = busy;
+    b.title = busy ? 'Stopping…' : 'Stop';
+    b.append(icon(busy ? 'loading codicon-modifier-spin' : 'debug-stop'));
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      stopping.set(taskId, { state, at: Date.now() });
+      deps.run('stopTask', taskId);
+      openAgents();
+    };
+    return b;
+  }
   function subagentRow(sub: Subagent, now: number): HTMLElement {
     const row = el('div', 'amap-row' + (agent?.kind === 'subagent' ? '' : ' clickable'));
     row.append(el('span', `amap-dot ${dotClass(sub.state)}`));
@@ -384,6 +413,10 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     text.append(el('div', 'amap-meta', meta.join(' · ')));
     row.append(text);
     row.title = `${sub.state}${sub.stateDetail ? ` — ${sub.stateDetail}` : ''}${sub.model ? `\n${shortModel(sub.model)}` : ''}\nClick to open its transcript`;
+    if (subagentActive(sub)) {
+      if (managedLive()) row.append(stopButton(sub.agentId, sub.state));
+      else row.title += `\n${STOP_NOTE}`;
+    }
     row.onclick = () => {
       close();
       deps.run('openSubagent', sub.agentId);
@@ -444,6 +477,10 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
         text.append(el('div', 'amap-meta', [t.kind || 'shell', taskActive(t) ? '' : taskStateLabel(t).toLowerCase(), elapsed ? clock(elapsed) : ''].filter(Boolean).join(' · ')));
         row.append(text);
         if (t.taskId) row.title = `Task ${t.taskId}`;
+        if (taskActive(t) && t.taskId) {
+          if (managedLive()) row.append(stopButton(t.taskId, t.state));
+          else row.title += `\n${STOP_NOTE}`;
+        }
         list.append(row);
       }
       pop.append(list);
@@ -740,6 +777,10 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     isOpen: () => !!open,
     close,
     setBusy: (b) => bar.classList.toggle('busy', b),
+    taskStopFailed(taskId) {
+      stopping.delete(taskId);
+      if (open === 'agents') openAgents();
+    },
   };
 }
 

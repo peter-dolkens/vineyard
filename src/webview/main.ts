@@ -189,6 +189,9 @@ function runAction(id: string, arg?: string) {
     case 'openSubagent':
       vscode.postMessage({ type: 'openSubagent', agentId: arg });
       break;
+    case 'stopTask':
+      if (arg) vscode.postMessage({ type: 'stopTask', taskId: arg });
+      break;
     case 'compact':
       vscode.postMessage({ type: 'slash', text: '/compact' });
       break;
@@ -1164,6 +1167,9 @@ window.addEventListener('message', (ev) => {
       break;
     case 'sendFailed':
       clearEchoes();
+      break;
+    case 'taskStopFailed':
+      bar.taskStopFailed(m.taskId);
       break;
   }
 });
