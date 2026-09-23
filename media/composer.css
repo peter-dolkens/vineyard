@@ -100,3 +100,22 @@
 .amap-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amap-row.root .amap-name { font-weight: 600; }
 .amap-meta { font-size: 11px; opacity: 0.6; margin-top: 1px; }
+
+/* usage limit banner above the message box, and the Account & usage popover */
+.limit { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 22%, var(--vscode-editor-background)); color: var(--vscode-editorWarning-foreground, #cca700); border: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 45%, transparent); }
+.limit.hit { background: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 22%, var(--vscode-editor-background)); color: var(--vscode-errorForeground, #f14c4c); border-color: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 45%, transparent); }
+.limit .codicon { font-size: 14px; }
+.limit-text { flex: 1; min-width: 0; }
+.limit-link { color: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.ugrid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; padding: 2px 14px 6px; }
+.ugrid .k { opacity: 0.6; }
+.ugrid .v { text-align: right; }
+.ulist { display: flex; flex-direction: column; gap: 10px; padding: 2px 14px 6px; }
+.uhead { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.upct.warn { color: var(--vscode-editorWarning-foreground, #cca700); }
+.upct.hit { color: var(--vscode-errorForeground, #f14c4c); }
+.ubar { height: 6px; border-radius: 3px; background: var(--vscode-badge-background); overflow: hidden; }
+.ufill { height: 100%; border-radius: 3px; background: var(--vscode-charts-green, #89d185); transition: width .3s; }
+.ufill.warn { background: var(--vscode-charts-orange, #d18616); }
+.ufill.hit { background: var(--vscode-errorForeground, #f14c4c); }
+.ureset { font-size: 11px; opacity: 0.55; margin-top: 3px; }

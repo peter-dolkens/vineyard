@@ -5,7 +5,8 @@
  * owns everything under it and asks main.ts to act through BarDeps.
  */
 
-import type { BackgroundTask, CommandInfo, ModelInfo, Subagent } from '../core/model.ts';
+import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
+import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
@@ -26,12 +27,14 @@ export interface BarAgent {
   version?: string;
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string };
+  managed?: { exited: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 export interface BarMachine {
   id: string;
   name: string;
   online: boolean;
+  /** The machine's newest account-limit report (from any session Vineyard started there). */
+  usage?: Usage;
 }
 /**
  * Token counters from the loaded transcript window (main.ts's stats) plus the Agent-tool calls it
@@ -131,12 +134,16 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   chips.hidden = true;
   host.prepend(bar);
   host.parentElement!.insertBefore(chips, host);
+  // The limit banner sits above the message box, like the Claude Code pane's.
+  const limitBar = el('div', 'limit');
+  limitBar.hidden = true;
+  popHost.insertBefore(limitBar, host.parentElement);
 
   // ---- popover ----------------------------------------------------------------------------------
   const pop = el('div', 'pop');
   pop.hidden = true;
   popHost.appendChild(pop);
-  let open: 'actions' | 'typed' | 'model' | 'mode' | 'agents' | undefined;
+  let open: 'actions' | 'typed' | 'model' | 'mode' | 'agents' | 'usage' | undefined;
   let rows: HTMLElement[] = [];
   let hi = -1;
   let filterBox: HTMLInputElement | undefined;
@@ -409,6 +416,65 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     }
   }
 
+  // ---- account & usage ---------------------------------------------------------------------------
+  /** The session's own report when it has one, else the machine's; whichever is newer. */
+  const currentUsage = (): Usage | undefined => {
+    const a = agent?.managed?.usage;
+    const m = machine?.usage;
+    if (a && m) return a.at >= m.at ? a : m;
+    return a ?? m;
+  };
+  function openUsage() {
+    show('usage', agentsPill);
+    agentsPill.classList.remove('open');
+    pop.append(el('div', 'pop-title', 'Account & usage'));
+    const acct = agent?.managed;
+    const grid = el('div', 'ugrid');
+    const row = (k: string, v: string | undefined) => {
+      if (!v) return;
+      grid.append(el('div', 'k', k), el('div', 'v', v));
+    };
+    pop.append(el('div', 'pop-group', 'Account'));
+    if (acct?.account || acct?.accountOrg || acct?.accountPlan) {
+      row('Email', acct.account);
+      row('Organization', acct.accountOrg);
+      row('Plan', acct.accountPlan ? `Claude ${acct.accountPlan}` : undefined);
+      pop.append(grid);
+    } else {
+      pop.append(el('div', 'pop-note', 'Who the session is signed in as is known for sessions started by Vineyard.'));
+    }
+    pop.append(el('div', 'pop-group', 'Usage'));
+    const u = currentUsage();
+    const rows = usageRows(u);
+    if (!rows.length) {
+      pop.append(el('div', 'pop-note', `Limits appear once a session started by Vineyard on ${machine?.name ?? 'this machine'} has made a request; Claude Code reports them with each response.`));
+      return;
+    }
+    const list = el('div', 'ulist');
+    for (const r of rows) {
+      const item = el('div', 'uitem');
+      const head = el('div', 'uhead');
+      head.append(el('span', undefined, r.label), el('span', 'upct' + (r.percent >= 100 ? ' hit' : r.percent >= 80 ? ' warn' : ''), `${r.percent}%`));
+      const bar = el('div', 'ubar');
+      const fill = el('div', 'ufill' + (r.percent >= 100 ? ' hit' : r.percent >= 80 ? ' warn' : ''));
+      fill.style.width = `${Math.min(100, r.percent)}%`;
+      bar.append(fill);
+      item.append(head, bar);
+      if (r.resetsAt) item.append(el('div', 'ureset', `Resets in ${resetsIn(r.resetsAt)}`));
+      list.append(item);
+    }
+    pop.append(list);
+    const note = [`As of ${resetsIn(Date.now() + (Date.now() - (u?.at ?? Date.now())))} ago`.replace('As of now ago', 'Just now'), u === agent?.managed?.usage ? 'from this session' : `from a session on ${machine?.name ?? 'this machine'}`];
+    if (u?.isUsingOverage) note.push('using extra usage');
+    pop.append(el('div', 'pop-note', note.join(' · ')));
+  }
+  function usageSummary(): string | undefined {
+    const rows = usageRows(currentUsage());
+    if (!rows.length) return undefined;
+    const top = [...rows].sort((a, b) => b.percent - a.percent)[0]!;
+    return `${top.percent}% of ${top.label.toLowerCase()}`;
+  }
+
   // ---- actions menu ------------------------------------------------------------------------------
   function actions(): Action[] {
     return buildActions({
@@ -423,6 +489,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       modeLabel: modeInfo(currentMode()).label,
       commands: agent?.managed?.commands,
       account: agent?.managed?.account,
+      usageSummary: usageSummary(),
       extVersion: deps.extVersion,
       claudeVersion: agent?.version,
     });
@@ -431,6 +498,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     if (a.disabled) return;
     if (a.id === 'model') return openModel();
     if (a.id === 'mode') return openMode();
+    if (a.id === 'usage') return openUsage();
     if (a.id.startsWith('slash:')) {
       const name = a.id.slice('slash:'.length);
       close();
@@ -509,6 +577,23 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     machine = m;
     stats = s;
     bar.classList.remove('busy');
+
+    // Limit banner: the fullest window past the warning line, or the one Claude Code flagged.
+    const warn = usageWarning(currentUsage());
+    limitBar.hidden = !warn;
+    if (warn) {
+      limitBar.className = 'limit' + (warn.rejected ? ' hit' : '');
+      limitBar.innerHTML = '';
+      limitBar.append(icon(warn.rejected ? 'error' : 'warning'), el('span', 'limit-text', warn.text));
+      const view = el('a', 'limit-link', 'View usage');
+      view.href = '#';
+      view.onclick = (e) => {
+        e.preventDefault();
+        openUsage();
+      };
+      limitBar.append(view);
+    }
+
     const send = canSend();
     btnAttach.disabled = !send;
     btnAttach.title = send ? 'Attach file…' : 'This session cannot take messages';
@@ -569,6 +654,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     if (open === 'model') openModel();
     else if (open === 'mode') openMode();
     else if (open === 'agents') openAgents();
+    else if (open === 'usage') openUsage();
   }
 
   function setAttachments(items: AttachmentChip[]) {
@@ -594,13 +680,13 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     onInput(value) {
       // A lone "/word" is a command being typed; a space or newline after it means prose.
       const slashToken = /^\/\S*$/.test(value);
-      if (!value.startsWith('/')) typedDismissed = false;
+      if (!value.startsWith('/') || value === '/') typedDismissed = false;
       if (open === 'typed') {
         if (!slashToken) return close();
         const list = pop.querySelector<HTMLElement>('.pop-list');
         if (list) renderActionList(list, value.slice(1));
-      } else if (!open && slashToken && !typedDismissed) {
-        openActions(value.slice(1), true);
+      } else if (slashToken && !typedDismissed) {
+        openActions(value.slice(1), true); // takes over from any other popover
       }
     },
     onKey: (e) => (open ? nav(e) : false),

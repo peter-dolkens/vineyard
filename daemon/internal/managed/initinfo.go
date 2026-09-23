@@ -36,13 +36,5 @@ func parseCommands(body json.RawMessage) []model.CommandInfo {
 
 // parseAccount returns the e-mail of the account the session is signed in as, if reported.
 func parseAccount(body json.RawMessage) string {
-	var v struct {
-		Account struct {
-			Email string `json:"email"`
-		} `json:"account"`
-	}
-	if json.Unmarshal(body, &v) != nil {
-		return ""
-	}
-	return strings.TrimSpace(v.Account.Email)
+	return parseAccountInfo(body).Email
 }

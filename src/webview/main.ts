@@ -4,7 +4,7 @@
  */
 
 import { marked } from 'marked';
-import type { BackgroundTask, CommandInfo, ModelInfo, Subagent } from '../core/model.ts';
+import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
@@ -42,12 +42,13 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string };
+  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 interface MachineInfo {
   id: string;
   name: string;
   online: boolean;
+  usage?: Usage;
 }
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -304,6 +305,7 @@ function send() {
   appendLocalEcho(text || `(${attachmentCount} file${attachmentCount === 1 ? '' : 's'})`);
   input.value = '';
   autoGrow();
+  bar.onInput(''); // a cleared box ends any "/" menu dismissal
 }
 
 function scrollToBottom() {

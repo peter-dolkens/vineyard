@@ -161,6 +161,32 @@ export interface ManagedInfo {
   /** Slash commands it offers (no leading slash) and the account it is signed in as, from the same handshake. */
   commands?: CommandInfo[];
   account?: string;
+  accountOrg?: string;
+  accountPlan?: string;
+  /** The account's limit report as this session last saw it. */
+  usage?: Usage;
+}
+
+export interface UsageWindow {
+  /** Share used, 0..1. */
+  utilization: number;
+  /** Epoch ms. */
+  resetsAt?: number;
+}
+
+/**
+ * The account's usage limits as Claude Code reports them from the API's rate-limit headers. Window
+ * keys: five_hour, seven_day, seven_day_opus, seven_day_sonnet, seven_day_overage_included.
+ */
+export interface Usage {
+  status: 'allowed' | 'allowed_warning' | 'rejected' | string;
+  rateLimitType?: string;
+  utilization?: number;
+  resetsAt?: number;
+  windows?: Record<string, UsageWindow>;
+  isUsingOverage?: boolean;
+  overageStatus?: string;
+  at: number;
 }
 
 export interface CommandInfo {
@@ -207,6 +233,8 @@ export interface Snapshot {
   daemonVersion?: string;
   listen?: string;
   hasClaude: boolean;
+  /** Newest account-limit report from any managed session on the machine; limits are per account. */
+  usage?: Usage;
 }
 
 export interface FleetEntry {

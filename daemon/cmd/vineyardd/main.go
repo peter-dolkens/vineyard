@@ -175,11 +175,13 @@ func cmdRun() error {
 		Collect: func() model.Snapshot {
 			r := collector.Collect()
 			agents, workspaces := claude.Interpret(cfg.MachineID, r, time.Now().UnixMilli())
+			var usage *model.Usage
 			if mgr != nil {
 				agents = mgr.Merge(cfg.MachineID, agents)
 				workspaces = claude.Regroup(cfg.MachineID, agents, workspaces)
+				usage = mgr.LatestUsage()
 			}
-			return model.Snapshot{Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude}
+			return model.Snapshot{Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude, Usage: usage}
 		},
 	})
 	if err != nil {

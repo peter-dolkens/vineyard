@@ -168,8 +168,32 @@ type ManagedInfo struct {
 	Models []ModelInfo `json:"models,omitempty"`
 	// Commands are the slash commands the session offers, from the same handshake; Account is the
 	// e-mail it is signed in as.
-	Commands []CommandInfo `json:"commands,omitempty"`
-	Account  string        `json:"account,omitempty"`
+	Commands    []CommandInfo `json:"commands,omitempty"`
+	Account     string        `json:"account,omitempty"`
+	AccountOrg  string        `json:"accountOrg,omitempty"`
+	AccountPlan string        `json:"accountPlan,omitempty"`
+	// Usage is the account's limit report as this session last saw it (rate_limit_event).
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// UsageWindow is one rate-limit window: share used (0..1) and when it resets (epoch ms).
+type UsageWindow struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    int64   `json:"resetsAt,omitempty"`
+}
+
+// Usage is what Claude Code reports about the account's limits, from the API's rate-limit headers:
+// a status for the request that triggered it, the window that status refers to, and every window.
+// Window keys: five_hour, seven_day, seven_day_opus, seven_day_sonnet, seven_day_overage_included.
+type Usage struct {
+	Status         string                 `json:"status"` // allowed | allowed_warning | rejected
+	RateLimitType  string                 `json:"rateLimitType,omitempty"`
+	Utilization    float64                `json:"utilization,omitempty"`
+	ResetsAt       int64                  `json:"resetsAt,omitempty"`
+	Windows        map[string]UsageWindow `json:"windows,omitempty"`
+	IsUsingOverage bool                   `json:"isUsingOverage,omitempty"`
+	OverageStatus  string                 `json:"overageStatus,omitempty"`
+	At             int64                  `json:"at"` // when the daemon saw it, epoch ms
 }
 
 type Workspace struct {
@@ -206,6 +230,9 @@ type Snapshot struct {
 	DaemonVersion string      `json:"daemonVersion,omitempty"`
 	Listen        string      `json:"listen,omitempty"` // advertised host:port
 	HasClaude     bool        `json:"hasClaude"`
+	// Usage is the newest account-limit report from any session this daemon manages. Limits are
+	// per account, so it applies to every session on the machine signed in as that account.
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 // FleetEntry is what viewers see: a snapshot plus how and when this daemon learned about it.

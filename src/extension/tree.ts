@@ -3,6 +3,7 @@ import type { Agent, AgentState, BackgroundTask, Subagent, Workspace } from '../
 import { STATE_PRIORITY, isBusy, needsAttention } from '../core/model.ts';
 import { subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
+import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
 import type { FleetService, MachineView } from './fleet.ts';
 import { STATE_LABEL, agentLabel, basename, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
 
@@ -251,8 +252,10 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     item.contextValue = m.local ? 'machine-local' : m.online ? 'machine' : 'machine-offline';
 
     const live = snap.agents.filter((a) => a.alive);
+    const limit = usageWarning(snap.usage);
     if (m.online) {
       item.description = !snap.hasClaude ? 'no Claude Code' : live.length ? countByState(live) : 'no agents';
+      if (limit) item.description += ` · ${limit.rejected ? 'limit hit' : `${limit.row.percent}% of ${limit.row.label.toLowerCase()}`}`;
     } else {
       const seen = m.entry.lastSeen || snap.at;
       item.description = seen ? `offline · last seen ${relativeTime(seen)}` : m.peer?.lastError ? 'unreachable' : 'never seen';
@@ -266,6 +269,12 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     if (m.entry.lastSeen) md.appendMarkdown(`  \nLast seen ${relativeTime(m.entry.lastSeen)}`);
     if (snap.at) md.appendMarkdown(`  \nSnapshot ${relativeTime(snap.at)}`);
     if (m.peer?.lastError && !m.online) md.appendMarkdown(`  \n$(warning) ${escapeMd(m.peer.lastError)}`);
+    const rows = usageRows(snap.usage);
+    if (rows.length) {
+      md.appendMarkdown('\n\n**Usage**  \n');
+      for (const r of rows) md.appendMarkdown(`${r.label}: ${r.percent}%${r.resetsAt ? ` · resets in ${resetsIn(r.resetsAt)}` : ''}  \n`);
+      if (snap.usage?.at) md.appendMarkdown(`_as of ${relativeTime(snap.usage.at)}, from a session started by Vineyard_`);
+    }
     item.tooltip = md;
     return item;
   }

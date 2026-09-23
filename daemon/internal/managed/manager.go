@@ -341,14 +341,14 @@ func (m *Manager) initialize(p *proc) {
 		m.log.Printf("managed: %s initialize: %v", p.info.SessionID, err)
 		return
 	}
-	models, commands, account := parseModels(body), parseCommands(body), parseAccount(body)
-	if len(models) == 0 && len(commands) == 0 && account == "" {
+	models, commands, account := parseModels(body), parseCommands(body), parseAccountInfo(body)
+	if len(models) == 0 && len(commands) == 0 && account.Email == "" {
 		return
 	}
 	m.mu.Lock()
 	p.info.Models = models
 	p.info.Commands = commands
-	p.info.Account = account
+	p.info.Account, p.info.AccountOrg, p.info.AccountPlan = account.Email, account.Organization, account.Plan
 	m.mu.Unlock()
 	m.changed()
 }
@@ -491,12 +491,13 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				Error     string          `json:"error"`
 				Response  json.RawMessage `json:"response"`
 			} `json:"response"`
-			SessionID      string  `json:"session_id"`
-			Model          string  `json:"model"`
-			PermissionMode string  `json:"permissionMode"`
-			TotalCostUSD   float64 `json:"total_cost_usd"`
-			IsError        bool    `json:"is_error"`
-			Result         string  `json:"result"`
+			RateLimitInfo  json.RawMessage `json:"rate_limit_info"`
+			SessionID      string          `json:"session_id"`
+			Model          string          `json:"model"`
+			PermissionMode string          `json:"permissionMode"`
+			TotalCostUSD   float64         `json:"total_cost_usd"`
+			IsError        bool            `json:"is_error"`
+			Result         string          `json:"result"`
 		}
 		if json.Unmarshal(line, &env) != nil {
 			continue
@@ -553,6 +554,14 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 					m.mu.Unlock()
 					m.changed()
 				}
+			}
+		case "rate_limit_event":
+			// The account's limit picture changed (read from the API's rate-limit headers).
+			if u := parseRateLimit(env.RateLimitInfo, time.Now().UnixMilli()); u != nil {
+				m.mu.Lock()
+				p.info.Usage = u
+				m.mu.Unlock()
+				m.changed()
 			}
 		case "result":
 			m.mu.Lock()

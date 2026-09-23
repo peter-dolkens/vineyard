@@ -34,6 +34,14 @@ be added.
   popovers carry the effort slider. For a managed
   session the menu also lists every slash command its Claude Code offers, ready to run, and shows the
   account it is signed in as.
+* **Usage limits, like the Claude Code pane.** A managed session's Claude Code reports the account's
+  limits with each response (the 5-hour session window, the weekly window and the per-model weekly
+  ones, each with utilization and reset time). Vineyard shows a banner above the message box from 80 %
+  ("You've used 93% of your session limit · resets in 2h"), an *Account & usage…* entry in the / menu
+  with account, plan and a bar per window, the fullest limit on the machine row and in the status
+  bar, and one notification per window when a limit is approached or hit (`vineyard.notify.limits`).
+  Limits belong to the account, so one Vineyard-started session on a machine covers every session
+  there; nothing is fetched from Anthropic beyond what Claude Code already reports.
 * **Message any running agent** from the composer, with files attached: images reach a managed
   session as image blocks, other files are inlined as text (all the cross-session socket can carry).
   For sessions you drive elsewhere (the Claude extension, a terminal) the text is delivered over

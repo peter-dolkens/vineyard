@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "license": "MIT",
@@ -522,6 +522,11 @@
           "type": "boolean",
           "default": false,
           "description": "Pop a notification when a working agent goes idle."
+        },
+        "vineyard.notify.limits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pop a notification when a machine's Claude account passes 80% of a usage limit, or hits one (as reported by a session started by Vineyard)."
         },
         "vineyard.statusBar.enabled": {
           "type": "boolean",

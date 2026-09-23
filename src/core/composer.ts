@@ -113,6 +113,8 @@ export interface ActionContext {
   modeLabel: string;
   commands?: CommandInfo[];
   account?: string;
+  /** "93% of session limit", for the Account & usage row's value. */
+  usageSummary?: string;
   extVersion?: string;
   claudeVersion?: string;
 }
@@ -152,6 +154,7 @@ export function buildActions(c: ActionContext): Action[] {
   }
   acts.push(
     { id: 'login', group: GROUP.settings, label: `Sign in to Claude on ${c.machineName}…`, detail: c.account ? `Signed in as ${c.account}` : 'Runs claude auth login there; the browser opens here.', disabled: !c.online },
+    { id: 'usage', group: GROUP.settings, label: 'Account & usage…', value: c.usageSummary, detail: c.usageSummary ? undefined : 'Limits appear once a session started by Vineyard has made a request.' },
     { id: 'settings', group: GROUP.settings, label: 'Vineyard settings' },
     { id: 'help', group: GROUP.support, label: 'View help docs' },
     { id: 'report', group: GROUP.support, label: 'Report a problem', value: [c.extVersion && `Vineyard ${c.extVersion}`, c.claudeVersion && `Claude Code ${c.claudeVersion}`].filter(Boolean).join(' · ') || undefined },

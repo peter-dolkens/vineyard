@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
-import type { Agent, Attachment } from '../core/model.ts';
+import type { Agent, Attachment, Usage } from '../core/model.ts';
 import type { FleetService, MachineView } from './fleet.ts';
 import type { SessionPrefStore } from './sessionPrefs.ts';
 import { agentLabel, basename } from '../core/format.ts';
@@ -30,9 +30,9 @@ interface TranscriptData {
 }
 
 type ToWebview =
-  | { type: 'init'; agent: Agent; machine: { id: string; name: string; online: boolean }; localName: string; extVersion?: string }
+  | { type: 'init'; agent: Agent; machine: { id: string; name: string; online: boolean; usage?: Usage }; localName: string; extVersion?: string }
   | { type: 'attachments'; items: { id: string; name: string; mediaType: string; size: number }[] }
-  | { type: 'agent'; agent: Agent; machine: { id: string; name: string; online: boolean } }
+  | { type: 'agent'; agent: Agent; machine: { id: string; name: string; online: boolean; usage?: Usage } }
   | { type: 'entries'; entries: Record<string, unknown>[]; reset: boolean }
   | { type: 'status'; text: string; kind: 'info' | 'error' | 'ok' }
   | { type: 'sending'; busy: boolean }
@@ -97,7 +97,7 @@ class ChatPanel {
   }
 
   private machineInfo() {
-    return { id: this.machine.id, name: this.machine.name, online: this.machine.online };
+    return { id: this.machine.id, name: this.machine.name, online: this.machine.online, usage: this.machine.entry.snapshot.usage };
   }
 
   private post(m: ToWebview): void {
