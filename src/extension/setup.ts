@@ -90,7 +90,7 @@ export class Setup {
     const host = await vscode.window.showInputBox({
       title: 'Add machine',
       prompt: 'SSH host of the machine (hostname, IP or ~/.ssh/config alias). You must be able to SSH to it without a password prompt.',
-      placeHolder: 'falcon.dolkens.net',
+      placeHolder: 'build-box.local',
       validateInput: (v) => (v.trim() ? undefined : 'Host is required'),
     });
     if (!host) return;

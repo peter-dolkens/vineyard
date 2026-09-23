@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="../../media/codicon.css">
+<style>
+  /* A VS Code side bar hosting the Vineyard view, drawn the way the real tree items come out of tree.ts. */
+  html, body { margin: 0; height: 100%; }
+  body { font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .titlebar { height: 35px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 20px; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; color: var(--vscode-foreground); }
+  .titlebar .acts { display: flex; gap: 2px; }
+  .titlebar .acts i { font-size: 16px; padding: 3px; border-radius: 4px; color: var(--vscode-foreground); }
+  .titlebar .acts i:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .section { height: 22px; display: flex; align-items: center; gap: 2px; padding-left: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .section i { font-size: 16px; }
+  .tree { flex: 1; overflow: hidden; padding-bottom: 6px; }
+  .row { height: 22px; display: flex; align-items: center; white-space: nowrap; overflow: hidden; position: relative; }
+  .row:hover { background: var(--vscode-list-hoverBackground); }
+  .row.sel { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  .row.sel .desc { color: var(--vscode-list-activeSelectionForeground); opacity: .8; }
+  .tw { width: 16px; flex: none; display: grid; place-items: center; color: var(--vscode-foreground); }
+  .tw i { font-size: 16px; }
+  .ico { width: 16px; height: 16px; flex: none; display: grid; place-items: center; margin-right: 6px; }
+  .ico i { font-size: 16px; }
+  .label { overflow: hidden; text-overflow: ellipsis; }
+  .desc { margin-left: 6px; font-size: 0.9em; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; }
+  .guide { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(88,88,88,.4); }
+  .d0 { padding-left: 8px; } .d1 { padding-left: 24px; } .d2 { padding-left: 40px; } .d3 { padding-left: 56px; }
+  .warn { color: var(--vscode-editorWarning-foreground); }
+  .blue { color: var(--vscode-charts-blue); }
+  .green { color: var(--vscode-charts-green); }
+  .purple { color: var(--vscode-charts-purple); }
+  .orange { color: var(--vscode-charts-orange); }
+  .dim { color: var(--vscode-disabledForeground); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .statusbar { height: 22px; background: #181818; border-top: 1px solid #2b2b2b; display: flex; align-items: center; font-size: 12px; color: var(--vscode-foreground); padding-left: 8px; gap: 0; }
+  .sb-item { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; }
+  .sb-item i { font-size: 14px; }
+  .sb-item.warnbg { background: #cca700; color: #000; }
+  .sb-item.warnbg i { color: #000; }
+  .sb-gap { display: inline-block; width: 8px; }
+  .sb-right { margin-left: auto; display: flex; }
+</style>
+</head>
+<body>
+<div class="titlebar"><span>Vineyard</span><span class="acts"><i class="codicon codicon-add" title="Add Machine"></i><i class="codicon codicon-history" title="Resume a Past Session…"></i><i class="codicon codicon-link" title="Create Invite Code"></i><i class="codicon codicon-refresh" title="Refresh"></i><i class="codicon codicon-ellipsis"></i></span></div>
+<div class="section"><i class="codicon codicon-chevron-down"></i>Agents</div>
+<div class="tree" id="tree"></div>
+<div class="statusbar">
+  <span class="sb-item"><i class="codicon codicon-remote"></i></span>
+  <span class="sb-item"><i class="codicon codicon-source-control"></i> main</span>
+  <span class="sb-item warnbg"><i class="codicon codicon-question"></i> 2<span class="sb-gap"></span><i class="codicon codicon-loading codicon-modifier-spin"></i> 5<span class="sb-gap"></span><i class="codicon codicon-circle-large-filled"></i> 1<span class="sb-gap"></span><i class="codicon codicon-warning"></i> 85%</span>
+  <span class="sb-right"><span class="sb-item"><i class="codicon codicon-bell"></i></span></span>
+</div>
+<script>
+// [depth, twistie, icon, colour, label, description, selected]
+const ROWS = [
+  [0, 'down', 'device-desktop', 'warn', 'atelier', '1 needs you · 2 working · 1 idle'],
+  [1, 'down', 'shield', 'warn', 'storefront-api', '1 needs you · 1 working'],
+  [2, 'none', 'shield', 'warn', 'Add rate limiting to checkout', 'Waiting for permission · managed · Opus 5 · high · 2m ago', true],
+  [2, 'none', 'loading codicon-modifier-spin', 'blue', 'Explain the billing retry loop', 'Working · Opus 5 · just now'],
+  [1, 'down', 'circle-large-filled', 'green', 'design-system', '1 idle'],
+  [2, 'none', 'circle-large-filled', 'green', 'Tokens for the dark theme', 'Idle · Sonnet 5 · 14m ago'],
+  [1, 'none', 'folder', 'dim', 'docs-site', 'last 3h ago'],
+  [0, 'down', 'server', 'warn', 'forge', '1 needs you · 1 working'],
+  [1, 'down', 'question', 'warn', 'infra', '1 needs you'],
+  [2, 'none', 'question', 'warn', 'Upgrade Terraform providers', 'Asking you a question · managed · Opus 5 · high · 40s ago'],
+  [1, 'down', 'tools', 'blue', 'storefront-api', '1 working'],
+  [2, 'down', 'tools', 'blue', 'Fix flaky arm64 CI job', 'Running a tool · Sonnet 5 · 1 background task · 12s ago'],
+  [3, 'none', 'terminal', 'blue', 'Retry the arm64 job', 'shell · running · 4m 12s'],
+  [0, 'down', 'server', 'blue', 'orchard', '1 working · 85% of session (5hr)'],
+  [1, 'down', 'loading codicon-modifier-spin', 'blue', 'mobile-app', '1 working'],
+  [2, 'down', 'tools', 'blue', 'Migrate auth tests to Vitest', 'Running a tool · managed · Opus 5 · medium · 2 subagents running · 1 background task · 5s ago'],
+  [3, 'none', 'tools', 'blue', 'Convert login tests', 'Running a tool · general-purpose · Sonnet 5 · 9s ago'],
+  [3, 'right', 'loading codicon-modifier-spin', 'blue', 'Convert token refresh tests', 'Working · general-purpose · Sonnet 5 · 2s ago'],
+  [3, 'none', 'pass', 'green', 'Audit Jest-only matchers', 'Finished · Explore · Haiku 4.5 · 3m ago'],
+  [3, 'none', 'terminal', 'blue', 'Watch the Vitest run', 'shell · running · 6m 16s'],
+  [0, 'right', 'server', 'dim', 'workshop', 'offline · last seen 2h ago'],
+];
+const tree = document.getElementById('tree');
+for (const [d, tw, icon, colour, label, desc, sel] of ROWS) {
+  const row = document.createElement('div');
+  row.className = `row d${d}${sel ? ' sel' : ''}`;
+  let guides = '';
+  for (let i = 1; i <= d; i++) guides += `<span class="guide" style="left:${8 + i * 16 - 1}px"></span>`;
+  const twist = tw === 'none' ? '' : `<i class="codicon codicon-chevron-${tw}"></i>`;
+  row.innerHTML = `${guides}<span class="tw">${twist}</span><span class="ico ${colour}"><i class="codicon codicon-${icon}"></i></span><span class="label">${label}</span><span class="desc">${desc}</span>`;
+  tree.appendChild(row);
+}
+</script>
+</body>
+</html>

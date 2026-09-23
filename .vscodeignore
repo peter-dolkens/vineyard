@@ -11,3 +11,4 @@ tsconfig.json
 .gitignore
 .env
 .env.*
+docs/**

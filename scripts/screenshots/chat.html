@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="../../media/codicon.css">
+<link rel="stylesheet" href="../../media/chat.css">
+<link rel="stylesheet" href="../../media/composer.css">
+<style>
+  html, body { width: 100%; height: 100%; }
+  #app { height: 100vh; }
+  /* no blinking caret / focus ring in a still image */
+  textarea { caret-color: transparent; }
+</style>
+<script src="scenarios.js"></script>
+<script>
+  // Stand-in for the VS Code webview host: answer "ready" with the scenario named in the URL hash.
+  window.__sent = [];
+  function acquireVsCodeApi() {
+    return {
+      postMessage(m) {
+        window.__sent.push(m);
+        if (m.type !== 'ready') return;
+        const s = window.__scenarios[location.hash.slice(1) || 'perm'];
+        window.postMessage({ type: 'init', agent: s.agent, machine: s.machine, localName: 'atelier', extVersion: '0.3.14' }, '*');
+        window.postMessage({ type: 'attachments', items: [] }, '*');
+        window.postMessage({ type: 'entries', entries: s.entries, reset: true }, '*');
+      },
+    };
+  }
+</script>
+</head>
+<body><div id="app"></div><script src="../../dist/webview.js"></script></body>
+</html>

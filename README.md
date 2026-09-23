@@ -1,296 +1,267 @@
 # Vineyard
 
-Tend your AI coding agents across machines from VS Code. Vineyard shows every Claude Code session on
-every machine you own as **Machines › Workspaces › Agents**, with live state (working, thinking,
-running a tool, asking you a question, waiting for permission, idle), model and effort, context size,
-the last prompt and the conversation title. Open the transcript, jump to a terminal on that machine,
-or resume a session from wherever you happen to be sitting.
+**Every Claude Code agent, on every machine you own, in one VS Code window.**
 
-Only Claude Code is supported today; the model, daemon and tree are provider-agnostic so others can
-be added.
+Vineyard runs a tiny daemon on each of your machines and shows all of their Claude Code sessions in one
+tree: what each agent is doing right now, which ones are waiting on you, and what they are working on.
+Open any agent's conversation, answer its permission prompt or question from wherever you happen to be
+sitting, start new agents on other machines, and put the whole fleet to work without leaving your editor.
 
-## What you can do
+<p align="center"><img src="docs/images/fleet-tree.png" width="560" alt="The Vineyard view: four machines, their workspaces, and every agent with its live state, model and last activity. The status bar shows two agents waiting on you, five working, one idle, and an account at 85% of its session limit."></p>
 
-* **See every agent** on every machine, grouped Machines › Workspaces › Agents › Subagents and
-  background tasks (a Bash call left running with `run_in_background`, or one that outlived its
-  timeout, until its task notification arrives), with live state,
-  model, effort, context size, title and last prompt. Each tier's order is yours to choose
-  (`vineyard.sort.machines` / `.workspaces` / `.agents`: status, name, recent or attention-first) with
-  stable tie-breaks, so rows stay put while agents work. *Vineyard: Settings* opens all of them.
-* **See the subagent tree** under each agent: every Agent-tool invocation Claude Code spawned, nested
-  to any depth (a subagent's own subagents sit under it), each with its description, agent type,
-  model, background/foreground and live state derived from its own transcript. Running subagents are
-  always shown; finished ones can be hidden with `vineyard.showFinishedSubagents`. Clicking one opens
-  its transcript in a read-only chat view.
-* **Open a chat** for any agent: a panel styled like the Claude Code pane that streams the transcript
-  as it grows (railway margin with coloured event markers, the current prompt pinned while you
-  scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
-  busy) with an info strip for model, effort, mode, prompt-cache hit rate, token totals and a map of
-  spawned subagents. One button beside the message box does what the state calls for: **Send**,
-  **Pause** (interrupt the turn of a managed session mid-turn; Enter still sends, the message is read
-  between tool calls) and **Stop** (end the session, asks first) once an interrupt was asked for and
-  the turn is still running. Under the message box sits the same toolbar as the Claude Code pane:
-  attach (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window donut
-  (the exact figure in its tooltip; click it to `/compact`; it spins while Claude Code compacts), a
-  prompt-cache clock counting down the minutes until the cache expires (red once it has, or right
-  after a compaction, until the next response; the hover has the lifetime and hit rate), an **agent
-  map** (the subagent tree with state, running time and tokens, each opening its own transcript, then
-  the shell commands the session left running in the background; in a session started by Vineyard every
-  running subagent and background command carries a **Stop** button), and the **model** and
-  **permission-mode** pills whose popovers carry the effort slider (a filled track up to the current
-  level, named at its end). For a managed session the menu also lists every slash command its Claude
-  Code offers, ready to run, and shows the account it is signed in as.
-* **The context donut costs nothing extra.** The transcript already carries the tokens each API call
-  saw, the same figure Claude Code's own `/context` uses, so the donut follows it for free. The
-  daemon asks a managed session's Claude Code (`get_context_usage`, a local computation in the child,
-  no API call) only when the transcript cannot tell: once after the handshake for the window's real
-  size, after a model switch, and after a compaction, when the size drops without a new call to show
-  it. A compaction is tracked from Claude Code's `compacting` status to the `compact_boundary` that
-  ends it; for sessions Vineyard only observes, the count is cleared at the boundary and returns with
-  the next call.
-* **Usage limits, like the Claude Code pane.** A managed session's Claude Code reports the account's
-  limits with each response (the 5-hour session window, the weekly window and the per-model weekly
-  ones, each with utilization and reset time). Vineyard shows a banner above the message box from 80 %
-  ("You've used 93% of your session limit · resets in 2h"), an *Account & usage…* entry in the / menu
-  with account, plan and a bar per window, and the fullest limit on the machine row and in the status
-  bar. The banner can be closed like the Claude Code pane's: it stays away while that window fills
-  further, and returns when the window is hit or has reset. There are no toast notifications for limits.
-  Limits belong to the account, so one Vineyard-started session on a machine covers every session
-  there; nothing is fetched from Anthropic beyond what Claude Code already reports.
-* **Message any running agent** from the composer, with files attached: images reach a managed
-  session as image blocks, other files are inlined as text (all the cross-session socket can carry).
-  For sessions you drive elsewhere (the Claude extension, a terminal) the text is delivered over
-  Claude Code's cross-session messaging socket and read between tool calls or when the agent is idle.
-* **Start agents from Vineyard** in any workspace on any machine (*New Agent Here…*), or **resume** an
-  existing session under Vineyard's control. These *managed* sessions run as children of that
-  machine's daemon over the stream-json control protocol, so permission prompts and questions appear
-  as cards in the chat and are answered there. A plan review (`ExitPlanMode`) is a card too, with the
-  plan rendered as Markdown and the pane's three choices: yes, yes and switch to accept-edits, or no
-  with feedback so Claude keeps planning. An MCP server's question (an elicitation) appears the
-  same way, as a form built from its schema or a link to open, with Decline and Cancel beside the
-  answer. They still write the normal registry and transcript.
-  New agents start with no questions asked (the model and effort last chosen in that workspace, or
-  Claude Code's defaults the first time; the configured permission mode; no first prompt); the
-  composer carries pickers for **model, reasoning effort and permission mode** that change the
-  running session in place, like the ones in the Claude Code pane, and are remembered per workspace
-  for the next new session there.
-* **Resume a past session** (*Resume a Past Session…*, the history button) from the transcripts on
-  any machine, newest first with title, first/last prompt, model and branch, whether or not an agent
-  is currently attached to it. **Stop / Terminate** ends any live session: managed ones cleanly over
-  their control channel, others by terminating the Claude Code process (transcript kept).
-* **Rename a session** by clicking its title in the chat (or *Rename Session…* in the tree). Managed
-  sessions are renamed through Claude Code's `rename_session` control request; for others Vineyard
-  appends the same `custom-title` transcript line `/rename` writes, so Claude Code shows the new name too.
-* **Sign a machine in to Claude from wherever you are** (*Sign In to Claude on Machine…*, or the card
-  the chat shows when a session reports an expired OAuth session). The daemon there runs
-  `claude auth login` without a browser, Vineyard opens the sign-in URL in *your* browser and passes
-  the code it shows back over the mesh.
-* **Join machines without SSH** with a single-use invite code.
-* **Self-updating fleet**: install a newer extension on one machine and it upgrades every daemon
-  over the mesh (see *Staying up to date*).
+## Run a fleet, not a window
 
-Observed sessions (started outside Vineyard) cannot have their permission prompts or questions
-answered from here: Claude Code only accepts those in the originating UI. The chat shows a card
-explaining that and offers to open the workspace on that machine.
+* **One tree for everything.** Machines › workspaces › agents › subagents › background tasks, each
+  with its live state: working, thinking, running a tool, asking you a question, waiting for
+  permission, idle. Model, effort, context size, branch, uptime and the last prompt are a hover away.
+* **Know who needs you.** A machine row rolls its agents up ("1 needs you · 2 working"), the status
+  bar counts the whole fleet, and an optional notification fires when an agent asks a question, wants a
+  permission, or finishes while you were elsewhere. Sort any tier attention-first and the agents that
+  need you rise to the top and stay put.
+* **Subagents, nested to any depth.** Every Agent-tool invocation Claude Code spawns sits under its
+  parent with its own state, model and running time, and opens its own read-only transcript. Shell
+  commands left running in the background appear beside them.
+* **Sleeping machines are woken** with Wake-on-LAN when you look at them, a watched Mac is kept awake
+  so its agents do not stall, and a machine you cannot reach shows its last-known state.
+* **Usage limits across the fleet.** The fullest account limit shows on the machine row and in the
+  status bar, so you see a session window filling up before an agent hits it.
 
-## Design
+## Answer from wherever you are
 
-```
- ┌──────────────┐        mTLS, fleet cert         ┌──────────────┐
- │ VS Code      │◄──────────────┐                  │ falcon       │
- │  (viewer)    │  localhost    │   subscribe      │  vineyardd   │
- │      │       │──────────────►│◄────────────────►│  (quiet)     │
- │  vineyardd   │               │   snapshots      └──────────────┘
- │  (watching)  │               │                  ┌──────────────┐
- └──────────────┘               └─────────────────►│ magpie …     │
-       frogmouth                                    └──────────────┘
-```
+<p align="center"><img src="docs/images/chat-permission.png" width="720" alt="A chat with an agent on another machine. The transcript shows its reads, edits and reasoning; below it a permission card asks whether Bash may run the test suite, with Allow, Allow and remember, and Deny buttons."></p>
 
-* **One static Go binary per machine** (`vineyardd`, ~6 MB, no runtime). It runs as a login service
-  (launchd / systemd --user / Scheduled Task) and reads Claude Code's own on-disk state:
-  `~/.claude/sessions/*.json` (registry: pid, cwd, `busy|shell|idle|waiting`), the tail of the
-  session transcript (model, effort, pending tool calls, AskUserQuestion, end of turn), and
-  `~/.claude/ide/*.lock` (which folders VS Code has open).
-* **No hub.** Every daemon is equal. The daemon on the machine where you open VS Code is your
-  orchestrator: it dials the others and subscribes. Any machine can step in at any time.
-* **Silent unless watched.** A daemon with no VS Code attached holds no connections, runs no timers
-  and does not even read the Claude directory. When a viewer attaches, the local daemon connects to
-  peers and subscribes; peers push their snapshot **only on change**, coalesced to one poll per second,
-  plus one 30 s ping per connection. When the last viewer leaves (30 s grace for reloads) everything is
-  unsubscribed and torn down. There is no gossip and no periodic re-broadcast, so N machines cost at most
-  N-1 connections per watching machine and zero bytes when nobody is looking.
-* **Sleeping machines are woken.** Daemons report their hardware addresses; when a watched peer stops
-  answering, its neighbours send Wake-on-LAN magic packets for those addresses (LAN broadcast plus
-  unicast) and open a connection to its SSH port so a Bonjour sleep proxy wakes it, at most once every
-  45 s and only while a viewer is attached. *Wake Machine* on an offline machine does it on demand.
-  `wakePeers: false` in config.json opts out.
-* **A watched Mac stays awake.** A Mac that idle-sleeps only surfaces for ~45 s per Wake on Demand,
-  so its link flaps and its agents stall. While anyone is subscribed to a machine, its daemon holds a
-  `caffeinate -s` assertion (macOS only, `keepAwakeWhileWatched` in config.json to opt out); the moment
-  the last viewer leaves it is released. Nothing is held while nobody is looking.
-* **Stateless connections.** A fresh connection carries everything it needs: hello, then subscribe.
-  Reconnects use exponential backoff (2 s → 60 s) only while someone is watching. Offline or
-  unreachable machines show their last-known snapshot from `~/.vineyard/cache.json`.
-* **Security.** All traffic is TLS 1.3 with mutual authentication using one shared fleet certificate
-  (ECDSA P-256, self-signed, 100 years) generated on the first machine and copied to the others over
-  SSH during setup. Possession of `fleet.key` *is* membership, exactly like a pre-shared key; rotate by
-  regenerating and re-running setup. Transcript reads are sandboxed to `~/.claude/projects`.
-* **Joining without SSH: invite codes.** Any member can mint a single-use code valid for 15 minutes
-  (`vineyardd invite`, or *Vineyard: Create Invite Code*). The code is `vineyard:` + base64url JSON
-  carrying the inviter's addresses (advertised name plus its LAN IPs), a 128-bit fingerprint of the
-  fleet certificate, and a 128-bit random token. The joiner dials the inviter, pins the fingerprint,
-  presents the token over TLS 1.3, and receives the fleet certificate + key and the peer list. The
-  inviter accepts certificate-less connections **only while an invite is outstanding**, and such a
-  connection may send exactly one `join`. This is how Windows boxes (no SSH server) and machines
-  without key-based SSH get in; the extension bundles binaries for every platform so the joiner runs
-  its own copy locally. Codes also work as `vscode://peter-dolkens.vineyard/join?code=…` links.
-* **SSH is an optional bootstrap.** For machines you *can* SSH to, *Add Machine* copies the binary
-  and certificate with `scp` and runs `vineyardd init && vineyardd install` remotely. Day-to-day
-  traffic never touches SSH either way.
+* **Permission prompts, questions, plan reviews and MCP elicitations** arrive as cards in the chat and
+  are answered there, with the same choices the Claude Code pane offers: allow once or remember the
+  rule, pick an option or type your own, approve a plan or send it back with feedback.
+* **Any running agent takes messages**, including ones started in the Claude Code pane or a terminal.
+  Attach images and files; they travel to the agent's machine with the prompt.
+* **Take over a session** that was started elsewhere when it needs an answer only Vineyard can give.
+  The daemon on that machine ends the process and resumes the same session as its own child; a
+  pending question survives the switch and is asked again in the chat.
 
-### Agent state derivation
+<p align="center"><img src="docs/images/chat-question.png" width="720" alt="An agent asking which of three migration strategies to use. The question card lists the options with descriptions and an Other field."></p>
 
-| Evidence | State |
-| --- | --- |
-| pid gone | `exited` |
-| pending `AskUserQuestion` tool call | `question` |
-| pending `ExitPlanMode`, or registry `waiting` | `permission` |
-| pending tool call (no result yet) | `tool` |
-| last line is a `user` prompt or tool result | `working` |
-| last assistant block is `thinking`, turn not ended | `thinking` |
-| assistant `stop_reason: end_turn` | `idle` |
-| registry `shell` | `shell` |
-| subagent whose turn ended, or whose result reached the parent | `done` |
+## Start, resume, hand over, stop
 
-Sessions whose working directory is a Claude Code scratchpad (`…/claude-<uid>/<encoded project>/<session>/scratchpad`)
-are shown under the project that spawned them; the encoded name is decoded against the filesystem.
+* **New Agent Here…** in any workspace on any machine. It starts with the model, effort and permission
+  mode you last used in that workspace, and the pickers in the chat change the running session in place.
+* **Resume a Past Session…** from the transcripts on any machine, newest first, with title, first and
+  last prompt, model and branch. Or resume it in a terminal on that machine.
+* **Pause** a turn mid-flight, **Stop** a session cleanly, or **Terminate** one you did not start. The
+  transcript stays on disk either way.
+* **Sign In to Claude on Machine…** when a remote machine's login expires: the daemon runs the sign-in
+  there, Vineyard opens the URL in your browser and passes the code back.
+* **Rename** a session by clicking its title; Claude Code shows the new name too.
 
-Registry and transcript disagreements are reconciled (e.g. `busy` after `end_turn` = "starting next
-turn"; `idle` mid-turn for >30 s = "interrupted"). See `daemon/internal/claude/derive.go` and its tests.
+## A chat that keeps up with Claude Code
 
-Subagents come from `<projects>/<encoded cwd>/<session>/subagents/agent-<id>.jsonl` plus the
-`.meta.json` beside each one (agent type, description, the parent's `toolUseId`, `parentAgentId`
-for nested spawns, background or foreground). Each file's tail is derived like a session's, with
-sidechain lines counted. A foreground subagent is `done` once the parent has its `tool_result`; a
-background one once the parent's tail carries its `<task-notification>`, or its own turn ends. One
-mid-turn but silent for 15 minutes is shown as `unknown`. A session contributes at most 60 subagents
-to a snapshot (oldest finished dropped first). See `daemon/internal/claude/subagents.go`.
+<p align="center"><img src="docs/images/chat-agent-map.png" width="720" alt="The agent map open above the composer: the session at the root, three subagents with running time and tokens (one nested), a background shell task, and a Stop button on each running row. A banner warns that 85% of the session limit is used."></p>
 
-## Repository layout
+* **The same toolbar as the pane**: attach, a filterable **/** menu with every slash command the
+  session offers, a context-window donut (click to compact), a prompt-cache clock counting down to
+  expiry, and pills for model, reasoning effort and permission mode.
+* **An agent map** of every subagent and background command with state, running time and tokens.
+  Each row opens its transcript; each running row has a **Stop** button.
+* **A transcript built for long sessions**: the current prompt stays pinned while you scroll, thinking
+  is collapsed, tool calls fold to one line with IN/OUT blocks for shell commands, and an activity
+  ticker shows what the agent is doing while it is busy.
+* **Account & usage** in the / menu, with a bar per limit window, and a dismissable banner from 80 %
+  that behaves like the pane's.
 
-```
-daemon/                 Go module: vineyardd
-  cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join
-  internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
-  internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
-  internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
-  internal/service      launchd / systemd / Task Scheduler installers (Windows needs no elevation: XML logon task, then HKCU Run key)
-src/core                wire types + formatting shared by the extension
-src/extension           VS Code extension: daemon client, fleet store, tree, chat panel host, setup over SSH
-src/webview             chat panel UI (bundled separately; marked for Markdown)
-scripts/build-daemon.sh cross-compiles vineyardd into bin/: macOS arm64/amd64, Linux and Windows arm64/amd64/386
-```
+## Quiet, private, yours
 
-## Install
+* **No hub, no cloud, no account.** One static Go binary per machine, talking to its peers over
+  mutually authenticated TLS with a certificate your fleet generates for itself.
+* **Silent unless watched.** With no VS Code looking, a daemon holds no connections, runs no timers and
+  does not even read the Claude directory. Snapshots are pushed only on change, and only to a viewer.
+* **Nothing leaves your machines.** Vineyard reads Claude Code's own on-disk state and shows what Claude
+  Code already reports. The one outside request is an optional once-a-day check for extension updates,
+  and only for installs that did not come from the Marketplace.
+* **Join without SSH** with a single-use invite code, or bootstrap over SSH where you have it.
+* **A fleet that updates itself.** Upgrade the extension on one machine and it brings every daemon up
+  to the same version over the mesh.
+* **macOS, Linux and Windows**, arm64 and amd64, daemons bundled for every platform.
 
-Vineyard is on the Visual Studio Marketplace as
-[`peter-dolkens.vineyard`](https://marketplace.visualstudio.com/items?itemName=peter-dolkens.vineyard);
-search for "Vineyard" in the Extensions view. VS Code then keeps it up to date on its own, and each
-new extension build brings the fleet's daemons along (see *Staying up to date*).
+## Beyond the Claude Code pane
 
-Every tagged release is also on the [Releases page](https://github.com/peter-dolkens/vineyard/releases)
-as a `vineyard-<version>.vsix` with the daemon binaries for all platforms bundled inside, plus the
-standalone `vineyardd-*` binaries and a `SHA256SUMS.txt`. Install with *Extensions: Install from
-VSIX…* or:
+Vineyard is not a replacement for the Claude Code pane; it is the view above it. These are the things
+it does that the pane has no equivalent for.
 
-```sh
-code --install-extension vineyard-<version>.vsix
-```
-
-To cut a release: bump `version` in package.json, `git tag v0.3.6 && git push --tags`. The **Release**
-workflow cross-compiles the daemon, runs the tests, packages the extension, publishes the GitHub
-release and pushes the VSIX to the Marketplace (secret `VSCE_PAT`; skipped for pre-releases). Running the workflow
-manually from the Actions tab produces a pre-release named after the commit.
-
-## Staying up to date
-
-Updates flow from the extension outwards, so upgrading one VS Code is enough to upgrade the fleet:
-
-* **Extension.** Installed from the Marketplace, VS Code updates it itself. For VSIX installs the
-  extension asks the GitHub Releases API at most once a day whether a newer version exists and offers
-  to download and install it (`vineyard.checkForUpdates`, or run *Vineyard: Check for Extension
-  Updates*). That single request is the only time Vineyard talks to anything outside your machines.
-* **Daemons.** The extension bundles a `vineyardd` build for every platform. When a Vineyard view is
-  open and it sees an online machine reporting an older daemon than the bundled one, it streams the
-  matching binary to that machine over the existing mesh connection (the `upgrade` request, relayed by
-  the local daemon in 512 KB chunks). The receiving daemon stages the file, checks the SHA-256, runs
-  `vineyardd version` on it to prove it executes on that platform, then hands over to it: the new
-  binary copies itself into `~/.vineyard/bin`, re-registers the login service and restarts. No SSH,
-  no polling, and nothing at all happens while every daemon is current. Turn it off with
-  `vineyard.autoUpdateDaemons`; *Update Daemon* on a machine or *Update All Daemons* does the same
-  by hand. Only the numeric part of a version is compared, so two different dev builds never
-  overwrite each other; unparseable versions (`dev`) are never touched. Daemons older than 0.3.0 do
-  not understand `upgrade`, so the first update of those goes over SSH (or the local installer) once.
-
-## Build and run
-
-```sh
-npm install
-npm run build:all        # Go cross-compile into bin/ + esbuild bundle into dist/
-npm test                 # node --test + go test
-```
-
-Press **F5** ("Run Vineyard") to launch an Extension Development Host. In the Vineyard view:
-
-1. **Set Up This Machine** – writes `~/.vineyard/config.json`, generates the fleet certificate and
-   installs the login service. The view connects to the local daemon within a second.
-2. **Create Invite Code** on this machine, then on another machine (with the extension installed)
-   run **Join Fleet with Invite Code** and paste it. The joiner fetches the certificate and peers from
-   the inviter, installs its own service and shows up in both views. This needs only TCP reachability
-   on the daemon port, no SSH.
-3. **Add Machine** (alternative) – enter an SSH host. The extension detects the platform, copies the matching
-   binary and the certificate, runs `init` with the current peer list, installs the service, and
-   registers the new peer locally. Repeat for each machine, from any machine.
-4. Every daemon learns other peers' addresses from their hellos and persists them, so a machine that
-   was set up from `frogmouth` can itself be the orchestrator later.
-
-Useful on any machine:
-
-```sh
-~/.vineyard/bin/vineyardd status        # fleet table from the local daemon
-~/.vineyard/bin/vineyardd probe | jq    # this machine's snapshot without a daemon
-tail -f ~/.vineyard/vineyardd.log
-```
-
-## Protocol (newline-delimited JSON over mTLS)
-
-| Message | Direction | Purpose |
+| | Claude Code pane | Vineyard |
 | --- | --- | --- |
-| `hello {role: peer\|viewer, machineId, listen}` | both | identity + advertised address |
-| `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
-| `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
-| `ping` / `pong` | outbound side pings | liveness, 30 s |
-| `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
-| `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
+| See every session on every machine, with live state, without opening it | | ✓ |
+| Message a session started in the pane or a terminal | | ✓ |
+| Start or resume an agent on another machine | | ✓ |
+| Take over a session started elsewhere and answer its pending question | | ✓ |
+| Sign a remote machine in to Claude from your browser | | ✓ |
+| Terminate any session, open a terminal or the workspace on its machine | | ✓ |
+| Wake a sleeping machine, keep a watched Mac awake | | ✓ |
+| Read the transcript of any subagent, on any machine | own sessions only | ✓ |
+| Account limits for every machine in one place | current session | ✓ |
+| Join a fleet without SSH, daemons that update themselves | | ✓ |
 
-## Managed vs observed sessions
+## Getting started
 
-| | Observed (Claude extension, terminal) | Managed (started or resumed from Vineyard) |
-| --- | --- | --- |
-| How state is read | transcript tail + registry, polled 1/s while watched (stat-cached) | same, plus control events from the process |
-| Send a prompt | cross-session messaging socket | stdin (stream-json) |
-| Permission prompts | shown; answer in the originating UI | Allow / Allow-and-remember / Deny cards |
-| AskUserQuestion | shown; answer in the originating UI | option buttons + free text |
-| MCP elicitations | answer in the originating UI | form from the server's schema, or a link to open; Decline / Cancel |
-| Interrupt / stop | no | yes |
-| Lifetime | independent | child of the daemon; ends if the daemon restarts |
+1. Install **Vineyard** from the Extensions view and open its icon in the Activity Bar.
+2. **Set Up This Machine.** This writes `~/.vineyard/config.json`, generates the fleet certificate and
+   installs a login service. Your local agents appear within a second.
+3. On the next machine, install the extension and choose **Join Fleet with Invite Code**, pasting a
+   code from *Vineyard: Create Invite Code* on a machine that is already in. The joiner needs only TCP
+   reachability to the inviter on the daemon port (7734 by default). **Add Machine** does the same over
+   SSH if you prefer.
+4. Repeat for each machine, from any machine. Every daemon learns the others, so whichever machine you
+   open VS Code on becomes the one that watches.
+
+Each machine needs Claude Code installed. Only Claude Code is detected today; the daemon, model and
+tree are provider-agnostic so others can be added.
+
+## Claude Code feature coverage
+
+Everything the Claude Code pane can do, and whether Vineyard can do it, in two flavours. **Observed**
+sessions were started in the pane or a terminal: Vineyard watches their transcript and can message
+them, but Claude Code accepts permission answers, question answers and control changes only from the
+process that owns a session. **Managed** sessions were started, resumed or taken over from Vineyard,
+and run as children of that machine's daemon, so the whole control channel is available. Whenever a
+row says *Not possible* for observed sessions, *Take Over Session* is the way through.
+
+### Supported (30)
+
+Works in Vineyard today, for managed sessions at least.
+
+| Claude Code feature | Observed | Managed | Notes |
+| --- | --- | --- | --- |
+| Send a prompt | Yes | Yes | Managed: straight to the session. Observed: delivered over the cross-session socket, read between tool calls. |
+| Prompt cache clock | Yes | Yes | Counts down to expiry like the pane; red once expired or after a compaction. |
+| Session title (AI-generated plus rename) | Yes | Yes | Click the title or use the tree; Claude Code shows the new name too. |
+| Markdown | Yes | Yes | GFM through a sanitiser; links open externally. |
+| Thinking blocks collapsed and greyed | Yes | Yes |  |
+| Compaction boundary marker | Yes | Yes |  |
+| Sticky current prompt, jump to newest | Yes | Yes |  |
+| Sign-in needed card | Yes | Yes | Runs the sign-in on that machine and opens the URL in your browser. Works across machines. |
+| Resume a past conversation | Yes | Yes | Under Vineyard's control, or in a terminal on that machine. |
+| Continue in a terminal | Yes | Yes | Resume Session in Terminal, over SSH to the agent's machine. |
+| Waiting-for-input indicator | Yes | Yes | Tree icons, machine roll-ups, status bar counts, notifications. |
+| Finished-while-hidden indicator | Yes | Yes | Opt-in notification when a working agent goes idle. |
+| Sign in (OAuth, console, third-party env) | Yes | Yes | Relayed across machines. |
+| Model picker | Partial | Yes | Managed: the session's own model list with per-model effort levels. Observed: read-only pill. |
+| Reasoning effort slider | Partial | Yes | Managed: changes the running session, remembered per workspace. Observed: read-only. |
+| Permission mode (Manual, Auto, Plan, Edit automatically, Bypass) | Partial | Yes | Managed: switch in place, bypass confirmed. Observed: read-only. |
+| Context window indicator, auto-compact | Partial | Yes | Donut follows the transcript for free; managed sessions get the real window size and spin while compacting. Observed: window inferred from the model id. |
+| Agent map: subagents, status, elapsed, tokens, transcripts, stop | Partial | Yes | Full map for both; Stop buttons on running rows for managed sessions. |
+| Background tasks with Stop | Partial | Yes | Kind, state and elapsed for any session; Stop per running task for managed sessions. |
+| Cost and token totals | Partial | Yes | Tokens for both from the transcript. Cost for managed sessions only. |
+| Account and usage dialog (/usage) | Partial | Yes | Account, plan and a bar per limit window. Observed sessions see limits once a managed session on that machine has reported them. |
+| Usage-limit and rate-limit banner | Partial | Yes | From 80 % of any window, dismissable with the pane's rules. |
+| Show signed-in account | Partial | Yes | Known for managed sessions. |
+| Slash commands (typed / menu, filterable, argument hints) | Not yet | Yes | Every command the session offers is listed and runnable. Observed sessions receive slash text as a plain message. |
+| Interrupt the current turn | Not possible | Yes | One button reads Send, Pause or Stop from the session state. Observed sessions can only be terminated. |
+| Permission card: Allow, Allow always, Deny with reason | Not possible | Yes | Observed sessions show a notice and a Take Over button; Claude Code accepts answers only from the process that owns the session. |
+| Question card (options, multi-select, Other) | Not possible | Yes | Same boundary; a pending question survives a takeover and is asked again. |
+| Plan review (approve, approve and auto-accept edits, keep planning) | Not possible | Yes | Plan rendered as Markdown with the pane's three choices. |
+| MCP elicitation (form or URL) | Not possible | Yes | Form built from the server's schema, or a link; Decline and Cancel. |
+| Sandbox network permission ask | Not possible | Yes | Arrives as a permission card. |
+
+### Partial (18)
+
+Present in a reduced form.
+
+| Claude Code feature | Observed | Managed | Notes |
+| --- | --- | --- | --- |
+| Attach files | Partial | Partial | File dialog; text files are inlined (512 KB cap). No drag-drop yet. |
+| Queue a message while Claude is working | Partial | Partial | Sends straight away and Claude Code queues it; no queue view or cancel. |
+| Deep link that opens a session with a prompt | Partial | Partial | The URI handler takes invite codes only. |
+| Status dialog (/status) | Partial | Partial | Info strip: version, model, machine, uptime, branch, session id. |
+| Open in sidebar, tab or new window; new conversation | Partial | Partial | One editor tab per agent, in the focused group or beside it. No sidebar host. |
+| Tool-specific cards (Read, Grep, Agent, WebFetch, MCP tools…) | Partial | Partial | Icon and one-line summary per tool; Bash gets IN/OUT blocks. |
+| API errors, retries, rate limits, model fallback | Partial | Partial | API error rows only. |
+| Live subagent progress rows | Partial | Partial | Sidechain rows tagged as subagent, plus the tree and agent map. |
+| Long tool results | Partial | Partial | Clipped at 6000 characters. |
+| Session list with search and filters | Partial | Partial | Tree by machine and workspace; past sessions newest first with title, prompts, model and branch. No search. |
+| Unread sessions and waiting-for-input badge | Partial | Partial | Status bar counts and notifications; no per-session unread marker. |
+| Restore after reload, continue an interrupted turn | Partial | Partial | A VS Code reload is fine because the daemon owns the process; a daemon restart ends managed sessions. |
+| Export conversation | Partial | Partial | Show Raw Transcript opens Markdown in an editor. |
+| Report a problem | Partial | Partial | Opens Vineyard's issue tracker with versions prefilled. |
+| General config, open settings file | Partial | Partial | Vineyard's own settings only. |
+| Badge with count of sessions waiting | Partial | Partial | Status bar item rather than a view badge. |
+| Attach images | Not yet | Partial | File dialog; images travel as image blocks. No paste or drag-drop yet. The socket to observed sessions carries text only. |
+| Python environment activation | Not possible | Partial | The daemon spawns through the login shell, so whatever it activates applies. |
+
+### Not yet (38)
+
+Reachable, mostly over the control channel Vineyard already uses, but not built.
+
+| Claude Code feature | Observed | Managed | Notes |
+| --- | --- | --- | --- |
+| @-mention files and folders with fuzzy match | Not yet | Not yet | Typing @path still reaches Claude Code, which expands it; no completion popover yet. |
+| Copy response | Not yet | Not yet |  |
+| Prompt history (Up arrow), edit and resend | Not yet | Not yet |  |
+| Large-paste marking, invisible-Unicode stripping | Not yet | Not yet |  |
+| Ctrl/Cmd+Enter to send (setting) | Not yet | Not yet |  |
+| Side question (/btw) | Not yet | Not yet |  |
+| Extended thinking toggle, expand all thinking | Not yet | Not yet | Thinking blocks render collapsed. |
+| Fast mode | Not yet | Not yet |  |
+| Focus view (hide tool activity) | Not yet | Not yet | Tool rows collapse individually but cannot be hidden as a group. |
+| Code blocks: Copy button, syntax highlighting | Not yet | Not yet |  |
+| File paths that open in the editor | Not yet | Not yet |  |
+| Edit, Write, MultiEdit shown as diffs | Not yet | Not yet | Tool input is shown as JSON. |
+| Text streams as it is generated | Not yet | Not yet | Updates arrive per transcript line, about once a second. |
+| Images inside the transcript | Not yet | Not yet |  |
+| To-do list kept visible | Not yet | Not yet |  |
+| Screen-reader announcements per message | Not yet | Not yet |  |
+| Archive, auto-archive, unarchive all | Not yet | Not yet |  |
+| Session groups | Not yet | Not yet |  |
+| Fork conversation from here | Not yet | Not yet |  |
+| Rewind code to a message (checkpoints) | Not yet | Not yet |  |
+| Create worktree | Not yet | Not yet |  |
+| Reopen closed session | Not yet | Not yet |  |
+| MCP servers dialog (status, add, remove, enable, reconnect, OAuth) | Not yet | Not yet |  |
+| Hooks dialog | Not yet | Not yet |  |
+| Permission rules dialog | Not yet | Not yet |  |
+| Memory dialog | Not yet | Not yet |  |
+| Instructions (open or create CLAUDE.md) | Not yet | Not yet |  |
+| Output styles | Not yet | Not yet |  |
+| Skills dialog | Not yet | Not yet |  |
+| Plugins and marketplaces | Not yet | Not yet |  |
+| Sign out, switch account | Not yet | Not yet | Sign in exists. |
+| Tab icon reflects session state | Not yet | Not yet |  |
+| Sign out | Not yet | Not yet |  |
+| Proposed-diff review in the editor | Not possible | Not yet | Needs the editor and the agent on the same machine. |
+| Selection and open-file context on each prompt | Not possible | Not yet | Same. |
+| Insert @-mention reference (Alt+K) | Not possible | Not yet | Same. |
+| Diagnostics after edits | Not possible | Not yet | Same. |
+| Autosave dirty files before Read and Edit | Not possible | Not yet | Same. |
+
+### Not possible (11)
+
+Blocked by Claude Code itself or by the agent living on another machine.
+
+| Claude Code feature | Observed | Managed | Notes |
+| --- | --- | --- | --- |
+| Voice dictation | Not possible | Not possible | Needs a local microphone and Anthropic's speech service. |
+| Selected text and open file as context | Not possible | Not possible | The agent usually runs on another machine; there is nothing local to attach. |
+| Hook callbacks | Not possible | Not possible | Vineyard registers no hooks. |
+| Host dialogs | Not possible | Not possible | Vineyard declares no dialog kinds. |
+| Cloud sessions (web tab, teleport) | Not possible | Not possible |  |
+| Several VS Code windows sharing one session | Not possible | Not possible | Any window can open any agent; the daemon is the single source. |
+| Sandbox and Claude in Chrome dialogs | Not possible | Not possible | Machine-local concerns. |
+| Enable Remote Control | Not possible | Not possible | Vineyard is the remote control. |
+| Jupyter, debugger and Chrome MCP servers | Not possible | Not possible |  |
+| @terminal:name terminal contents | Not possible | Not possible |  |
+| Process wrapper, disable login prompt | Not possible | Not possible |  |
 
 ## Known gaps
 
-* Windows daemon and installer are compiled and reasoned about but not yet tested on a real box; the
-  Claude project-directory encoding on Windows is a best guess.
+* The Windows daemon and installer are compiled and reasoned about but lightly tested; the Claude
+  project-directory encoding on Windows is a best guess.
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
 * No multi-hop relay: a machine you cannot reach directly shows last-known state only.
-* Only Claude Code is detected.
+
+## Learn more
+
+* [How it works](docs/DESIGN.md): the daemon, the mesh, how agent state is derived, the wire protocol,
+  building from source and cutting a release.
+* [Releases](https://github.com/peter-dolkens/vineyard/releases) carry a `.vsix` with every platform's
+  daemon bundled, plus standalone `vineyardd` binaries and checksums.
+* [Issues](https://github.com/peter-dolkens/vineyard/issues) for bugs and requests. *Report a
+  problem* in the chat's / menu opens one with the versions filled in.
