@@ -2,10 +2,11 @@
 
 **Every Claude Code agent, on every machine you own, in one VS Code window.**
 
-Vineyard runs a tiny daemon on each of your machines and shows all of their Claude Code sessions in one
-tree: what each agent is doing right now, which ones are waiting on you, and what they are working on.
-Open any agent's conversation, answer its permission prompt or question from wherever you happen to be
-sitting, start new agents on other machines, and put the whole fleet to work without leaving your editor.
+Vineyard shows every Claude Code session on every machine you own in one tree: what each agent is
+doing right now, which ones are waiting on you, and what they are working on. Open any agent's
+conversation, answer its permission prompt or question from wherever you happen to be sitting, start
+new agents on other machines, and stop the ones that have wandered off. A tiny daemon on each machine
+makes it work; the daemons talk only to each other, and only while you are looking.
 
 <p align="center"><img src="docs/images/fleet-tree.png" width="560" alt="The Vineyard view: four machines, their workspaces, and every agent with its live state, model and last activity. The status bar shows two agents waiting on you, five working, one idle, and an account at 85% of its session limit."></p>
 
