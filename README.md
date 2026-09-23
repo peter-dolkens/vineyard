@@ -23,7 +23,7 @@ makes it work; the daemons talk only to each other, and only while you are looki
   parent with its own state, model and running time, and opens its own read-only transcript. Shell
   commands left running in the background appear beside them.
 * **Sleeping machines are woken** with Wake-on-LAN when you look at them, a watched Mac is kept awake
-  so its agents do not stall, and a machine you cannot reach shows its last-known state.
+  so its agents do not stall, and a machine nobody can reach shows its last-known state.
 * **Usage limits across the fleet.** The fullest account limit shows on the machine row and in the
   status bar, so you see a session window filling up before an agent hits it.
 
@@ -75,12 +75,18 @@ makes it work; the daemons talk only to each other, and only while you are looki
 
 * **No hub, no cloud, no account.** One static Go binary per machine, talking to its peers over
   mutually authenticated TLS with a certificate your fleet generates for itself.
-* **Silent unless watched.** With no VS Code looking, a daemon holds no connections, runs no timers and
-  does not even read the Claude directory. Snapshots are pushed only on change, and only to a viewer.
+* **Silent unless watched.** With no VS Code looking, a daemon holds no connections and does not even
+  read the Claude directory. Snapshots are pushed only on change, and only to a viewer. The one
+  exception is a machine nobody can connect to (a laptop on hotel Wi-Fi), which keeps a single idle
+  uplink to another member so it can still be reached; `"uplink": "off"` turns that off.
+* **A mesh that heals itself.** Every member learns the whole fleet from whichever member it reaches,
+  keeps the addresses that worked most recently, relays through another member when there is no
+  direct path, and switches back to direct as soon as one appears. The relay only sees ciphertext.
 * **Nothing leaves your machines.** Vineyard reads Claude Code's own on-disk state and shows what Claude
   Code already reports. The one outside request is an optional once-a-day check for extension updates,
   and only for installs that did not come from the Marketplace.
 * **Join without SSH** with a single-use invite code, or bootstrap over SSH where you have it.
+  Removing a machine removes it everywhere, and *Rotate Fleet Key* locks a lost laptop out.
 * **A fleet that updates itself.** Upgrade the extension on one machine and it brings every daemon up
   to the same version over the mesh.
 * **macOS, Linux and Windows**, arm64 and amd64, daemons bundled for every platform.
