@@ -132,6 +132,7 @@ func TestMachineListSpreadsThroughHello(t *testing.T) {
 		cfg := config.New(id, id, 0, addr)
 		cfg.Listen = addr
 		cfg.Peers = peers
+		cfg.Uplink = "off"
 		n, err := New(Options{Config: cfg, Version: "test", Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
 		if err != nil {
 			t.Fatal(err)

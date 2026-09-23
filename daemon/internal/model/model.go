@@ -288,8 +288,10 @@ type Snapshot struct {
 	At            int64       `json:"at"` // producer clock, epoch ms
 	Seq           uint64      `json:"seq"`
 	DaemonVersion string      `json:"daemonVersion,omitempty"`
-	Listen        string      `json:"listen,omitempty"` // advertised host:port
-	HasClaude     bool        `json:"hasClaude"`
+	// Uplink names the member this machine keeps an uplink to because nobody can connect to it.
+	Uplink    string `json:"uplink,omitempty"`
+	Listen    string `json:"listen,omitempty"` // advertised host:port
+	HasClaude bool   `json:"hasClaude"`
 	// Usage is the newest account-limit report from any session this daemon manages. Limits are
 	// per account, so it applies to every session on the machine signed in as that account.
 	Usage *Usage `json:"usage,omitempty"`

@@ -208,6 +208,14 @@ address, or when you open another Vineyard window. A member that nobody can reac
 one other member, shows its last-known state, including what other members saw of it ("last seen
 10m ago, reported by forge").
 
+**Machines nobody can connect to.** A laptop on hotel or phone Wi-Fi can usually connect out but
+not be connected to. Each daemon checks this at startup and whenever its addresses change, by asking
+a member to connect back to it. If none can, it keeps one idle connection (an *uplink*) to a member
+it can reach, with a small keepalive every 4 minutes, and the tooltip says *keeps an uplink to
+forge*. Whoever watches then reaches the laptop through that member. A machine others can reach
+holds nothing. Set `"uplink": "off"` in `~/.vineyard/config.json` to turn this off, or
+`"uplink": "forge.local"` to prefer a particular member, then restart the daemon.
+
 **Firewalls.** Allow inbound TCP 7734 to each machine you want to watch. For example, on Ubuntu
 `sudo ufw allow 7734/tcp`; on Windows, from an elevated PowerShell,
 `New-NetFirewallRule -DisplayName Vineyard -Direction Inbound -Protocol TCP -LocalPort 7734 -Action Allow`.

@@ -90,14 +90,14 @@ func (n *Node) innerTLS(raw net.Conn, rd *bufio.Reader, client bool) (net.Conn, 
 
 // ---- requester side ---------------------------------------------------------------------------------
 
-// relayCandidates lists members worth asking to relay to target: those we hold a direct link to,
-// the relay that last worked for this target first.
+// relayCandidates lists members worth asking to relay to target: those we hold a direct link to, the
+// relay that last worked for this target first, then the member holding the target's uplink.
 func (n *Node) relayCandidates(target string) []*peerState {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	var preferred string
+	var preferred, uplinkTo string
 	if p := n.peers[target]; p != nil {
-		preferred = p.lastRelay
+		preferred, uplinkTo = p.lastRelay, p.uplinkTo
 	}
 	var out []*peerState
 	for id, q := range n.peers {
@@ -106,9 +106,18 @@ func (n *Node) relayCandidates(target string) []*peerState {
 		}
 		out = append(out, q)
 	}
+	rank := func(p *peerState) int {
+		switch p.id {
+		case preferred:
+			return 0
+		case uplinkTo: // it holds the target's uplink, so it can always get a callback
+			return 1
+		}
+		return 2
+	}
 	sort.Slice(out, func(i, j int) bool {
-		if (out[i].id == preferred) != (out[j].id == preferred) {
-			return out[i].id == preferred
+		if rank(out[i]) != rank(out[j]) {
+			return rank(out[i]) < rank(out[j])
 		}
 		return out[i].id < out[j].id
 	})

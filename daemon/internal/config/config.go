@@ -38,9 +38,13 @@ type Config struct {
 	Peers     []protocol.PeerAddr `json:"peers"`
 	// Removed lists machines removed from this machine's view. Other members still mention them in
 	// their hellos; this stops them being learned back. Adding one again takes it off the list.
-	Removed   []string `json:"removed,omitempty"`
-	ClaudeDir string   `json:"claudeDir,omitempty"`
-	ClaudeBin string   `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
+	Removed []string `json:"removed,omitempty"`
+	// Uplink: "auto" (default) holds one idle link to a member when no member can connect to this
+	// machine, so it stays reachable through that member while unwatched; "off" never does; any
+	// other value is the machine id to prefer for it.
+	Uplink    string `json:"uplink,omitempty"`
+	ClaudeDir string `json:"claudeDir,omitempty"`
+	ClaudeBin string `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
 	// DisableManaged turns off spawning sessions from Vineyard on this machine.
 	DisableManaged bool   `json:"disableManaged,omitempty"`
 	TailLines      int    `json:"tailLines,omitempty"`

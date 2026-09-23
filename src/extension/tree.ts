@@ -269,6 +269,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     md.appendMarkdown(m.online ? `$(pass) Online via ${describeVia(m.entry.via, nameOf)}` : `$(circle-slash) Offline`);
     if (m.entry.lastSeen) md.appendMarkdown(`  \nLast seen ${relativeTime(m.entry.lastSeen)}${!m.online && m.entry.via?.startsWith('reported:') ? `, ${describeVia(m.entry.via, nameOf)}` : ''}`);
     if (snap.at) md.appendMarkdown(`  \nSnapshot ${relativeTime(snap.at)}`);
+    if (snap.uplink) md.appendMarkdown(`  \nNobody can connect to it; keeps an uplink to ${nameOf(snap.uplink)}`);
     // Offline: why we cannot reach it. Relayed: why the direct path does not work.
     if (m.peer?.lastError && (!m.online || m.entry.via?.startsWith('relay:'))) md.appendMarkdown(`  \n$(warning) ${escapeMd(m.peer.lastError)}`);
     const rows = usageRows(snap.usage);

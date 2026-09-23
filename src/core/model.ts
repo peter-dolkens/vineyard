@@ -286,6 +286,8 @@ export interface Snapshot {
   at: number;
   seq: number;
   daemonVersion?: string;
+  /** The member this machine keeps an uplink to because nobody can connect to it. */
+  uplink?: string;
   listen?: string;
   hasClaude: boolean;
   /** Newest account-limit report from any managed session on the machine; limits are per account. */

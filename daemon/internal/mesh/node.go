@@ -71,6 +71,11 @@ type link struct {
 	// via is "" for a direct link, or "relay:<id>" when another member splices it (see tunnel.go).
 	via      string
 	lastSeen time.Time
+	// uplink: this link is (or may become) an uplink (uplink.go): long idle limit, rare pings, kept
+	// when nobody is watching.
+	uplink     bool
+	lastPing   time.Time
+	onRegister func() // called once register has accepted the link (uplink.go waits on it)
 }
 
 type peerState struct {
@@ -90,6 +95,8 @@ type peerState struct {
 	lastRelay string
 	// probing is set while a direct dial is tried under a relayed link (see probeDirect).
 	probing bool
+	// uplinkTo is the member this peer keeps an uplink to, as that member's hello told us.
+	uplinkTo string
 }
 
 type pendingReq struct {
@@ -139,6 +146,7 @@ type Node struct {
 	dist        distributor
 	awake       service.Awake
 	callbacks   map[string]chan legConn // relay tunnels waiting for their target to call back
+	up          uplinkState
 	// dialFilter, when set (tests only), drops addresses this node must not be able to reach.
 	dialFilter func(addrs []string) []string
 
@@ -266,6 +274,8 @@ func (n *Node) acceptOne(raw net.Conn) {
 		n.handleTunnelIn(tc, rd, t)
 	case "tunnel-accept":
 		n.handleTunnelAccept(tc, rd, t)
+	case "probe": // a member checking that it can reach us (uplink.go)
+		raw.Close()
 	default:
 		n.serveFirst(&link{conn: NewConn(bufConn{Conn: tc, rd: rd}), outbound: false}, first)
 	}
@@ -441,8 +451,14 @@ func (n *Node) hello(role string) protocol.Hello {
 	return protocol.Hello{
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
 		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: n.selfAddrs(),
-		Peers: n.knownPeers(),
+		Peers: n.knownPeers(), Uplinks: n.uplinks(),
 	}
+}
+
+func (n *Node) uplinks() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.uplinksLocked()
 }
 
 // knownPeers is what our hello tells the other side about everyone else, so a machine that reaches
@@ -564,7 +580,10 @@ func (n *Node) serveFirst(l *link, first []byte) {
 
 	// Main loop.
 	for {
-		b, err := l.conn.Recv(deadAfter)
+		n.mu.Lock()
+		idle := linkIdle(l)
+		n.mu.Unlock()
+		b, err := l.conn.Recv(idle)
 		if err != nil {
 			return
 		}
@@ -588,6 +607,14 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	}
 
 	// Peer.
+	if h.Uplink {
+		l.uplink = true
+	}
+	for _, id := range h.Uplinks {
+		if q := n.peers[id]; q != nil && id != n.cfg.MachineID {
+			q.uplinkTo = l.peerID
+		}
+	}
 	p := n.peers[l.peerID]
 	if p == nil {
 		p = &peerState{id: l.peerID}
@@ -658,6 +685,9 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()
 	n.considerPeer(l.peerID, h.Version, "", "")
+	if l.onRegister != nil {
+		l.onRegister()
+	}
 	for _, q := range probe {
 		go n.probeDirect(q)
 	}
@@ -796,6 +826,7 @@ func (n *Node) unregister(l *link) {
 		return
 	}
 	delete(n.links, l)
+	n.uplinkDroppedLocked(l)
 	if l.theySubscribed {
 		l.theySubscribed = false
 		n.subscribers--
@@ -899,7 +930,7 @@ func (n *Node) leaveWatching() {
 			l.weSubscribed = false
 			toUnsub = append(toUnsub, l)
 		}
-		if l.outbound && !l.theySubscribed {
+		if l.outbound && !l.theySubscribed && !l.uplink {
 			toClose = append(toClose, l)
 		}
 	}
@@ -967,6 +998,7 @@ func (n *Node) maintenanceLoop(ctx context.Context) {
 		}
 		tick++
 		n.reconcileSubscriptions()
+		n.uplinkTick()
 		if tick%int(pingEvery/time.Second) == 0 {
 			n.pingAndReap()
 		}
@@ -991,9 +1023,10 @@ func (n *Node) pingAndReap() {
 	var pings, dead []*link
 	now := time.Now()
 	for l := range n.links {
-		if now.Sub(l.lastSeen) > deadAfter {
+		if now.Sub(l.lastSeen) > linkIdle(l) {
 			dead = append(dead, l)
-		} else if l.outbound {
+		} else if l.outbound && (!l.uplink || now.Sub(l.lastPing) >= uplinkPing) {
+			l.lastPing = now
 			pings = append(pings, l)
 		}
 	}
@@ -1065,6 +1098,11 @@ func (n *Node) collectSelf(force bool) {
 	snap.Name = n.cfg.Name
 	snap.Listen = n.cfg.Advertise
 	snap.DaemonVersion = n.opts.Version
+	n.mu.Lock()
+	if n.up.link != nil {
+		snap.Uplink = n.up.link.peerID
+	}
+	n.mu.Unlock()
 	canon := canonical(snap)
 
 	n.mu.Lock()
@@ -1107,6 +1145,10 @@ func (n *Node) dispatch(l *link, b []byte) {
 		return
 	}
 	switch env.T {
+	case "uplink":
+		n.mu.Lock()
+		l.uplink = true
+		n.mu.Unlock()
 	case "sync":
 		var m protocol.Sync
 		if json.Unmarshal(b, &m) == nil && l.role == "peer" {
@@ -1197,6 +1239,10 @@ func (n *Node) dispatch(l *link, b []byte) {
 }
 
 func (n *Node) handleRequest(l *link, r protocol.Request) {
+	if r.Op == "dialback" && l.role == "peer" && (r.Target == "" || r.Target == n.cfg.MachineID) {
+		go n.answerDialback(l, r) // dials out; keep this link's read loop free meanwhile
+		return
+	}
 	if r.Target == "" || r.Target == n.cfg.MachineID {
 		data, err := n.handleLocal(r)
 		if err != nil {

@@ -49,6 +49,15 @@ use it.
 * **Healing is event-driven.** A relayed peer's direct addresses are tried again when it (or anyone's
   hello) reports an address we did not have, and when another viewer attaches; a direct link that
   answers replaces the relayed one on both sides. There is no retry timer.
+* **Uplinks for machines nobody can connect to.** With `uplink` `auto` (default) a daemon asks a
+  member to dial it back (`dialback`; the test connection opens with `probe`) at startup, when its own
+  addresses change (a local interface check once a minute, no traffic) and when its uplink drops. If
+  nobody can, the link to that member becomes an uplink: hello `uplink: true` or an `uplink` message
+  marks it, it is pinged every 4 min, both ends allow 10 min of silence, and it survives the last
+  viewer leaving. The member lists its uplinks in its hellos (`uplinks`), watchers ask it first for a
+  relay, and it reaches the machine with a `tunnel-callback`. Reconnects back off from 1 to 30 min.
+  This is the one deliberate exception to "silent unless watched", and only for unreachable machines;
+  `uplink: off` disables it.
 * **Second-hand state.** A daemon accepting a peer connection sends one `sync` with what it last knew
   of every other machine (seen within 7 days). The receiver, if watching, keeps an entry only for
   machines it has no live link to and only when newer than its own, marked `reported:<id>`, so an
@@ -202,7 +211,8 @@ tail -f ~/.vineyard/vineyardd.log
 
 | Message | Direction | Purpose |
 | --- | --- | --- |
-| `hello {role: peer\|viewer, machineId, listen, addrs, peers}` | both | identity, every address it answers on, and every other member it knows (once per connection) |
+| `hello {role: peer\|viewer, machineId, listen, addrs, peers, uplink, uplinks}` | both | identity, every address it answers on, every other member it knows, whether this may be an uplink, and which machines hold an uplink to the sender (once per connection) |
+| `req dialback {addrs}` → `{reachable}` / `uplink` | peer→peer | "can you connect to me?"; mark this link as an uplink |
 | `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `sync {entries}` | accepting peer→dialer | once per connection: last-known state of other machines |

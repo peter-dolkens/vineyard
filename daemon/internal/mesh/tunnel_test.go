@@ -23,6 +23,7 @@ func meshNode(t *testing.T, id string, peers ...protocol.PeerAddr) (*Node, strin
 	cfg := config.New(id, id, 0, addr)
 	cfg.Listen = addr
 	cfg.Peers = peers
+	cfg.Uplink = "off" // tests that want uplinks turn them on
 	n, err := New(Options{Config: cfg, Version: "test", Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
 	if err != nil {
 		t.Fatal(err)

@@ -38,6 +38,22 @@ type Hello struct {
 	// Peers is every other member the sender knows and how to reach it, sent once per connection so
 	// a machine that can reach any one member learns about all of them. It is never re-broadcast.
 	Peers []PeerAddr `json:"peers,omitempty"`
+	// Uplink marks a connection opened by a daemon that may keep it as its uplink (it cannot be
+	// reached otherwise); the receiver allows it long silences.
+	Uplink bool `json:"uplink,omitempty"`
+	// Uplinks lists machines holding an uplink to the sender, so a watcher asks the sender first when
+	// it needs a relay to one of them.
+	Uplinks []string `json:"uplinks,omitempty"`
+}
+
+// DialbackArgs asks a member to try connecting to the sender at these addresses (op "dialback").
+type DialbackArgs struct {
+	Addrs []string `json:"addrs"`
+}
+
+type DialbackResult struct {
+	Reachable bool   `json:"reachable"`
+	Error     string `json:"error,omitempty"`
 }
 
 type SnapshotMsg struct {
