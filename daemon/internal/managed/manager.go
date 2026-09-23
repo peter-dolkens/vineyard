@@ -47,6 +47,9 @@ type proc struct {
 	done   chan struct{}
 	// ctl holds the reply channel for each control_request we sent and are waiting on.
 	ctl map[string]chan ctlReply
+	// ctxBusy: a get_context_usage request is in flight; ctxUnsupported: this Claude Code refused one.
+	ctxBusy        bool
+	ctxUnsupported bool
 }
 
 // ctlReply is Claude Code's answer to one of our control_requests: the response body on success,
@@ -351,6 +354,8 @@ func (m *Manager) initialize(p *proc) {
 	p.info.Account, p.info.AccountOrg, p.info.AccountPlan = account.Email, account.Organization, account.Plan
 	m.mu.Unlock()
 	m.changed()
+	// The window's real size (and the baseline: system prompt, tools, memory) comes from the harness.
+	m.refreshContext(p)
 }
 
 // parseModels extracts the picker rows from an initialize response. Rows Claude Code marks disabled
@@ -392,6 +397,7 @@ func (m *Manager) SetModel(sid, modelID string) error {
 	p.info.Model = modelID
 	m.mu.Unlock()
 	m.changed()
+	go m.refreshContext(p) // the window may differ ("[1m]" models)
 	return nil
 }
 
@@ -491,13 +497,16 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				Error     string          `json:"error"`
 				Response  json.RawMessage `json:"response"`
 			} `json:"response"`
-			RateLimitInfo  json.RawMessage `json:"rate_limit_info"`
-			SessionID      string          `json:"session_id"`
-			Model          string          `json:"model"`
-			PermissionMode string          `json:"permissionMode"`
-			TotalCostUSD   float64         `json:"total_cost_usd"`
-			IsError        bool            `json:"is_error"`
-			Result         string          `json:"result"`
+			RateLimitInfo json.RawMessage `json:"rate_limit_info"`
+			// Status is "compacting", "requesting" or null on system/status lines.
+			Status          *string         `json:"status"`
+			CompactMetadata json.RawMessage `json:"compact_metadata"`
+			SessionID       string          `json:"session_id"`
+			Model           string          `json:"model"`
+			PermissionMode  string          `json:"permissionMode"`
+			TotalCostUSD    float64         `json:"total_cost_usd"`
+			IsError         bool            `json:"is_error"`
+			Result          string          `json:"result"`
 		}
 		if json.Unmarshal(line, &env) != nil {
 			continue
@@ -547,13 +556,31 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				m.mu.Unlock()
 				m.changed()
 			case "status":
-				// Emitted when the session's mode changes (from us or from inside the session).
+				// Emitted when the session's mode changes (from us or from inside the session), when a
+				// compaction starts (status "compacting", repeated every 30 s while it runs) and when the
+				// next request starts ("requesting") or the status clears (null).
+				changed := false
+				m.mu.Lock()
 				if env.PermissionMode != "" {
-					m.mu.Lock()
 					p.info.PermissionMode = env.PermissionMode
-					m.mu.Unlock()
+					changed = true
+				}
+				compacting := env.Status != nil && *env.Status == "compacting"
+				if p.setCompacting(compacting, time.Now().UnixMilli()) {
+					changed = true
+				}
+				m.mu.Unlock()
+				if changed {
 					m.changed()
 				}
+			case "compact_boundary":
+				// The summary is in place; the transcript shows the new size only at the next API call,
+				// so this is one of the few moments worth asking the harness.
+				m.mu.Lock()
+				p.setCompacting(false, 0)
+				m.mu.Unlock()
+				m.changed()
+				go m.refreshContext(p)
 			}
 		case "rate_limit_event":
 			// The account's limit picture changed (read from the API's rate-limit headers).
@@ -665,6 +692,15 @@ func (m *Manager) Merge(machineID string, agents []model.Agent) []model.Agent {
 		}
 		if info.PermissionMode != "" {
 			a.PermissionMode = info.PermissionMode
+		}
+		if info.Context != nil {
+			a.ContextWindow = info.Context.MaxTokens
+			// The harness's own measurement wins over an older transcript figure (right after a
+			// compaction the transcript still shows the pre-compaction size).
+			if info.Context.At >= a.ContextAt {
+				a.ContextTokens = info.Context.TotalTokens
+				a.ContextAt = info.Context.At
+			}
 		}
 		if info.Pending != nil {
 			if info.Pending.ToolName == "AskUserQuestion" {

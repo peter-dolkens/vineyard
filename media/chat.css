@@ -112,8 +112,14 @@ input:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outl
 textarea { width: 100%; border: none; background: transparent; color: var(--vscode-input-foreground); font: inherit; resize: none; outline: none; line-height: 1.4; max-height: 200px; }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .hint { font-size: 11px; opacity: 0.6; margin-right: auto; }
-.send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 4px 8px; }
+/* the one composer button: Send, Sending, Pause (interrupt the turn) or Stop (end the session) */
+.send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 4px 8px; min-width: 32px; transition: background .12s, color .12s, border-color .12s; }
 .send:hover { background: var(--vscode-button-hoverBackground); }
+.send.sending { opacity: 0.7; }
+.send.pause { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+.send.pause:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.send.stop { background: transparent; border-color: var(--vscode-inputValidation-errorBorder, #c33); color: var(--vscode-errorForeground); }
+.send.stop:hover { background: var(--vscode-inputValidation-errorBackground, rgba(200,50,50,.15)); }
 
 /* ---- railway layout ---------------------------------------------------------------------------- */
 .log { padding: 8px 14px 8px 10px; gap: 0; }

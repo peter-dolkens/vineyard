@@ -29,6 +29,7 @@ const (
 	question     = `{"type":"assistant","timestamp":"2026-09-16T14:32:21.000Z","message":{"model":"claude-fable-5-1","role":"assistant","content":[{"type":"tool_use","id":"toolu_q","name":"AskUserQuestion","input":{"questions":[{"question":"Which database?","header":"DB"}]}}],"stop_reason":"tool_use"}}`
 	title        = `{"type":"ai-title","aiTitle":"Do the thing","sessionId":"s1"}`
 	lastPrompt   = `{"type":"last-prompt","lastPrompt":"do the thing","sessionId":"s1"}`
+	compacted    = `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info","timestamp":"2026-09-16T14:32:30.000Z","compactMetadata":{"trigger":"manual","preTokens":49996}}`
 	sidechainUse = `{"type":"assistant","isSidechain":true,"timestamp":"2026-09-16T14:32:22.000Z","message":{"model":"claude-sonnet-5","role":"assistant","content":[{"type":"tool_use","id":"toolu_side","name":"Read","input":{"file_path":"/x"}}],"stop_reason":"tool_use"}}`
 )
 
@@ -97,5 +98,24 @@ func TestBuildAgentRegistryInteraction(t *testing.T) {
 func TestEncodeProjectDir(t *testing.T) {
 	if got := EncodeProjectDir("/Users/peter.dolkens/Projects/down-under"); got != "-Users-peter-dolkens-Projects-down-under" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDeriveContextTokens(t *testing.T) {
+	d := DeriveFromTranscript(parse(t, userPrompt, thinking, toolUse, toolResult, finalText))
+	if d.ContextTokens != 2+28336+21658 {
+		t.Fatalf("context = %d, want the last call's input + cache read + cache creation", d.ContextTokens)
+	}
+	if want := entryTime(parse(t, thinking)[0]); d.ContextAt != want { // the later entries carry no usage
+		t.Fatalf("contextAt = %d, want %d", d.ContextAt, want)
+	}
+	// A compaction wipes the count until the next call shows the new size.
+	d = DeriveFromTranscript(parse(t, userPrompt, thinking, toolUse, toolResult, finalText, compacted))
+	if d.ContextTokens != 0 || d.ContextAt != entryTime(parse(t, compacted)[0]) {
+		t.Fatalf("after compact_boundary: tokens %d at %d", d.ContextTokens, d.ContextAt)
+	}
+	d = DeriveFromTranscript(parse(t, userPrompt, compacted, thinking))
+	if d.ContextTokens != 2+28336+21658 {
+		t.Fatalf("the next call's usage should count again, got %d", d.ContextTokens)
 	}
 }

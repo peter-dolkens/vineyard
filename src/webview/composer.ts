@@ -1,7 +1,8 @@
 /**
  * The composer's toolbar, modelled on the Claude Code pane: attach (+), the "/" actions menu, a
- * context-window ring, a prompt-cache dot, the subagent count, and the model and permission-mode pills
- * whose popovers carry the effort slider. main.ts owns the textarea and the transport; this module
+ * context-window donut (exact figure in its tooltip; spins while Claude Code compacts), a prompt-cache
+ * dot, the subagent count, and the model and permission-mode pills whose popovers carry the effort
+ * slider. main.ts owns the textarea and the transport; this module
  * owns everything under it and asks main.ts to act through BarDeps.
  */
 
@@ -10,7 +11,7 @@ import { resetsIn, usageRows, usageWarning, usageWarningKey } from '../core/usag
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
-import { GROUP, MODES, buildActions, cacheState, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type Action } from '../core/composer.ts';
+import { GROUP, MODES, buildActions, cacheState, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action } from '../core/composer.ts';
 
 export interface BarAgent {
   sessionId: string;
@@ -23,11 +24,12 @@ export interface BarAgent {
   effort?: string;
   permissionMode?: string;
   contextTokens?: number;
+  contextWindow?: number;
   lastActivityAt?: number;
   version?: string;
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 export interface BarMachine {
   id: string;
@@ -90,6 +92,23 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 function icon(name: string): HTMLElement {
   return el('i', `codicon codicon-${name}`);
 }
+const SVG = 'http://www.w3.org/2000/svg';
+/** An open hand (Lucide's "hand", ISC): codicons have no hand glyph, and Manual mode wants one. */
+const HAND_PATHS = ['M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2', 'M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2', 'M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8', 'M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15'];
+/** A permission mode's icon: a codicon, or the inline hand for Manual. */
+function modeIcon(name: string): Element {
+  if (name !== 'hand') return icon(name);
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'mode-svg');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of HAND_PATHS) {
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  return svg;
+}
 function pill(id: string, title: string): HTMLButtonElement {
   const b = el('button', 'pill');
   b.id = id;
@@ -98,16 +117,17 @@ function pill(id: string, title: string): HTMLButtonElement {
   return b;
 }
 
-/** A ring that fills clockwise; the label sits beside it. */
+/** A donut that fills clockwise; there is no label, the pill's tooltip carries the figure. */
 function ring(fraction: number, level: string): SVGSVGElement {
   const r = 5.5;
   const c = 2 * Math.PI * r;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const svg = document.createElementNS(SVG, 'svg');
   svg.setAttribute('viewBox', '0 0 16 16');
   svg.setAttribute('class', `ring ring-${level}`);
-  const track = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  svg.setAttribute('aria-hidden', 'true');
+  const track = document.createElementNS(SVG, 'circle');
   track.setAttribute('class', 'ring-track');
-  const fill = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  const fill = document.createElementNS(SVG, 'circle');
   fill.setAttribute('class', 'ring-fill');
   for (const k of [track, fill]) {
     k.setAttribute('cx', '8');
@@ -249,10 +269,23 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       return wrap;
     }
     wrap.classList.toggle('readonly', !live);
-    for (const v of levels) {
-      const stop = el('span', 'estop' + (v === cur ? ' active' : '') + (v === levels[levels.length - 1] ? ' top' : ''));
+    wrap.setAttribute('role', 'radiogroup');
+    wrap.setAttribute('aria-label', 'Reasoning effort');
+    // The track fills up to the current stop, like a slider; the stop itself is the knob.
+    const at = levels.indexOf(cur);
+    levels.forEach((v, i) => {
+      const cls = ['estop'];
+      if (i === 0) cls.push('first');
+      if (i === levels.length - 1) cls.push('top');
+      if (v === cur) cls.push('active');
+      if (at >= 0 && i < at) cls.push('filled');
+      if (i === at - 1) cls.push('last-filled');
+      const stop = el('span', cls.join(' '));
       stop.title = effortLabel(v) + (live ? '' : ' (read-only)');
       stop.dataset.v = v;
+      stop.setAttribute('role', 'radio');
+      stop.setAttribute('aria-checked', String(v === cur));
+      stop.setAttribute('aria-label', effortLabel(v));
       if (live) {
         stop.onclick = (e) => {
           e.stopPropagation();
@@ -261,14 +294,13 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
         };
       }
       wrap.appendChild(stop);
-    }
+    });
+    wrap.appendChild(el('span', 'ecur', effortLabel(cur)));
     return wrap;
   }
   function effortRow(): HTMLElement {
     const row = el('div', 'pop-row effort-row');
-    const lbl = el('span', 'pop-label');
-    lbl.append('Effort ', el('span', 'dim', `(${effortLabel(currentEffort())})`));
-    row.append(lbl, effortSlider());
+    row.append(el('span', 'pop-label', 'Effort'), effortSlider());
     return row;
   }
   function readOnlyNote(): HTMLElement | undefined {
@@ -320,7 +352,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     const live = managedLive();
     for (const m of MODES) {
       const row = el('div', 'pop-item mode' + (m.value === cur ? ' selected' : '') + (live ? '' : ' readonly'));
-      row.append(icon(m.icon));
+      row.append(modeIcon(m.icon));
       const text = el('div', 'pop-text');
       text.append(el('div', 'pop-label', m.label), el('div', 'pop-desc', m.description));
       row.append(text);
@@ -525,9 +557,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       for (const a of g.actions) {
         const row = el('div', 'pop-item' + (a.disabled ? ' disabled' : '') + (a.kind === 'effort' ? ' effort-row' : ''));
         const text = el('div', 'pop-text');
-        const lbl = el('div', 'pop-label', a.label);
-        if (a.kind === 'effort') lbl.append(' ', el('span', 'dim', `(${effortLabel(currentEffort())})`));
-        text.append(lbl);
+        text.append(el('div', 'pop-label', a.label));
         if (a.detail && (a.disabled || a.group === GROUP.commands)) text.append(el('div', 'pop-desc', a.detail));
         else if (a.detail) row.title = a.detail;
         row.append(text);
@@ -569,7 +599,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   modelPill.onclick = () => (open === 'model' ? close() : openModel());
   modePill.onclick = () => (open === 'mode' ? close() : openMode());
   ctxPill.onclick = () => {
-    if (managedLive()) deps.run('compact');
+    if (managedLive() && !contextFor(agent, undefined).compacting) deps.run('compact');
   };
   agentsPill.onclick = () => (open === 'agents' ? close() : openAgents());
 
@@ -610,17 +640,22 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     btnAttach.disabled = !send;
     btnAttach.title = send ? 'Attach file…' : 'This session cannot take messages';
 
-    // Context ring: share of the window in use; click compacts a managed session.
-    const tokensUsed = agent?.contextTokens;
-    ctxPill.hidden = !tokensUsed;
-    if (tokensUsed) {
-      // The window depends on the wire id ("[1m]" suffix), which the picker row knows better than the transcript.
-      const wireModel = models()?.find((x) => (x.value === 'default' ? '' : x.value) === selectedRow())?.resolvedModel || currentModel();
-      const g = contextGauge(tokensUsed, wireModel);
+    // Context donut: share of the window in use, the exact figure in the tooltip; click compacts a
+    // managed session. While Claude Code compacts, the arc spins and the click is off.
+    // When the harness has not measured the window, it follows the wire id ("[1m]" suffix), which the
+    // picker row knows better than the transcript.
+    const wireModel = models()?.find((x) => (x.value === 'default' ? '' : x.value) === selectedRow())?.resolvedModel || currentModel();
+    const ctx = contextFor(agent, wireModel);
+    ctxPill.hidden = !ctx.tokens && !ctx.compacting;
+    if (!ctxPill.hidden) {
+      const g = contextGauge(ctx.tokens, ctx.window);
+      const compactable = managedLive() && !ctx.compacting;
       ctxPill.innerHTML = '';
-      ctxPill.append(ring(g.fraction, g.level), el('span', undefined, `${g.percent}%`));
-      ctxPill.className = `pill ctx ctx-${g.level}` + (managedLive() ? ' action' : '');
-      ctxPill.title = `${fmtTokens(tokensUsed)} of ${fmtTokens(contextWindow(wireModel))} tokens in context (${g.percent}%)` + (managedLive() ? '\nClick to compact the conversation' : '');
+      ctxPill.append(ctx.compacting ? ring(0.25, 'compacting') : ring(g.fraction, g.level));
+      ctxPill.className = `pill ctx ctx-${g.level}` + (ctx.compacting ? ' compacting' : '') + (compactable ? ' action' : '');
+      const figure = `${fmtTokens(ctx.tokens)} of ${fmtTokens(ctx.window)} tokens (${g.percent}%)`;
+      ctxPill.title = ctx.compacting ? `Compacting the conversation…\n${figure} before compaction` : `Context window: ${figure}` + (ctx.measured ? '' : '\nWindow size inferred from the model id') + (compactable ? '\nClick to compact the conversation' : '');
+      ctxPill.setAttribute('aria-label', ctxPill.title.split('\n')[0]!);
     }
 
     // Prompt cache: hit rate of the last call, and whether the prefix is likely still cached.

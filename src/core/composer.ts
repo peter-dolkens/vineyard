@@ -16,17 +16,50 @@ export function contextWindow(model: string | undefined): number {
 export interface ContextGauge {
   /** 0..1 share of the window in use. */
   fraction: number;
-  /** Whole percent, for the label. */
+  /** Whole percent, for the tooltip. */
   percent: number;
   /** ok under 60 %, warn under 85 %, hot from there (Claude Code compacts on its own soon after). */
   level: 'ok' | 'warn' | 'hot';
 }
 
-export function contextGauge(tokens: number | undefined, model: string | undefined): ContextGauge {
-  const window = contextWindow(model);
-  const fraction = Math.min(1, Math.max(0, (tokens ?? 0) / window));
+/** Share of a window of `window` tokens in use; a missing or zero window falls back to 200k. */
+export function contextGauge(tokens: number | undefined, window: number | undefined): ContextGauge {
+  const w = window && window > 0 ? window : contextWindow(undefined);
+  const fraction = Math.min(1, Math.max(0, (tokens ?? 0) / w));
   const percent = Math.round(fraction * 100);
   return { fraction, percent, level: percent < 60 ? 'ok' : percent < 85 ? 'warn' : 'hot' };
+}
+
+/** The fields of an agent the ring reads. */
+export interface ContextSource {
+  contextTokens?: number;
+  contextWindow?: number;
+  managed?: { exited: boolean; compacting?: boolean };
+}
+
+export interface ContextView {
+  /** Tokens in the window: the last API call's input as the transcript shows it, or Claude Code's own measurement when that is newer (the daemon picks). */
+  tokens: number;
+  window: number;
+  /** True when Claude Code reported the window's size itself (get_context_usage); false when it is inferred from the model id. */
+  measured: boolean;
+  /** A compaction is running (managed sessions only): the count is about to drop. */
+  compacting: boolean;
+}
+
+/**
+ * What the ring shows for a session. Nothing here asks Claude Code anything: the daemon merges the
+ * harness's measurement into contextTokens / contextWindow when it has one, so the transcript's
+ * per-call usage carries the ring between the few check-ins (handshake, model switch, compaction).
+ */
+export function contextFor(a: ContextSource | undefined, wireModel: string | undefined): ContextView {
+  const measured = !!a?.contextWindow && a.contextWindow > 0;
+  return {
+    tokens: a?.contextTokens ?? 0,
+    window: measured ? a!.contextWindow! : contextWindow(wireModel),
+    measured,
+    compacting: !!a?.managed && !a.managed.exited && !!a.managed.compacting,
+  };
 }
 
 // ---- prompt cache --------------------------------------------------------------------------------

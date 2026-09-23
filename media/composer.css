@@ -17,20 +17,28 @@
 .pill#modelPill, .pill#modePill, .pill#ctxPill, .pill#cachePill, .pill#agentsPill { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
 .pill#modelPill:hover, .pill#modePill:hover, .pill#ctxPill.action:hover, .pill#agentsPill:hover, .pill.open { filter: brightness(1.15); }
 .pill#modePill { margin-left: auto; }
+.pill#ctxPill { width: 26px; padding: 0 5px; justify-content: center; }
 .pill.ctx:not(.action) { cursor: default; }
+.pill#ctxPill:not(.action):hover { filter: none; }
+.pill.ctx.compacting .ring { animation: spin .9s linear infinite; }
 .pill.cache { cursor: default; }
 .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-descriptionForeground); }
 .pill .dot.live { background: var(--vscode-charts-blue, #3794ff); animation: pulse 1.2s ease-in-out infinite; }
 .pill .dot.cache-warm { background: var(--vscode-charts-orange, #d18616); box-shadow: 0 0 6px var(--vscode-charts-orange, #d18616); }
 .pill .dot.cache-cold { background: var(--vscode-descriptionForeground); opacity: 0.6; }
 
-/* context ring */
-.ring { width: 14px; height: 14px; transform: rotate(-90deg); }
-.ring circle { fill: none; stroke-width: 2.5; }
-.ring-track { stroke: currentColor; opacity: 0.2; }
+/* context donut: no label, the tooltip has the figure; a spinning quarter arc while compacting */
+.ring { width: 16px; height: 16px; transform: rotate(-90deg); display: block; }
+.ring circle { fill: none; stroke-width: 3; }
+.ring-track { stroke: currentColor; opacity: 0.22; }
 .ring-fill { stroke: var(--vscode-charts-green, #89d185); stroke-linecap: round; transition: stroke-dasharray .3s; }
 .ring-warn .ring-fill { stroke: var(--vscode-charts-yellow, #cca700); }
 .ring-hot .ring-fill { stroke: var(--vscode-errorForeground, #f14c4c); }
+.ring-compacting .ring-fill { stroke: var(--vscode-charts-blue, #3794ff); transition: none; }
+
+/* the Manual mode's hand (inline SVG; codicons have none) */
+.mode-svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.pop-item > .mode-svg { width: 15px; height: 15px; opacity: 0.85; }
 
 /* attachment chips above the toolbar */
 .attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 6px; }
@@ -72,17 +80,27 @@
 .effort-row { cursor: default; }
 .effort-row:hover { background: transparent; }
 
-/* effort slider: one stop per level, the current one enlarged, the top level purple */
-.eslider { display: inline-flex; align-items: center; gap: 12px; padding: 0 10px; height: 22px; border-radius: 11px; background: var(--vscode-badge-background); flex-shrink: 0; }
-.estop { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-badge-foreground); opacity: 0.45; cursor: pointer; transition: transform .12s, opacity .12s; }
+/* effort slider: one stop per level on a track that fills up to the current one, which is the knob
+   (accent colour with a halo); the top level is purple; the current level's name sits at the end */
+.eslider { --eacc: var(--vscode-focusBorder, #3794ff); --egap: 14px; display: inline-flex; align-items: center; padding: 0 10px 0 12px; height: 24px; border-radius: 12px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); flex-shrink: 0; }
+.estop { position: relative; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.35; cursor: pointer; margin-left: var(--egap); flex-shrink: 0; transition: transform .12s, opacity .12s, background .12s; }
+.estop.first { margin-left: 0; }
+/* each stop draws the track segment back to the previous one; the knob's segment comes from the stop before it instead, so it is not scaled with the knob */
+.estop:not(.first)::before { content: ''; position: absolute; right: 100%; top: 50%; width: var(--egap); height: 2px; margin-top: -1px; background: var(--vscode-badge-foreground); }
+.estop.active::before { display: none; }
+.estop.last-filled::after { content: ''; position: absolute; left: 100%; top: 50%; width: var(--egap); height: 2px; margin-top: -1px; background: var(--eacc); }
 .estop:hover { opacity: 0.9; transform: scale(1.4); }
-.estop.top { background: var(--vscode-charts-purple, #b180d7); opacity: 0.8; }
-.estop.active { opacity: 1; transform: scale(2.2); }
-.estop.active.top { box-shadow: 0 0 6px var(--vscode-charts-purple, #b180d7); }
+.estop.top { color: var(--vscode-charts-purple, #b180d7); opacity: 0.8; }
+.estop.filled { opacity: 1; color: var(--eacc); }
+.estop.filled::before { background: var(--eacc); }
+.estop.active { opacity: 1; background: var(--eacc); transform: scale(1.75); box-shadow: 0 0 0 1.5px var(--vscode-badge-background), 0 0 0 2.5px var(--eacc); }
+.estop.active.top { background: var(--vscode-charts-purple, #b180d7); box-shadow: 0 0 0 1.5px var(--vscode-badge-background), 0 0 0 2.5px var(--vscode-charts-purple, #b180d7); }
+.estop.active:hover { transform: scale(1.75); }
+.ecur { margin-left: 14px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .eslider.readonly .estop { cursor: default; }
-.eslider.readonly .estop:hover { transform: none; opacity: 0.45; }
-.eslider.readonly .estop.active { transform: scale(2.2); opacity: 1; }
-.eslider .dim { font-size: 11px; opacity: 0.6; }
+.eslider.readonly .estop:hover { transform: none; }
+.eslider.readonly .estop:not(.active):not(.filled):hover { opacity: 0.35; }
+.eslider.readonly .estop.active:hover { transform: scale(1.75); }
 
 /* agent map: the session, its subagents nested by parent, then background tasks */
 .amap { padding: 2px 14px 6px; }

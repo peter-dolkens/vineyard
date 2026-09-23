@@ -127,7 +127,11 @@ type Derived struct {
 	LastPrompt     string
 	Version        string
 	LastActivityAt int64
-	ContextTokens  int64
+	// ContextTokens is what the last API call saw (input + cache read + cache creation), the figure
+	// Claude Code's own /context uses; 0 right after a compact_boundary, until the next call shows the
+	// new size. ContextAt is that entry's timestamp.
+	ContextTokens int64
+	ContextAt     int64
 }
 
 // DeriveFromTranscript walks the tail once and decides where the conversation is. Only the main
@@ -171,6 +175,13 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 			if s := str(e["mode"]); s != "" {
 				d.PermissionMode = s
 			}
+		case "system":
+			// A compaction replaced the history with a summary; the pre-compaction count is now wrong,
+			// and the transcript only shows the new one at the next API call.
+			if str(e["subtype"]) == "compact_boundary" && !skip(e) {
+				d.ContextTokens = 0
+				d.ContextAt = entryTime(e)
+			}
 		}
 		if skip(e) {
 			continue
@@ -204,6 +215,7 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 				}
 				if total > 0 {
 					d.ContextTokens = int64(total)
+					d.ContextAt = entryTime(e)
 				}
 			}
 		}
@@ -427,6 +439,7 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 		a.Version = d.Version
 	}
 	a.ContextTokens = d.ContextTokens
+	a.ContextAt = d.ContextAt
 	a.PendingTools = d.PendingTools
 	a.LastActivityAt = max64(d.LastActivityAt, t.Mtime, regUpdated)
 

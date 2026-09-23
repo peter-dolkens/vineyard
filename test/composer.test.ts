@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CACHE_TTL_MS, buildActions, cacheState, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type ActionContext } from '../src/core/composer.ts';
+import { CACHE_TTL_MS, buildActions, cacheState, contextFor, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type ActionContext } from '../src/core/composer.ts';
 
 test('context window follows the [1m] suffix', () => {
   assert.equal(contextWindow('claude-opus-5-5[1m]'), 1_000_000);
@@ -9,12 +9,22 @@ test('context window follows the [1m] suffix', () => {
 });
 
 test('context gauge clamps and grades', () => {
-  assert.deepEqual(contextGauge(50_000, 'claude-fable-5-1'), { fraction: 0.25, percent: 25, level: 'ok' });
-  assert.equal(contextGauge(150_000, 'x').level, 'warn');
-  assert.equal(contextGauge(190_000, 'x').level, 'hot');
-  assert.equal(contextGauge(5_000_000, 'x').percent, 100);
-  assert.equal(contextGauge(undefined, 'x').percent, 0);
-  assert.equal(contextGauge(300_000, 'opus[1m]').percent, 30);
+  assert.deepEqual(contextGauge(50_000, 200_000), { fraction: 0.25, percent: 25, level: 'ok' });
+  assert.equal(contextGauge(150_000, 200_000).level, 'warn');
+  assert.equal(contextGauge(190_000, 200_000).level, 'hot');
+  assert.equal(contextGauge(5_000_000, 200_000).percent, 100);
+  assert.equal(contextGauge(undefined, 200_000).percent, 0);
+  assert.equal(contextGauge(300_000, 1_000_000).percent, 30);
+  assert.equal(contextGauge(100_000, 0).percent, 50, 'no window: 200k');
+  assert.equal(contextGauge(100_000, undefined).percent, 50);
+});
+
+test('the ring takes the measured window when Claude Code gave one, else infers it from the model id', () => {
+  assert.deepEqual(contextFor({ contextTokens: 48_213, contextWindow: 200_000, managed: { exited: false } }, 'claude-opus-5-5[1m]'), { tokens: 48_213, window: 200_000, measured: true, compacting: false });
+  assert.deepEqual(contextFor({ contextTokens: 48_213 }, 'claude-opus-5-5[1m]'), { tokens: 48_213, window: 1_000_000, measured: false, compacting: false });
+  assert.deepEqual(contextFor(undefined, undefined), { tokens: 0, window: 200_000, measured: false, compacting: false });
+  assert.equal(contextFor({ contextTokens: 1, managed: { exited: false, compacting: true } }, 'x').compacting, true);
+  assert.equal(contextFor({ contextTokens: 1, managed: { exited: true, compacting: true } }, 'x').compacting, false, 'an exited session is not compacting');
 });
 
 test('cache state: none before any call, warm within the TTL, cold after', () => {

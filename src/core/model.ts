@@ -76,6 +76,10 @@ export interface Agent {
   startedAt?: number;
   lastActivityAt?: number;
   contextTokens?: number;
+  /** The window's size as Claude Code reported it (managed sessions); absent means infer it from the model id. */
+  contextWindow?: number;
+  /** When contextTokens was measured, epoch ms. */
+  contextAt?: number;
   pendingTools: PendingTool[];
   transcriptPath?: string;
   /** Set when the daemon on that machine spawned the session and controls it. */
@@ -175,6 +179,19 @@ export interface ManagedInfo {
   accountPlan?: string;
   /** The account's limit report as this session last saw it. */
   usage?: Usage;
+  /** Claude Code's own measurement of the window (get_context_usage), taken after the handshake, a model switch and a compaction. */
+  context?: ContextUsage;
+  /** True from Claude Code's "compacting" status until the compact_boundary that ends it. */
+  compacting?: boolean;
+  compactingSince?: number;
+}
+
+export interface ContextUsage {
+  totalTokens: number;
+  maxTokens: number;
+  percentage: number;
+  model?: string;
+  at: number;
 }
 
 export interface UsageWindow {

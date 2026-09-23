@@ -6,6 +6,7 @@
 import { marked } from 'marked';
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
+import { contextFor, contextGauge } from '../core/composer.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -34,6 +35,7 @@ interface Agent {
   effort?: string;
   permissionMode?: string;
   contextTokens?: number;
+  contextWindow?: number;
   workspacePath: string;
   lastActivityAt?: number;
   startedAt?: number;
@@ -42,7 +44,7 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 interface MachineInfo {
   id: string;
@@ -89,6 +91,8 @@ const toolNames = new Map<string, string>();
 let currentTurn: HTMLElement | undefined;
 let pinned = true;
 let sending = false;
+/** Set when the composer button asked for an interrupt; while the turn is still running it offers Stop instead. */
+let interruptAt: number | undefined;
 let tickerTimer: number | undefined;
 
 // Stats derived from the transcript (for the info strip).
@@ -124,7 +128,6 @@ app.innerHTML = `
     <button class="icon" id="btnTerminal" title="Open terminal here"><i class="codicon codicon-terminal"></i></button>
     <button class="icon" id="btnWorkspace" title="Open workspace in VS Code"><i class="codicon codicon-folder-opened"></i></button>
     <button class="icon" id="btnReload" title="Reload transcript"><i class="codicon codicon-refresh"></i></button>
-    <button class="icon danger" id="btnStop" title="Stop this session" hidden><i class="codicon codicon-debug-stop"></i></button>
   </div>
 </header>
 <section class="info" id="info" hidden></section>
@@ -137,7 +140,6 @@ app.innerHTML = `
     <textarea id="input" rows="1" placeholder="Message this agent…"></textarea>
     <div class="composer-actions">
       <span class="hint" id="hint"></span>
-      <button class="icon" id="btnInterrupt" title="Interrupt current turn" hidden><i class="codicon codicon-debug-pause"></i></button>
       <button class="send" id="btnSend" title="Send (Enter)"><i class="codicon codicon-send"></i></button>
     </div>
   </div>
@@ -150,8 +152,6 @@ const infoEl = document.getElementById('info')!;
 const cardsEl = document.getElementById('cards')!;
 const input = document.getElementById('input') as HTMLTextAreaElement;
 const btnSend = document.getElementById('btnSend') as HTMLButtonElement;
-const btnInterrupt = document.getElementById('btnInterrupt') as HTMLButtonElement;
-const btnStop = document.getElementById('btnStop') as HTMLButtonElement;
 const jump = document.getElementById('jump') as HTMLButtonElement;
 const banner = document.getElementById('banner')!;
 // Toolbar under the message box, like the Claude Code pane: attach, "/" actions, context ring, cache
@@ -208,6 +208,8 @@ function runAction(id: string, arg?: string) {
       beginRename();
       break;
     case 'interrupt':
+      interrupt();
+      break;
     case 'stop':
     case 'login':
     case 'openWorkspace':
@@ -259,9 +261,52 @@ document.getElementById('btnReload')!.onclick = () => {
   resetLog();
   vscode.postMessage({ type: 'reload' });
 };
-btnStop.onclick = () => vscode.postMessage({ type: 'stop' });
-btnInterrupt.onclick = () => vscode.postMessage({ type: 'interrupt' });
-btnSend.onclick = send;
+// One button, like the Claude Code pane's: Send when the session can take a message, Pause (interrupt
+// the turn) while a managed session is mid-turn, and Stop (end the session, asks first) once an
+// interrupt was asked for and the turn is still running. Enter always sends: a busy session reads the
+// message between tool calls.
+type ButtonMode = 'send' | 'sending' | 'pause' | 'stop';
+const BUTTON: Record<ButtonMode, { icon: string; title: string }> = {
+  send: { icon: 'send', title: 'Send (Enter)' },
+  sending: { icon: 'loading codicon-modifier-spin', title: 'Sending…' },
+  pause: { icon: 'debug-pause', title: 'Interrupt the current turn (like pressing Escape in the session)\nEnter still sends your message; it is read between tool calls' },
+  stop: { icon: 'debug-stop', title: 'Still running after the interrupt\nClick to stop the session (asks first)' },
+};
+function buttonMode(): ButtonMode {
+  if (sending) return 'sending';
+  if (!agent || !machine) return 'send';
+  const managedLive = !!agent.managed && !agent.managed.exited && machine.online && agent.alive;
+  if (managedLive && BUSY.has(agent.state)) return interruptAt ? 'stop' : 'pause';
+  return 'send';
+}
+function renderButton() {
+  const mode = buttonMode();
+  const canSend = !!machine?.online && !!agent?.alive && agent.kind !== 'subagent';
+  btnSend.className = `send ${mode}`;
+  btnSend.dataset.mode = mode;
+  btnSend.innerHTML = `<i class="codicon codicon-${BUTTON[mode].icon}"></i>`;
+  btnSend.title = canSend || mode !== 'send' ? BUTTON[mode].title : 'This session cannot take messages';
+  btnSend.setAttribute('aria-label', btnSend.title.split('\n')[0]!);
+  btnSend.disabled = mode === 'sending' || (mode === 'send' && !canSend);
+}
+function interrupt() {
+  interruptAt = Date.now();
+  vscode.postMessage({ type: 'interrupt' });
+  renderButton();
+}
+btnSend.onclick = () => {
+  switch (btnSend.dataset.mode as ButtonMode) {
+    case 'pause':
+      interrupt();
+      break;
+    case 'stop':
+      vscode.postMessage({ type: 'stop' });
+      break;
+    case 'send':
+      send();
+      break;
+  }
+};
 jump.onclick = () => {
   pinned = true;
   scrollToBottom();
@@ -644,11 +689,9 @@ function renderHeader() {
 
   const managedLive = !!agent.managed && !agent.managed.exited;
   const subagent = agent.kind === 'subagent';
-  btnStop.hidden = subagent || !(agent.alive && machine.online);
-  btnStop.title = managedLive ? 'Stop this session' : 'Terminate this session';
-  btnInterrupt.hidden = !managedLive;
   const canSend = machine.online && agent.alive && !subagent;
-  btnSend.disabled = !canSend || sending;
+  if (!BUSY.has(agent.state)) interruptAt = undefined; // the turn ended: back to Send next time
+  renderButton();
   input.disabled = !canSend;
   input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
   document.getElementById('hint')!.textContent = subagent ? 'subagent · read-only' : managedLive ? '' : agent.alive ? 'observed session' : '';
@@ -687,7 +730,11 @@ function renderInfo() {
   if (agent.effort) rows.push(['Effort', agent.effort]);
   const mode = agent.permissionMode || agent.managed?.permissionMode;
   if (mode) rows.push(['Permission mode', mode]);
-  if (agent.contextTokens) rows.push(['Context', `${fmtTokens(agent.contextTokens)} tokens`]);
+  const ctx = contextFor(agent, model);
+  if (ctx.tokens || ctx.compacting) {
+    const g = contextGauge(ctx.tokens, ctx.window);
+    rows.push(['Context', `${fmtTokens(ctx.tokens)} of ${fmtTokens(ctx.window)} tokens · ${g.percent}%${ctx.measured ? '' : ' · window inferred from the model id'}${ctx.compacting ? ' · compacting…' : ''}`]);
+  }
   if (stats.calls) {
     const lastTotal = stats.lastInput + stats.lastCacheRead + stats.lastCacheCreate;
     const hit = lastTotal ? Math.round((stats.lastCacheRead / lastTotal) * 100) : 0;
@@ -908,7 +955,7 @@ window.addEventListener('message', (ev) => {
       break;
     case 'sending':
       sending = m.busy;
-      btnSend.disabled = sending;
+      renderButton();
       break;
     case 'sendFailed':
       clearEchoes();

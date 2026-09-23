@@ -26,14 +26,26 @@ be added.
   as it grows (railway margin with coloured event markers, the current prompt pinned while you
   scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
   busy) with an info strip for model, effort, mode, prompt-cache hit rate, token totals and a map of
-  spawned subagents. Under the message box sits the same toolbar as the Claude Code pane: attach
-  (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window ring (click
-  it to `/compact`), a prompt-cache dot with the last call's hit rate, an **agent map** (the subagent
-  tree with state, running time and tokens, each opening its own transcript, then the shell commands
-  the session left running in the background), and the **model** and **permission-mode** pills whose
-  popovers carry the effort slider. For a managed
-  session the menu also lists every slash command its Claude Code offers, ready to run, and shows the
-  account it is signed in as.
+  spawned subagents. One button beside the message box does what the state calls for: **Send**,
+  **Pause** (interrupt the turn of a managed session mid-turn; Enter still sends, the message is read
+  between tool calls) and **Stop** (end the session, asks first) once an interrupt was asked for and
+  the turn is still running. Under the message box sits the same toolbar as the Claude Code pane:
+  attach (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window donut
+  (the exact figure in its tooltip; click it to `/compact`; it spins while Claude Code compacts), a
+  prompt-cache dot with the last call's hit rate, an **agent map** (the subagent tree with state,
+  running time and tokens, each opening its own transcript, then the shell commands the session left
+  running in the background), and the **model** and **permission-mode** pills whose popovers carry
+  the effort slider (a filled track up to the current level, named at its end). For a managed session
+  the menu also lists every slash command its Claude Code offers, ready to run, and shows the account
+  it is signed in as.
+* **The context donut costs nothing extra.** The transcript already carries the tokens each API call
+  saw, the same figure Claude Code's own `/context` uses, so the donut follows it for free. The
+  daemon asks a managed session's Claude Code (`get_context_usage`, a local computation in the child,
+  no API call) only when the transcript cannot tell: once after the handshake for the window's real
+  size, after a model switch, and after a compaction, when the size drops without a new call to show
+  it. A compaction is tracked from Claude Code's `compacting` status to the `compact_boundary` that
+  ends it; for sessions Vineyard only observes, the count is cleared at the boundary and returns with
+  the next call.
 * **Usage limits, like the Claude Code pane.** A managed session's Claude Code reports the account's
   limits with each response (the 5-hour session window, the weekly window and the per-model weekly
   ones, each with utilization and reset time). Vineyard shows a banner above the message box from 80 %
@@ -253,7 +265,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions

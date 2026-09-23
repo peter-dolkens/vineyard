@@ -38,29 +38,34 @@ type PendingTool struct {
 }
 
 type Agent struct {
-	ID             string        `json:"id"` // machineId::sessionId
-	Provider       string        `json:"provider"`
-	MachineID      string        `json:"machineId"`
-	WorkspacePath  string        `json:"workspacePath"`
-	SessionID      string        `json:"sessionId"`
-	PID            int           `json:"pid,omitempty"`
-	Alive          bool          `json:"alive"`
-	Name           string        `json:"name,omitempty"`
-	Title          string        `json:"title,omitempty"`
-	Kind           string        `json:"kind,omitempty"`
-	Entrypoint     string        `json:"entrypoint,omitempty"`
-	Version        string        `json:"version,omitempty"`
-	State          AgentState    `json:"state"`
-	StateDetail    string        `json:"stateDetail,omitempty"`
-	RegistryStatus string        `json:"registryStatus,omitempty"`
-	Model          string        `json:"model,omitempty"`
-	Effort         string        `json:"effort,omitempty"`
-	PermissionMode string        `json:"permissionMode,omitempty"`
-	GitBranch      string        `json:"gitBranch,omitempty"`
-	LastPrompt     string        `json:"lastPrompt,omitempty"`
-	StartedAt      int64         `json:"startedAt,omitempty"`
-	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
-	ContextTokens  int64         `json:"contextTokens,omitempty"`
+	ID             string     `json:"id"` // machineId::sessionId
+	Provider       string     `json:"provider"`
+	MachineID      string     `json:"machineId"`
+	WorkspacePath  string     `json:"workspacePath"`
+	SessionID      string     `json:"sessionId"`
+	PID            int        `json:"pid,omitempty"`
+	Alive          bool       `json:"alive"`
+	Name           string     `json:"name,omitempty"`
+	Title          string     `json:"title,omitempty"`
+	Kind           string     `json:"kind,omitempty"`
+	Entrypoint     string     `json:"entrypoint,omitempty"`
+	Version        string     `json:"version,omitempty"`
+	State          AgentState `json:"state"`
+	StateDetail    string     `json:"stateDetail,omitempty"`
+	RegistryStatus string     `json:"registryStatus,omitempty"`
+	Model          string     `json:"model,omitempty"`
+	Effort         string     `json:"effort,omitempty"`
+	PermissionMode string     `json:"permissionMode,omitempty"`
+	GitBranch      string     `json:"gitBranch,omitempty"`
+	LastPrompt     string     `json:"lastPrompt,omitempty"`
+	StartedAt      int64      `json:"startedAt,omitempty"`
+	LastActivityAt int64      `json:"lastActivityAt,omitempty"`
+	ContextTokens  int64      `json:"contextTokens,omitempty"`
+	// ContextWindow is the model's context size in tokens as Claude Code reported it (managed sessions
+	// only); 0 means "unknown, infer from the model id". ContextAt is when ContextTokens was measured
+	// (epoch ms), so a fresher figure from the control channel can replace a transcript-derived one.
+	ContextWindow  int64         `json:"contextWindow,omitempty"`
+	ContextAt      int64         `json:"contextAt,omitempty"`
 	PendingTools   []PendingTool `json:"pendingTools"`
 	TranscriptPath string        `json:"transcriptPath,omitempty"`
 	// Managed is set when this daemon spawned the session and controls it over stream-json.
@@ -174,6 +179,22 @@ type ManagedInfo struct {
 	AccountPlan string        `json:"accountPlan,omitempty"`
 	// Usage is the account's limit report as this session last saw it (rate_limit_event).
 	Usage *Usage `json:"usage,omitempty"`
+	// Context is Claude Code's own measurement of the context window (get_context_usage), taken only
+	// when the transcript cannot tell: after the handshake, a model switch and a compaction.
+	Context *ContextUsage `json:"context,omitempty"`
+	// Compacting is true from Claude Code's "compacting" status until the compact_boundary that ends it.
+	Compacting      bool  `json:"compacting,omitempty"`
+	CompactingSince int64 `json:"compactingSince,omitempty"`
+}
+
+// ContextUsage is the answer to a get_context_usage control request, trimmed to what the ring needs:
+// tokens in the window, the window's size, and Claude Code's own rounded percentage.
+type ContextUsage struct {
+	TotalTokens int64   `json:"totalTokens"`
+	MaxTokens   int64   `json:"maxTokens"`
+	Percentage  float64 `json:"percentage"`
+	Model       string  `json:"model,omitempty"`
+	At          int64   `json:"at"` // when the daemon received it, epoch ms
 }
 
 // UsageWindow is one rate-limit window: share used (0..1) and when it resets (epoch ms).
