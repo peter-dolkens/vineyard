@@ -114,6 +114,19 @@ function modeIcon(name: string): Element {
   }
   return svg;
 }
+/** The "/" actions glyph: a slash in a rounded square, drawn as SVG so it stays square at any size. */
+function slashIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'slash-svg');
+  svg.setAttribute('aria-hidden', 'true');
+  const box = document.createElementNS(SVG, 'rect');
+  for (const [k, v] of Object.entries({ x: '2.5', y: '2.5', width: '11', height: '11', rx: '2' })) box.setAttribute(k, v);
+  const slash = document.createElementNS(SVG, 'path');
+  slash.setAttribute('d', 'M9.5 5.5 6.5 10.5');
+  svg.append(box, slash);
+  return svg;
+}
 function pill(id: string, title: string): HTMLButtonElement {
   const b = el('button', 'pill');
   b.id = id;
@@ -150,7 +163,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   const btnAttach = pill('btnAttach', 'Attach file…');
   btnAttach.append(icon('add'));
   const btnActions = pill('btnActions', 'Actions (or type / in the message box)');
-  btnActions.append(el('span', 'slash-glyph', '/'));
+  btnActions.append(slashIcon());
   const ctxPill = pill('ctxPill', '');
   const cachePill = pill('cachePill', '');
   const agentsPill = pill('agentsPill', '');
@@ -264,45 +277,105 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   }
 
   // ---- effort slider -----------------------------------------------------------------------------
+  // Modelled on the Claude Code pane's: a track that fills up to a thumb, one notch per level. Click or
+  // drag; the thumb and level name follow the pointer, and the level is applied when it is let go, so a
+  // drag across the track sends one change rather than one per notch. The popover stays open.
   function effortSlider(): HTMLElement {
     const wrap = el('div', 'eslider');
     const levels = effortOptions(models(), selectedRow())
       .map(([v]) => v)
       .filter(Boolean);
-    const cur = currentEffort();
+    let cur = currentEffort();
     const live = managedLive();
     if (!levels.length) {
       wrap.append(el('span', 'dim', 'This model takes no effort setting'));
       return wrap;
     }
     wrap.classList.toggle('readonly', !live);
-    wrap.setAttribute('role', 'radiogroup');
-    wrap.setAttribute('aria-label', 'Reasoning effort');
-    // The track fills up to the current stop, like a slider; the stop itself is the knob.
-    const at = levels.indexOf(cur);
+    const name = el('span', 'ecur');
+    const track = el('div', 'etrack');
+    const fill = el('div', 'efill');
+    const thumb = el('div', 'ethumb');
+    const n = levels.length;
+    const frac = (i: number) => (n > 1 ? i / (n - 1) : 0);
+    const thumbLeft = (f: number) => `(var(--inset) + ${f} * (100% - var(--thumb) - 2 * var(--inset)))`;
+    track.append(fill);
     levels.forEach((v, i) => {
-      const cls = ['estop'];
-      if (i === 0) cls.push('first');
-      if (i === levels.length - 1) cls.push('top');
-      if (v === cur) cls.push('active');
-      if (at >= 0 && i < at) cls.push('filled');
-      if (i === at - 1) cls.push('last-filled');
-      const stop = el('span', cls.join(' '));
-      stop.title = effortLabel(v) + (live ? '' : ' (read-only)');
-      stop.dataset.v = v;
-      stop.setAttribute('role', 'radio');
-      stop.setAttribute('aria-checked', String(v === cur));
-      stop.setAttribute('aria-label', effortLabel(v));
-      if (live) {
-        stop.onclick = (e) => {
-          e.stopPropagation();
-          if (v !== cur) deps.configure({ effort: v });
-          close();
-        };
-      }
-      wrap.appendChild(stop);
+      const notch = el('div', 'enotch');
+      notch.style.left = `calc(${thumbLeft(frac(i))} + var(--thumb) / 2)`;
+      notch.title = effortLabel(v);
+      track.append(notch);
     });
-    wrap.appendChild(el('span', 'ecur', effortLabel(cur)));
+    track.append(thumb);
+    track.setAttribute('role', 'slider');
+    track.setAttribute('aria-label', 'Reasoning effort');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', String(n - 1));
+    track.title = live ? 'Click or drag to set effort' : 'Effort (read-only)';
+    let at = levels.indexOf(cur);
+    const paint = (i: number) => {
+      at = i;
+      // An unset effort (the model's default) shows an empty track and no thumb until one is picked.
+      track.classList.toggle('unset', i < 0);
+      track.classList.toggle('top', i === n - 1 && n > 1);
+      const f = frac(Math.max(0, i));
+      thumb.style.left = `calc${thumbLeft(f)}`;
+      fill.style.width = `calc(${thumbLeft(f)} + var(--thumb) + var(--inset))`;
+      name.textContent = effortLabel(i < 0 ? cur : levels[i]);
+      track.setAttribute('aria-valuenow', String(Math.max(0, i)));
+      track.setAttribute('aria-valuetext', name.textContent);
+    };
+    paint(at);
+    if (live) {
+      track.tabIndex = 0;
+      const indexAt = (e: PointerEvent) => {
+        const r = track.getBoundingClientRect();
+        return Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (n - 1));
+      };
+      const commit = () => {
+        const v = levels[at];
+        if (v && v !== cur) {
+          cur = v;
+          deps.configure({ effort: v });
+        }
+      };
+      let dragging = false;
+      track.onpointerdown = (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        track.setPointerCapture(e.pointerId);
+        dragging = true;
+        track.classList.add('dragging');
+        paint(indexAt(e));
+      };
+      track.onpointermove = (e) => {
+        if (dragging) paint(indexAt(e));
+      };
+      const end = () => {
+        if (!dragging) return;
+        dragging = false;
+        track.classList.remove('dragging');
+        commit();
+      };
+      track.onpointerup = end;
+      track.onpointercancel = end;
+      track.onlostpointercapture = end;
+      track.onclick = (e) => e.stopPropagation();
+      track.onkeydown = (e) => {
+        const step: Record<string, number> = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+        let i = at;
+        if (e.key in step) i = Math.max(0, Math.min(n - 1, (at < 0 ? 0 : at) + step[e.key]!));
+        else if (e.key === 'Home') i = 0;
+        else if (e.key === 'End') i = n - 1;
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+        paint(i);
+        commit();
+      };
+    }
+    wrap.append(name, track);
     return wrap;
   }
   function effortRow(): HTMLElement {
@@ -763,7 +836,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     if (eff) modelPill.append(el('span', 'dim', effortLabel(eff)));
     const mode = modeInfo(currentMode());
     modePill.innerHTML = '';
-    modePill.append(icon(mode.icon), el('span', undefined, mode.label));
+    modePill.append(modeIcon(mode.icon), el('span', undefined, mode.label));
     modePill.title = mode.description || 'Permission mode';
     for (const p of [modelPill, modePill]) p.classList.toggle('readonly', !managedLive());
 
