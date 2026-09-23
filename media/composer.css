@@ -118,6 +118,12 @@
 .amap-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .amap-row.root .amap-name { font-weight: 600; }
 .amap-meta { font-size: 11px; opacity: 0.6; margin-top: 1px; }
+/* Stop button on a running subagent or background command (managed sessions only); dim until hovered */
+.amap-stop { flex-shrink: 0; margin-top: 1px; padding: 2px; border: 0; border-radius: 4px; background: transparent; color: var(--vscode-descriptionForeground); cursor: pointer; opacity: 0.55; line-height: 0; }
+.amap-stop:hover, .amap-stop:focus-visible, .amap-stop.busy { opacity: 1; }
+.amap-stop:hover:not(:disabled) { color: var(--vscode-errorForeground, #f14c4c); background: var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)); }
+.amap-stop:disabled { cursor: default; }
+.amap-stop .codicon { font-size: 14px; }
 
 /* usage limit banner above the message box, and the Account & usage popover */
 .limit { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 22%, var(--vscode-editor-background)); color: var(--vscode-editorWarning-foreground, #cca700); border: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 45%, transparent); }

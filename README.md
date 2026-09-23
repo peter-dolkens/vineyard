@@ -34,7 +34,8 @@ be added.
   (the exact figure in its tooltip; click it to `/compact`; it spins while Claude Code compacts), a
   prompt-cache dot with the last call's hit rate, an **agent map** (the subagent tree with state,
   running time and tokens, each opening its own transcript, then the shell commands the session left
-  running in the background), and the **model** and **permission-mode** pills whose popovers carry
+  running in the background; in a session started by Vineyard every running subagent and background
+  command carries a **Stop** button), and the **model** and **permission-mode** pills whose popovers carry
   the effort slider (a filled track up to the current level, named at its end). For a managed session
   the menu also lists every slash command its Claude Code offers, ready to run, and shows the account
   it is signed in as.
@@ -265,7 +266,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 
 ## Managed vs observed sessions

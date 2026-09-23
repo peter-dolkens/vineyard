@@ -1030,6 +1030,24 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return json.RawMessage(`{"ok":true}`), nil
+	case "stoptask":
+		// Stops one background task or subagent; only a session this daemon spawned has the control
+		// channel that carries stop_task, so an observed session gets a plain refusal.
+		var a protocol.StopTaskArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(a.TaskID) == "" {
+			return nil, errors.New("taskId is required")
+		}
+		if n.opts.Managed == nil || !n.opts.Managed.Has(a.SessionID) {
+			return nil, errors.New("only sessions started by Vineyard can stop their tasks")
+		}
+		if err := n.opts.Managed.StopTask(a.SessionID, a.TaskID); err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"ok":true}`), nil
 	case "configure":
 		if n.opts.Managed == nil {
 			return nil, errors.New("managed sessions are disabled on this daemon")

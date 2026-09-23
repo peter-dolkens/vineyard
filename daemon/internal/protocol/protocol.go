@@ -228,6 +228,14 @@ type RenameArgs struct {
 	Cwd       string `json:"cwd,omitempty"`  // used to locate the transcript when Path is empty
 }
 
+// StopTaskArgs stops one running background task of a managed session ("stoptask", Claude Code's
+// stop_task control request): TaskID is the id of a backgrounded shell command as the Bash
+// tool_result reported it, or a subagent's agent id (the <id> of subagents/agent-<id>.jsonl).
+type StopTaskArgs struct {
+	SessionID string `json:"sessionId"`
+	TaskID    string `json:"taskId"`
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`
