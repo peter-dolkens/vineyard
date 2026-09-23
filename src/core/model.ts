@@ -36,6 +36,16 @@ export function isBusy(state: AgentState): boolean {
   return state === 'working' || state === 'thinking' || state === 'tool';
 }
 
+/**
+ * Whether Vineyard should pop notifications for this agent. A session on this machine that Vineyard
+ * did not start (the Claude Code pane, a terminal) already prompts the user through its own UI, so a
+ * Vineyard notification would be a duplicate. Remote sessions and locally managed ones have no other
+ * surface here and do notify.
+ */
+export function notifiesHere(agent: Pick<Agent, 'managed'>, machineLocal: boolean): boolean {
+  return !machineLocal || agent.managed !== undefined;
+}
+
 export interface PendingTool {
   id: string;
   name: string;

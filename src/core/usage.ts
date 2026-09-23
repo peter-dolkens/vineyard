@@ -79,6 +79,15 @@ export function usageWarning(u: Usage | undefined, now = Date.now()): UsageWarni
   return { row, rejected, text };
 }
 
+/**
+ * What a dismissed banner is remembered by, as the Claude Code pane does it: the window, its reset
+ * time and whether it was hit. Dismissing "used 85%" keeps the banner hidden while that window fills
+ * further, but it returns when the window is hit, and again once the window has reset.
+ */
+export function usageWarningKey(w: UsageWarning): string {
+  return `${w.rejected ? 'hit' : 'warn'}:${w.row.key}:${w.row.resetsAt ?? ''}`;
+}
+
 /** "2h", "45m", "6d", "now". */
 export function resetsIn(resetsAt: number, now = Date.now()): string {
   const ms = resetsAt - now;

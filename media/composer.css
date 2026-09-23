@@ -107,6 +107,7 @@
 .limit .codicon { font-size: 14px; }
 .limit-text { flex: 1; min-width: 0; }
 .limit-link { color: inherit; text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.limit-x { margin-left: 2px; }
 .ugrid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; padding: 2px 14px 6px; }
 .ugrid .k { opacity: 0.6; }
 .ugrid .v { text-align: right; }

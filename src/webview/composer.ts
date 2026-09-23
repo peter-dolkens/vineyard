@@ -6,7 +6,7 @@
  */
 
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
-import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
+import { resetsIn, usageRows, usageWarning, usageWarningKey } from '../core/usage.ts';
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
@@ -78,6 +78,8 @@ export interface ComposerBar {
 }
 
 const ACTIVE = new Set(['working', 'thinking', 'tool', 'question', 'permission']);
+/** Limit banners the user closed, for as long as this webview lives; see usageWarningKey. */
+const dismissedLimits = new Set<string>();
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -578,10 +580,12 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     stats = s;
     bar.classList.remove('busy');
 
-    // Limit banner: the fullest window past the warning line, or the one Claude Code flagged.
+    // Limit banner: the fullest window past the warning line, or the one Claude Code flagged. Closing
+    // it hides that window at that severity until it is hit or resets, like the Claude Code pane.
     const warn = usageWarning(currentUsage());
-    limitBar.hidden = !warn;
-    if (warn) {
+    const warnKey = warn ? usageWarningKey(warn) : '';
+    limitBar.hidden = !warn || dismissedLimits.has(warnKey);
+    if (warn && !limitBar.hidden) {
       limitBar.className = 'limit' + (warn.rejected ? ' hit' : '');
       limitBar.innerHTML = '';
       limitBar.append(icon(warn.rejected ? 'error' : 'warning'), el('span', 'limit-text', warn.text));
@@ -591,7 +595,15 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
         e.preventDefault();
         openUsage();
       };
-      limitBar.append(view);
+      const close = el('button', 'chip-x limit-x');
+      close.type = 'button';
+      close.title = 'Dismiss warning';
+      close.append(icon('close'));
+      close.onclick = () => {
+        dismissedLimits.add(warnKey);
+        limitBar.hidden = true;
+      };
+      limitBar.append(view, close);
     }
 
     const send = canSend();

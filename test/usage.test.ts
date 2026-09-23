@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Usage } from '../src/core/model.ts';
-import { percentOf, resetsIn, usageRows, usageWarning } from '../src/core/usage.ts';
+import { percentOf, resetsIn, usageRows, usageWarning, usageWarningKey } from '../src/core/usage.ts';
 
 const now = 1_700_000_000_000;
 const usage: Usage = {
@@ -57,4 +57,15 @@ test('resets-in wording', () => {
   assert.equal(resetsIn(now + 2 * 3_600_000, now), '2h');
   assert.equal(resetsIn(now + 6 * 86_400_000, now), '6d');
   assert.equal(resetsIn(now - 1, now), 'now');
+});
+
+test('dismissal key changes when the window is hit or resets, not as it fills', () => {
+  const at85 = usageWarning({ ...usage, windows: { five_hour: { utilization: 0.85, resetsAt: now + 3_600_000 } } }, now)!;
+  const at95 = usageWarning({ ...usage, windows: { five_hour: { utilization: 0.95, resetsAt: now + 3_600_000 } } }, now)!;
+  const hit = usageWarning({ ...usage, status: 'rejected', windows: { five_hour: { utilization: 1, resetsAt: now + 3_600_000 } } }, now)!;
+  const nextWindow = usageWarning({ ...usage, windows: { five_hour: { utilization: 0.85, resetsAt: now + 6 * 3_600_000 } } }, now)!;
+  assert.equal(usageWarningKey(at85), usageWarningKey(at95));
+  assert.notEqual(usageWarningKey(at85), usageWarningKey(hit));
+  assert.notEqual(usageWarningKey(at85), usageWarningKey(nextWindow));
+  assert.equal(usageWarningKey(at85), `warn:five_hour:${now + 3_600_000}`);
 });

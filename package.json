@@ -516,17 +516,12 @@
         "vineyard.notify.attention": {
           "type": "boolean",
           "default": true,
-          "description": "Pop a notification when an agent starts waiting on you (question or permission)."
+          "description": "Pop a notification when an agent starts waiting on you (question or permission). Sessions on this machine that Vineyard did not start (the Claude Code pane, a terminal) are skipped: they already prompt through their own UI."
         },
         "vineyard.notify.finished": {
           "type": "boolean",
           "default": false,
-          "description": "Pop a notification when a working agent goes idle."
-        },
-        "vineyard.notify.limits": {
-          "type": "boolean",
-          "default": true,
-          "description": "Pop a notification when a machine's Claude account passes 80% of a usage limit, or hits one (as reported by a session started by Vineyard)."
+          "description": "Pop a notification when a working agent goes idle. Sessions on this machine that Vineyard did not start are skipped, as for vineyard.notify.attention."
         },
         "vineyard.statusBar.enabled": {
           "type": "boolean",

@@ -38,8 +38,9 @@ be added.
   limits with each response (the 5-hour session window, the weekly window and the per-model weekly
   ones, each with utilization and reset time). Vineyard shows a banner above the message box from 80 %
   ("You've used 93% of your session limit · resets in 2h"), an *Account & usage…* entry in the / menu
-  with account, plan and a bar per window, the fullest limit on the machine row and in the status
-  bar, and one notification per window when a limit is approached or hit (`vineyard.notify.limits`).
+  with account, plan and a bar per window, and the fullest limit on the machine row and in the status
+  bar. The banner can be closed like the Claude Code pane's: it stays away while that window fills
+  further, and returns when the window is hit or has reset. There are no toast notifications for limits.
   Limits belong to the account, so one Vineyard-started session on a machine covers every session
   there; nothing is fetched from Anthropic beyond what Claude Code already reports.
 * **Message any running agent** from the composer, with files attached: images reach a managed
