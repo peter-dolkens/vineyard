@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -462,9 +463,9 @@ func (n *Node) knownPeers() []protocol.PeerAddr {
 // learnPeersLocked folds a hello's peer list into what we know. Unknown machines are added (and
 // dialed by reconcileSubscriptions while someone is watching); known ones only gain candidates,
 // after their own, so second-hand news never displaces what we have seen work. Machines removed
-// here are skipped. Returns true if config changed.
-func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) bool {
-	changed := false
+// here are skipped. Returns whether config changed, and relayed peers that gained an address and are
+// worth a direct probe.
+func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) (changed bool, probe []*peerState) {
 	for _, pa := range peers {
 		if pa.MachineID == "" || pa.MachineID == n.cfg.MachineID || n.cfg.IsRemoved(pa.MachineID) {
 			continue
@@ -474,7 +475,11 @@ func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) bool {
 			p = &peerState{id: pa.MachineID}
 			n.peers[pa.MachineID] = p
 		}
+		before := p.addrs
 		p.addrs = config.MergeAddrs(p.addr, p.addrs, append([]string{pa.Addr}, pa.Addrs...))
+		if p.link != nil && p.link.via != "" && gained(before, p.addrs) {
+			probe = append(probe, p)
+		}
 		if len(p.addrs) == 0 {
 			delete(n.peers, pa.MachineID)
 			continue
@@ -486,7 +491,7 @@ func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) bool {
 			changed = true
 		}
 	}
-	return changed
+	return changed, probe
 }
 
 // promote moves addr to the front of list (adding it if absent), deduplicating.
@@ -599,11 +604,19 @@ func (n *Node) register(l *link, h protocol.Hello) {
 			}
 		}
 	}
+	before := slices.Clone(p.addrs)
 	addCandidates(p, learned...)
+	// A relayed peer that tells us an address we did not have may be directly reachable after all.
+	probe := []*peerState{}
+	if l.via != "" && gained(before, p.addrs) {
+		probe = append(probe, p)
+	}
 	persist := p.addr != "" && n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr, Addrs: p.addrs})
-	if n.learnPeersLocked(h.Peers) {
+	learnedCfg, learnedProbe := n.learnPeersLocked(h.Peers)
+	if learnedCfg {
 		persist = true
 	}
+	probe = append(probe, learnedProbe...)
 	if persist {
 		if err := n.cfg.Save(); err != nil {
 			n.logf("save config: %v", err)
@@ -637,10 +650,142 @@ func (n *Node) register(l *link, h protocol.Hello) {
 		p.link = l
 		n.mu.Unlock()
 	}
-	n.logf("peer %s connected (%s, outbound=%v)", l.peerID, l.conn.RemoteAddr(), l.outbound)
+	how := ""
+	if l.via != "" {
+		how = ", " + l.via
+	}
+	n.logf("peer %s connected (%s, outbound=%v%s)", l.peerID, l.conn.RemoteAddr(), l.outbound, how)
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()
 	n.considerPeer(l.peerID, h.Version, "", "")
+	for _, q := range probe {
+		go n.probeDirect(q)
+	}
+	if !l.outbound {
+		n.sendSync(l)
+	}
+}
+
+// gained reports whether after holds an address before did not.
+func gained(before, after []string) bool {
+	for _, a := range after {
+		if !slices.Contains(before, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeDirect is how a relayed link heals: try the peer's direct addresses and, if one answers, bring
+// up a direct link, which register then prefers over the relayed one on both sides. It runs on events
+// only (new addresses for the peer, a viewer attaching, our own addresses changing), never on a timer.
+func (n *Node) probeDirect(p *peerState) {
+	n.mu.Lock()
+	if p.probing || p.link == nil || p.link.via == "" {
+		n.mu.Unlock()
+		return
+	}
+	p.probing = true
+	addrs := append([]string(nil), p.addrs...)
+	n.mu.Unlock()
+	raw, used, err := n.dialAddrs(addrs)
+	n.mu.Lock()
+	p.probing = false
+	if err != nil {
+		p.lastErr = "direct: " + trimErr(err)
+		n.mu.Unlock()
+		return
+	}
+	p.lastErr = ""
+	if used != p.addr {
+		p.addr = used
+		p.addrs = promote(p.addrs, used)
+	}
+	persist := n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: p.addrs})
+	n.mu.Unlock()
+	if persist {
+		if err := n.cfg.Save(); err != nil {
+			n.logf("save config: %v", err)
+		}
+	}
+	n.logf("peer %s: direct address %s answers; leaving the relay", p.id, used)
+	l := &link{conn: NewConn(raw), outbound: true, peerID: p.id}
+	if err := l.conn.Send(n.hello("peer")); err != nil {
+		l.conn.Close()
+		return
+	}
+	n.serve(l)
+}
+
+// probeRelayed tries every relayed peer's direct path (a viewer attached, or our addresses changed).
+func (n *Node) probeRelayed() {
+	n.mu.Lock()
+	var ps []*peerState
+	for _, p := range n.peers {
+		if p.link != nil && p.link.via != "" {
+			ps = append(ps, p)
+		}
+	}
+	n.mu.Unlock()
+	for _, p := range ps {
+		go n.probeDirect(p)
+	}
+}
+
+// syncMaxAge bounds the second-hand state passed on in a sync: older news is not worth the bytes.
+const syncMaxAge = 7 * 24 * time.Hour
+
+// sendSync tells a peer that just connected to us what we last knew of every other machine, so a
+// watcher that cannot reach one gets "last seen 10m ago, reported by forge" instead of its own older
+// cache. Once per connection; the receiver keeps only what is newer than its own and not live.
+func (n *Node) sendSync(l *link) {
+	cutoff := time.Now().Add(-syncMaxAge).UnixMilli()
+	n.mu.Lock()
+	var entries []model.FleetEntry
+	for id, e := range n.store {
+		if id == n.cfg.MachineID || id == l.peerID || e.LastSeen < cutoff || n.cfg.IsRemoved(id) {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	n.mu.Unlock()
+	if len(entries) > 0 {
+		_ = l.conn.Send(protocol.Sync{T: "sync", Entries: entries})
+	}
+}
+
+// applySync folds a peer's sync into our store: only machines we have no live link to, and only
+// when the report is newer than what we have.
+func (n *Node) applySync(l *link, entries []model.FleetEntry) {
+	var updated []model.FleetEntry
+	n.mu.Lock()
+	if !n.wantFleet {
+		n.mu.Unlock()
+		return
+	}
+	for _, e := range entries {
+		id := e.Snapshot.MachineID
+		if id == "" || id == n.cfg.MachineID || id == l.peerID || n.cfg.IsRemoved(id) {
+			continue
+		}
+		if p := n.peers[id]; p != nil && p.link != nil {
+			continue
+		}
+		if cur, ok := n.store[id]; ok && cur.LastSeen >= e.LastSeen {
+			continue
+		}
+		e.Online = false
+		e.Via = "reported:" + l.peerID
+		n.store[id] = e
+		updated = append(updated, e)
+	}
+	if len(updated) > 0 {
+		n.markCacheDirty()
+	}
+	n.mu.Unlock()
+	for _, e := range updated {
+		n.broadcastUpdate(e)
+	}
 }
 
 func (n *Node) unregister(l *link) {
@@ -727,6 +872,7 @@ func (n *Node) setWantFleet(want bool) {
 			return
 		}
 		n.mu.Unlock()
+		n.probeRelayed() // another viewer: a moment to check whether relayed peers are reachable now
 		return
 	}
 	if n.graceTimer == nil && n.wantFleet {
@@ -961,6 +1107,11 @@ func (n *Node) dispatch(l *link, b []byte) {
 		return
 	}
 	switch env.T {
+	case "sync":
+		var m protocol.Sync
+		if json.Unmarshal(b, &m) == nil && l.role == "peer" {
+			n.applySync(l, m.Entries)
+		}
 	case "tunnel-callback":
 		var t protocol.Tunnel
 		if json.Unmarshal(b, &t) == nil && l.role == "peer" && l.via == "" {

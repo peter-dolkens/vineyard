@@ -202,8 +202,11 @@ restart its daemon (`vineyardd restart`, or *Restart Daemon* from its right-clic
 **Relaying.** When the machine you watch from cannot reach a member directly, it asks another member
 it does reach to relay: that machine connects onward and copies the traffic across, and the tooltip
 says *Online via relay through forge*. The two ends encrypt end to end inside the relay, so the
-relay only ever sees ciphertext. Relays are one hop only, and any member relays when needed. A member
-that nobody can reach, directly or through one other member, shows its last-known state.
+relay only ever sees ciphertext. Relays are one hop only, and any member relays when needed. A
+relayed machine switches back to a direct connection as soon as one works: when it reports a new
+address, or when you open another Vineyard window. A member that nobody can reach, directly or through
+one other member, shows its last-known state, including what other members saw of it ("last seen
+10m ago, reported by forge").
 
 **Firewalls.** Allow inbound TCP 7734 to each machine you want to watch. For example, on Ubuntu
 `sudo ufw allow 7734/tcp`; on Windows, from an elevated PowerShell,

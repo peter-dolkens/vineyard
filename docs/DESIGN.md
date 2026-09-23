@@ -46,6 +46,13 @@ use it.
   splice, so the relay copies ciphertext only, then the ordinary hello and serve loop. Links carry a
   `via` (`direct` or `relay:<id>`), a direct link always replaces a relayed one, relays only use direct
   links so tunnels never chain, and nothing is relayed unless someone watches the target.
+* **Healing is event-driven.** A relayed peer's direct addresses are tried again when it (or anyone's
+  hello) reports an address we did not have, and when another viewer attaches; a direct link that
+  answers replaces the relayed one on both sides. There is no retry timer.
+* **Second-hand state.** A daemon accepting a peer connection sends one `sync` with what it last knew
+  of every other machine (seen within 7 days). The receiver, if watching, keeps an entry only for
+  machines it has no live link to and only when newer than its own, marked `reported:<id>`, so an
+  unreachable machine shows "last seen 10m ago, reported by forge" rather than an older local cache.
 * **Sleeping machines are woken.** Daemons report their hardware addresses; when a watched peer stops
   answering, its neighbours send Wake-on-LAN magic packets for those addresses (LAN broadcast plus
   unicast) and open a connection to its SSH port so a Bonjour sleep proxy wakes it, at most once every
@@ -198,6 +205,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `hello {role: peer\|viewer, machineId, listen, addrs, peers}` | both | identity, every address it answers on, and every other member it knows (once per connection) |
 | `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
+| `sync {entries}` | accepting peer→dialer | once per connection: last-known state of other machines |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
 | `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |

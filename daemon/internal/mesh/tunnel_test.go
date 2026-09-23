@@ -77,13 +77,15 @@ func linkVia(n *Node, peer string) string {
 	return p.link.via
 }
 
-// atelier cannot reach orchard, but forge can: atelier relays through forge, which dials orchard.
+// atelier and orchard cannot reach each other, but forge reaches both: atelier relays through forge,
+// which dials orchard.
 func TestRelayDialsTheTarget(t *testing.T) {
 	newMeshDir(t)
 	orchard, orchardAddr := meshNode(t, "orchard")
 	forge, forgeAddr := meshNode(t, "forge", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
-	atelier, _ := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	atelier, atelierAddr := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
 	block(atelier, orchardAddr)
+	block(orchard, atelierAddr)
 	runNodes(t, orchard, forge, atelier)
 	atelier.setWantFleet(true)
 
@@ -149,4 +151,63 @@ func TestRelayThatCannotReachSaysSo(t *testing.T) {
 	if _, _, err := atelier.viaRelay("orchard"); err == nil {
 		t.Fatal("relay succeeded to an unreachable target")
 	}
+}
+
+// A relayed link heals on an event: once atelier can reach orchard again, the next viewer attaching
+// brings up a direct link, and both sides drop the relayed one.
+func TestRelayedLinkHealsToDirect(t *testing.T) {
+	newMeshDir(t)
+	orchard, orchardAddr := meshNode(t, "orchard")
+	forge, forgeAddr := meshNode(t, "forge", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	atelier, atelierAddr := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	block(atelier, orchardAddr)
+	block(orchard, atelierAddr)
+	runNodes(t, orchard, forge, atelier)
+	atelier.setWantFleet(true)
+	waitFor(t, "the relayed link", func() bool { return linkVia(atelier, "orchard") == "relay:forge" })
+
+	atelier.mu.Lock()
+	atelier.dialFilter = nil // back on orchard's network
+	atelier.mu.Unlock()
+	atelier.setWantFleet(true) // a second viewer attaching is the event
+	waitFor(t, "atelier to switch to direct", func() bool { return linkVia(atelier, "orchard") == "direct" })
+	waitFor(t, "orchard to switch to direct", func() bool { return linkVia(orchard, "atelier") == "direct" })
+	waitFor(t, "orchard's snapshot to arrive directly", func() bool {
+		e, ok := atelier.entry("orchard")
+		return ok && e.Online && e.Via == "direct"
+	})
+}
+
+// forge saw orchard recently; atelier cannot reach orchard at all. On connecting to forge, atelier
+// gets forge's newer report instead of nothing.
+func TestSyncPassesOnWhatAnotherMemberSaw(t *testing.T) {
+	newMeshDir(t)
+	orchardAddr := "127.0.0.1:" + strconv.Itoa(freePort(t)) // orchard is not running
+	forge, forgeAddr := meshNode(t, "forge", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	atelier, _ := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	seen := time.Now().Add(-time.Minute).UnixMilli()
+	forge.store["orchard"] = model.FleetEntry{Snapshot: model.Snapshot{MachineID: "orchard", Name: "orchard"}, Online: true, Via: "direct", LastSeen: seen}
+	atelier.store["orchard"] = model.FleetEntry{Snapshot: model.Snapshot{MachineID: "orchard", Name: "orchard"}, Via: "cache", LastSeen: seen - int64(time.Hour/time.Millisecond)}
+	runNodes(t, forge, atelier)
+	atelier.setWantFleet(true)
+	waitFor(t, "forge's report of orchard", func() bool {
+		e, ok := atelier.entry("orchard")
+		return ok && !e.Online && e.Via == "reported:forge" && e.LastSeen == seen
+	})
+}
+
+// A one-way firewall: atelier cannot reach orchard, but orchard can reach atelier. The relayed link
+// tells orchard atelier's addresses, orchard connects directly, and the relay drops out.
+func TestOneWayReachabilityEndsDirect(t *testing.T) {
+	newMeshDir(t)
+	orchard, orchardAddr := meshNode(t, "orchard")
+	forge, forgeAddr := meshNode(t, "forge", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	atelier, _ := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	block(atelier, orchardAddr)
+	runNodes(t, orchard, forge, atelier)
+	atelier.setWantFleet(true)
+	waitFor(t, "a direct link opened by orchard", func() bool {
+		e, ok := atelier.entry("orchard")
+		return ok && e.Online && e.Via == "direct" && linkVia(atelier, "orchard") == "direct"
+	})
 }
