@@ -47,6 +47,8 @@ type Config struct {
 	// PrevUntil is when the grace period after the last rotation ends (Unix ms): until then the
 	// previous key is still accepted, so machines offline at rotation time can catch up.
 	PrevUntil int64 `json:"prevUntil,omitempty"`
+	// KeyMembers are the machines that may be handed the current key (see protocol.KeySet).
+	KeyMembers []string `json:"keyMembers,omitempty"`
 	// Uplink: "auto" (default) holds one idle link to a member when no member can connect to this
 	// machine, so it stays reachable through that member while unwatched; "off" never does; any
 	// other value is the machine id to prefer for it.

@@ -194,7 +194,7 @@ func (n *Node) handleJoin(l *link) {
 	}
 	n.mu.Unlock()
 	if changed {
-		if err := n.cfg.Save(); err != nil {
+		if err := n.saveConfig(); err != nil {
 			n.logf("save config: %v", err)
 		}
 	}

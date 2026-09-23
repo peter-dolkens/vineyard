@@ -73,12 +73,18 @@ type Hello struct {
 // KeySet is a fleet key and, during a rotation grace period, the certificates that bridge it to
 // the previous key (see config/keys.go). PEM throughout.
 type KeySet struct {
-	Cert      string `json:"cert"`
-	Key       string `json:"key"`
-	Cross     string `json:"cross,omitempty"`
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
+	// Cross is the new key's certificate signed by the previous key, followed by any earlier cross
+	// certificates when rotations overlap, so a machine on any key still in grace can verify it.
+	Cross string `json:"cross,omitempty"`
+	// Prev holds every earlier certificate still in grace.
 	Prev      string `json:"prev,omitempty"`
 	KeyAt     int64  `json:"keyAt"`
 	PrevUntil int64  `json:"prevUntil,omitempty"`
+	// Members are the machines that may be handed this key: those the rotating machine knew,
+	// minus the ones it excluded. A machine claiming any other id never gets it pushed.
+	Members []string `json:"members,omitempty"`
 }
 
 // Rekey passes a newer fleet key to a peer.
@@ -96,6 +102,15 @@ type RotateArgs struct {
 // DialbackArgs asks a member to try connecting to the sender at these addresses (op "dialback").
 type DialbackArgs struct {
 	Addrs []string `json:"addrs"`
+	// Nonce goes back in the test connection's `probe` line, so the asker knows it was reached and
+	// not some other machine on the same private address.
+	Nonce string `json:"nonce,omitempty"`
+}
+
+// Probe opens the test connection of a dialback.
+type Probe struct {
+	T     string `json:"t"` // "probe"
+	Nonce string `json:"nonce,omitempty"`
 }
 
 type DialbackResult struct {

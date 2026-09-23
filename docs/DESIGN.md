@@ -55,12 +55,15 @@ use it.
   hello) reports an address we did not have, and when another viewer attaches; a direct link that
   answers replaces the relayed one on both sides. There is no retry timer.
 * **Uplinks for machines nobody can connect to.** With `uplink` `auto` (default) a daemon asks a
-  member to dial it back (`dialback`; the test connection opens with `probe`) at startup, when its own
+  member to dial it back (`dialback`; the test connection opens with `probe` and echoes a nonce, so an
+  answer from another machine on the same private address does not count) at startup, when its own
   addresses change (a local interface check once a minute, no traffic) and when its uplink drops. If
   nobody can, the link to that member becomes an uplink: hello `uplink: true` or an `uplink` message
   marks it, it is pinged every 4 min, both ends allow 10 min of silence, and it survives the last
   viewer leaving. The member lists its uplinks in its hellos (`uplinks`), watchers ask it first for a
-  relay, and it reaches the machine with a `tunnel-callback`. Reconnects back off from 1 to 30 min.
+  relay, and it reaches the machine with a `tunnel-callback`. Reconnects back off from 1 to 30 min;
+  if no member can answer at all, retries stop until the machine's addresses change or a viewer
+  attaches.
   This is the one deliberate exception to "silent unless watched", and only for unreachable machines;
   `uplink: off` disables it.
 * **Second-hand state.** A daemon accepting a peer connection sends one `sync` with what it last knew
@@ -92,7 +95,13 @@ use it.
   states `keyAt`, and whichever side of a connection has the newer key pushes it, so a machine offline
   at rotation catches up the next time it meets any rotated member. When the grace period ends the
   previous and cross certificates are deleted and only the new key is trusted. Invites hand out the
-  whole key set, grace files included.
+  whole key set, grace files included. The key set lists its `members` (the machines the rotating
+  daemon knew, minus the excluded ones) and is only ever pushed to those, so a thief who renames an
+  excluded laptop gets nothing. A pushed set is installed only if its cross certificate chains to a
+  key the receiver already trusts. Rotating again inside a grace period chains the new cross
+  certificate to the earlier ones and keeps every earlier certificate in `fleet-prev.crt`, so machines
+  on any key still in grace keep working and catch up. Viewers (VS Code, the CLI) must connect from
+  the same machine; a viewer hello from anywhere else is refused.
 * **Joining without SSH: invite codes.** Any member can mint a single-use code valid for 15 minutes
   (`vineyardd invite`, or *Vineyard: Create Invite Code*). The code is `vineyard:` + base64url JSON
   carrying the inviter's addresses (advertised name plus its LAN IPs), a 128-bit fingerprint of the

@@ -280,6 +280,9 @@ func (n *Node) acceptOne(raw net.Conn) {
 	case "tunnel-accept":
 		n.handleTunnelAccept(tc, rd, t)
 	case "probe": // a member checking that it can reach us (uplink.go)
+		var pr protocol.Probe
+		_ = json.Unmarshal(first, &pr)
+		n.probeArrived(pr.Nonce)
 		raw.Close()
 	default:
 		n.serveFirst(&link{conn: NewConn(bufConn{Conn: tc, rd: rd}), outbound: false}, first)
@@ -410,7 +413,7 @@ func (n *Node) dial(p *peerState) {
 	}
 	n.mu.Unlock()
 	if persist {
-		if err := n.cfg.Save(); err != nil {
+		if err := n.saveConfig(); err != nil {
 			n.logf("save config: %v", err)
 		}
 	}
@@ -461,16 +464,31 @@ func (n *Node) hello(role string) protocol.Hello {
 	}
 }
 
+// saveConfig writes config.json under mu, so it never races a change to the config in memory.
+func (n *Node) saveConfig() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.cfg.Save()
+}
+
 func (n *Node) keyAt() int64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.cfg.KeyAt
 }
 
+// removals is what our hello passes on. Undated records (hidden from this machine's view by
+// 0.3.21, before removal was fleet-wide) stay local.
 func (n *Node) removals() []protocol.Removal {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return slices.Clone([]protocol.Removal(n.cfg.Removed))
+	var out []protocol.Removal
+	for _, r := range n.cfg.Removed {
+		if r.At > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // applyRemovalLocked takes a removal (ours or a peer's) and, if it stands, drops the machine: its
@@ -626,6 +644,11 @@ func (n *Node) serveFirst(l *link, first []byte) {
 	}
 
 	n.register(l, h)
+	select {
+	case <-l.conn.Done():
+		return // refused or superseded: whatever the far end queued behind its hello is not read
+	default:
+	}
 
 	// Main loop.
 	for {
@@ -644,6 +667,13 @@ func (n *Node) serveFirst(l *link, first []byte) {
 }
 
 func (n *Node) register(l *link, h protocol.Hello) {
+	if l.role == "viewer" && !localViewer(l) {
+		// Viewers are VS Code and the CLI on this machine. Anything else claiming to be one (a removed
+		// machine, say, that still holds the fleet key) could read the fleet and rotate its key.
+		n.logf("refused a viewer from %s: viewers must connect from this machine", l.conn.RemoteAddr())
+		l.conn.Close()
+		return
+	}
 	n.mu.Lock()
 	n.links[l] = struct{}{}
 	if l.role == "viewer" {
@@ -764,6 +794,20 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	}
 }
 
+// localViewer reports whether a viewer link comes from this machine: a direct loopback connection.
+// Connections that are not TCP (in-process pipes in tests) count as local.
+func localViewer(l *link) bool {
+	if l.via != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(l.conn.RemoteAddr())
+	if err != nil {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // gained reports whether after holds an address before did not.
 func gained(before, after []string) bool {
 	for _, a := range after {
@@ -802,7 +846,7 @@ func (n *Node) probeDirect(p *peerState) {
 	persist := n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: p.addrs})
 	n.mu.Unlock()
 	if persist {
-		if err := n.cfg.Save(); err != nil {
+		if err := n.saveConfig(); err != nil {
 			n.logf("save config: %v", err)
 		}
 	}
@@ -960,6 +1004,7 @@ func (n *Node) setWantFleet(want bool) {
 		}
 		if !n.wantFleet {
 			n.wantFleet = true
+			n.up.gaveUp = false
 			for _, p := range n.peers {
 				p.nextDial = time.Time{}
 				p.backoff = 0
@@ -970,6 +1015,7 @@ func (n *Node) setWantFleet(want bool) {
 			n.kickCollector()
 			return
 		}
+		n.up.gaveUp = false
 		n.mu.Unlock()
 		n.probeRelayed() // another viewer: a moment to check whether relayed peers are reachable now
 		return
@@ -1234,7 +1280,7 @@ func (n *Node) dispatch(l *link, b []byte) {
 		}
 		n.mu.Unlock()
 		if changed {
-			if err := n.cfg.Save(); err != nil {
+			if err := n.saveConfig(); err != nil {
 				n.logf("save config: %v", err)
 			}
 			n.refreshViewers()
@@ -1439,7 +1485,7 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			_ = l.conn.Send(protocol.Removed{T: "removed", Removals: []protocol.Removal{removal}})
 		}
 		if changed {
-			if err := n.cfg.Save(); err != nil {
+			if err := n.saveConfig(); err != nil {
 				return nil, err
 			}
 		}

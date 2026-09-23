@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -59,4 +60,41 @@ func TestRemovalSpreadsAndIsRefusedUntilAddedAgain(t *testing.T) {
 		defer forge.mu.Unlock()
 		return !forge.cfg.IsRemoved("orchard") && forge.peers["orchard"] != nil
 	})
+}
+
+// Removals written by 0.3.21 (undated, and only ever meant for that one machine's view) stay local.
+func TestUndatedRemovalsAreNotPassedOn(t *testing.T) {
+	n := newTestNode(t, "atelier")
+	n.cfg.Removed = append(n.cfg.Removed, protocol.Removal{MachineID: "hidden"}, protocol.Removal{MachineID: "gone", At: 5})
+	h := n.hello("peer")
+	if len(h.Removed) != 1 || h.Removed[0].MachineID != "gone" {
+		t.Fatalf("hello removals: %+v", h.Removed)
+	}
+}
+
+type remoteConn struct {
+	net.Conn
+	addr net.Addr
+}
+
+func (c remoteConn) RemoteAddr() net.Addr { return c.addr }
+
+// Viewers must be on this machine: one arriving from another address is refused.
+func TestRemoteViewerIsRefused(t *testing.T) {
+	n := newTestNode(t, "atelier")
+	ours, theirs := net.Pipe()
+	defer theirs.Close()
+	far := &net.TCPAddr{IP: net.ParseIP("192.168.20.9"), Port: 50000}
+	l := &link{conn: NewConn(remoteConn{Conn: ours, addr: far}), role: "viewer", peerID: "forge#viewer"}
+	n.register(l, protocol.Hello{T: "hello", Role: "viewer", MachineID: "forge#viewer", Protocol: protocol.Version})
+	select {
+	case <-l.conn.Done():
+	case <-time.After(time.Second):
+		t.Fatal("remote viewer not refused")
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.viewers) != 0 {
+		t.Fatal("remote viewer registered")
+	}
 }

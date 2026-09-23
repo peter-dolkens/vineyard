@@ -47,6 +47,9 @@ type uplinkState struct {
 	nextTry   time.Time
 	addrs     []string // our addresses at the last check
 	lastCheck time.Time
+	nonce     string // the dialback being answered; set by acceptOne when its probe arrives
+	probed    bool
+	gaveUp    bool // no member could answer at all; wait for an event rather than retry forever
 }
 
 func (n *Node) uplinkMode() string {
@@ -84,6 +87,7 @@ func (n *Node) uplinkTick() {
 				n.up.reach = reachUnknown
 				n.up.backoff = 0
 				n.up.nextTry = time.Time{}
+				n.up.gaveUp = false
 				old := n.up.link
 				n.up.link = nil
 				n.mu.Unlock()
@@ -96,7 +100,7 @@ func (n *Node) uplinkTick() {
 			}
 		}
 	}
-	if n.up.attempt || n.up.link != nil || now.Before(n.up.nextTry) || n.up.reach == reachable || len(n.peers) == 0 {
+	if n.up.attempt || n.up.link != nil || n.up.gaveUp || now.Before(n.up.nextTry) || n.up.reach == reachable || len(n.peers) == 0 {
 		n.mu.Unlock()
 		return
 	}
@@ -149,7 +153,11 @@ func (n *Node) uplinkAttempt() {
 		if err != nil {
 			continue
 		}
-		data, err := n.request(l, "dialback", protocol.DialbackArgs{Addrs: self}, dialbackTimeout)
+		nonce := newID()
+		n.mu.Lock()
+		n.up.nonce, n.up.probed = nonce, false
+		n.mu.Unlock()
+		data, err := n.request(l, "dialback", protocol.DialbackArgs{Addrs: self, Nonce: nonce}, dialbackTimeout)
 		if err != nil {
 			if own {
 				l.conn.Close()
@@ -158,14 +166,25 @@ func (n *Node) uplinkAttempt() {
 		}
 		var res protocol.DialbackResult
 		_ = json.Unmarshal(data, &res)
+		// The member's reply can overtake its test connection's probe line; allow a moment for it.
+		for i := 0; res.Reachable && i < 20 && !n.probedYet(); i++ {
+			time.Sleep(50 * time.Millisecond)
+		}
 		n.mu.Lock()
 		n.up.backoff = 0
+		if res.Reachable && !n.up.probed {
+			// Something answered on one of our addresses, but not us (another machine on the same
+			// private address range elsewhere).
+			res.Reachable, res.Error = false, "reached a different machine at our address"
+		}
+		n.up.nonce = ""
 		if res.Reachable {
 			n.up.reach = reachable
-			watching := n.wantFleet
 			n.mu.Unlock()
 			n.logf("reachable from %s; no uplink needed", m.id)
-			if own && !watching {
+			if own {
+				// Opened for the check and flagged as a possible uplink; a normal link, if one is
+				// wanted, is dialled afresh by reconcile.
 				l.conn.Close()
 			}
 			return
@@ -180,10 +199,31 @@ func (n *Node) uplinkAttempt() {
 		n.kickCollector() // the snapshot names the uplink
 		return
 	}
+	// Nobody could answer (all offline, or none new enough to know dialback). Retry on a lengthening
+	// backoff, but stop at the longest step: from then on only an event (our addresses changing, a
+	// viewer attaching, a restart) starts another round.
 	n.mu.Lock()
+	if n.up.backoff == uplinkBackoffMax {
+		n.up.gaveUp = true
+	}
 	n.up.backoff = min(max(n.up.backoff*2, uplinkBackoffMin), uplinkBackoffMax)
 	n.up.nextTry = time.Now().Add(n.up.backoff)
 	n.mu.Unlock()
+}
+
+func (n *Node) probedYet() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.up.probed
+}
+
+// probeArrived records a dialback's test connection reaching us.
+func (n *Node) probeArrived(nonce string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if nonce != "" && nonce == n.up.nonce {
+		n.up.probed = true
+	}
 }
 
 // linkTo returns a direct link to m: the existing one, or a fresh one (own=true) that says in its
@@ -253,9 +293,11 @@ func (n *Node) answerDialback(l *link, r protocol.Request) {
 	n.mu.Unlock()
 	res := protocol.DialbackResult{}
 	if raw, _, err := n.dialAddrs(addrs); err == nil {
-		_ = writeLine(raw, protocol.Ping{T: "probe"})
+		err := writeLine(raw, protocol.Probe{T: "probe", Nonce: a.Nonce})
+		// Give the line a moment to land before closing, so the asker sees the nonce.
+		time.Sleep(100 * time.Millisecond)
 		raw.Close()
-		res.Reachable = true
+		res.Reachable = err == nil
 	} else {
 		res.Error = trimErr(err)
 	}

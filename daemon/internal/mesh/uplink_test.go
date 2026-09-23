@@ -87,3 +87,21 @@ func TestUplinkOffDoesNothing(t *testing.T) {
 		t.Fatalf("uplink off still acted: %+v, %d links", orchard.up, len(orchard.links))
 	}
 }
+
+// orchard advertises an address where a different fleet machine (decoy) answers. forge's dialback
+// reaches the decoy, not orchard, so orchard must not conclude it is reachable.
+func TestDialbackThatReachesAnotherMachineDoesNotCount(t *testing.T) {
+	newMeshDir(t)
+	decoy, decoyAddr := meshNode(t, "decoy")
+	forge, forgeAddr := meshNode(t, "forge")
+	orchard, orchardAddr := meshNode(t, "orchard", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr})
+	orchard.cfg.Uplink = "auto"
+	orchard.cfg.Advertise = decoyAddr // what orchard believes its address is; the decoy lives there
+	block(forge, orchardAddr)         // orchard's real listener is not reachable from forge
+	runNodes(t, decoy, forge, orchard)
+	waitFor(t, "orchard to decide it is unreachable and hold an uplink", func() bool {
+		orchard.mu.Lock()
+		defer orchard.mu.Unlock()
+		return orchard.up.reach == unreachable && orchard.up.link != nil
+	})
+}

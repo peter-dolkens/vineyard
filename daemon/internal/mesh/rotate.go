@@ -2,7 +2,9 @@ package mesh
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"time"
@@ -63,7 +65,7 @@ func (n *Node) keySet() (protocol.KeySet, error) {
 		return string(b)
 	}
 	n.mu.Lock()
-	ks := protocol.KeySet{KeyAt: n.cfg.KeyAt, PrevUntil: n.cfg.PrevUntil}
+	ks := protocol.KeySet{KeyAt: n.cfg.KeyAt, PrevUntil: n.cfg.PrevUntil, Members: slices.Clone(n.cfg.KeyMembers)}
 	grace := n.tlsGrace
 	n.mu.Unlock()
 	ks.Cert, ks.Key = read(config.CertFile), read(config.KeyFile)
@@ -78,6 +80,43 @@ func (n *Node) keySet() (protocol.KeySet, error) {
 	return ks, nil
 }
 
+// validateKeySet checks a key set pushed to us before anything is written: the key must match its
+// certificates, and the cross certificate must chain to a key we already trust. That keeps a
+// malformed set from being installed (and spread), and a machine that has rotated from being handed
+// a key someone made up.
+func (n *Node) validateKeySet(ks protocol.KeySet) error {
+	if _, err := tls.X509KeyPair([]byte(ks.Cert), []byte(ks.Key)); err != nil {
+		return fmt.Errorf("certificate and key do not match: %w", err)
+	}
+	if ks.Cross == "" {
+		return errors.New("no certificate linking the new key to ours")
+	}
+	pair, err := tls.X509KeyPair([]byte(ks.Cross), []byte(ks.Key))
+	if err != nil {
+		return fmt.Errorf("cross certificate: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return err
+	}
+	inter := x509.NewCertPool()
+	for _, der := range pair.Certificate[1:] {
+		if c, err := x509.ParseCertificate(der); err == nil {
+			inter.AddCert(c)
+		}
+	}
+	roots := x509.NewCertPool()
+	for _, f := range []string{config.CertFile, config.PrevCertFile} {
+		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, f)); err == nil {
+			roots.AppendCertsFromPEM(b)
+		}
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: inter, DNSName: config.FleetServerName, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		return fmt.Errorf("the new key is not signed by a key we trust: %w", err)
+	}
+	return nil
+}
+
 // installKeySet takes a key set (our own rotation, or one pushed to us) and switches to it.
 func (n *Node) installKeySet(ks protocol.KeySet) error {
 	if err := config.InstallKeys(n.opts.Dir, []byte(ks.Cert), []byte(ks.Key), []byte(ks.Cross), []byte(ks.Prev)); err != nil {
@@ -86,8 +125,9 @@ func (n *Node) installKeySet(ks protocol.KeySet) error {
 	n.mu.Lock()
 	n.cfg.KeyAt = ks.KeyAt
 	n.cfg.PrevUntil = ks.PrevUntil
+	n.cfg.KeyMembers = ks.Members
 	n.mu.Unlock()
-	if err := n.cfg.Save(); err != nil {
+	if err := n.saveConfig(); err != nil {
 		n.logf("save config: %v", err)
 	}
 	return n.rebuildTLS()
@@ -121,7 +161,28 @@ func (n *Node) rotateKey(exclude []string, grace time.Duration) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	ks := protocol.KeySet{Cert: string(cert), Key: string(key), Cross: string(cross), Prev: string(prevCert), KeyAt: now, PrevUntil: now + grace.Milliseconds()}
+	prev := prevCert
+	n.mu.Lock()
+	overlapping := n.tlsGrace
+	members := []string{n.cfg.MachineID}
+	for id := range n.peers {
+		if !slices.Contains(exclude, id) {
+			members = append(members, id)
+		}
+	}
+	n.mu.Unlock()
+	slices.Sort(members)
+	if overlapping {
+		// Rotating again inside a grace period: machines still on the key before last must be able
+		// to verify the new one too, so the old bridge certificates come along.
+		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, config.CrossCertFile)); err == nil {
+			cross = append(cross, b...)
+		}
+		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, config.PrevCertFile)); err == nil {
+			prev = append(append([]byte(nil), prevCert...), b...)
+		}
+	}
+	ks := protocol.KeySet{Cert: string(cert), Key: string(key), Cross: string(cross), Prev: string(prev), KeyAt: now, PrevUntil: now + grace.Milliseconds(), Members: members}
 	if err := n.installKeySet(ks); err != nil {
 		return 0, err
 	}
@@ -146,8 +207,15 @@ func (n *Node) rotateKey(exclude []string, grace time.Duration) (int64, error) {
 	return now, nil
 }
 
-// sendRekey pushes our key set to a peer that connected with an older key.
+// sendRekey pushes our key set to a peer that connected with an older key, if the rotation listed it.
 func (n *Node) sendRekey(l *link) {
+	n.mu.Lock()
+	listed := slices.Contains(n.cfg.KeyMembers, l.peerID)
+	n.mu.Unlock()
+	if !listed {
+		n.logf("not passing the fleet key to %s: it was not a member when the key was rotated", l.peerID)
+		return
+	}
 	ks, err := n.keySet()
 	if err != nil {
 		n.logf("cannot pass the fleet key to %s: %v", l.peerID, err)
@@ -164,6 +232,10 @@ func (n *Node) handleRekey(l *link, ks protocol.KeySet) {
 	newer := ks.KeyAt > n.cfg.KeyAt
 	n.mu.Unlock()
 	if !newer || l.role != "peer" {
+		return
+	}
+	if err := n.validateKeySet(ks); err != nil {
+		n.logf("refused a fleet key from %s: %v", l.peerID, err)
 		return
 	}
 	if err := n.installKeySet(ks); err != nil {
@@ -184,7 +256,7 @@ func (n *Node) graceTick() {
 	if !over {
 		return
 	}
-	if err := n.cfg.Save(); err != nil {
+	if err := n.saveConfig(); err != nil {
 		n.logf("save config: %v", err)
 	}
 	config.RemoveGraceFiles(n.opts.Dir)

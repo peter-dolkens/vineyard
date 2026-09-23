@@ -130,3 +130,98 @@ func TestRotationExcludesTheLostMachine(t *testing.T) {
 		t.Fatalf("forge removed=%v keyAt=%d", removed, keyAtOf(forge))
 	}
 }
+
+// A machine that was not a member when the key was rotated (a thief who renamed an excluded laptop)
+// connects on the old key during grace but is never handed the new one.
+func TestRotationDoesNotHandTheKeyToStrangers(t *testing.T) {
+	newMeshDir(t)
+	atelier, atelierAddr, _ := keyedNode(t, "atelier")
+	if _, err := atelier.rotateKey([]string{"forge"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	thief, _, _ := keyedNode(t, "forge-renamed")
+	runNodes(t, atelier, thief)
+	thief.mu.Lock()
+	thief.peers["atelier"] = &peerState{id: "atelier", addr: atelierAddr, addrs: []string{atelierAddr}}
+	thief.mu.Unlock()
+	thief.setWantFleet(true)
+	waitFor(t, "the thief to connect on the old key", func() bool { return linkVia(thief, "atelier") == "direct" })
+	time.Sleep(500 * time.Millisecond)
+	if keyAtOf(thief) != 0 {
+		t.Fatal("a machine outside the rotation's member list was handed the new key")
+	}
+}
+
+// A pushed key set that is not signed by a key we trust is refused before anything is written.
+func TestMadeUpKeySetIsRefused(t *testing.T) {
+	newMeshDir(t)
+	victim, _, dir := keyedNode(t, "atelier")
+	before, _ := os.ReadFile(filepath.Join(dir, config.CertFile))
+	// A key set from an unrelated fleet: its cross certificate chains to that fleet's key, not ours.
+	other := t.TempDir()
+	t.Setenv("VINEYARD_DIR", other)
+	if err := config.GenerateFleetCert(); err != nil {
+		t.Fatal(err)
+	}
+	oc, _ := os.ReadFile(filepath.Join(other, config.CertFile))
+	ok, _ := os.ReadFile(filepath.Join(other, config.KeyFile))
+	cert, key, cross, err := config.NewFleetKey(oc, ok, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks := protocol.KeySet{Cert: string(cert), Key: string(key), Cross: string(cross), KeyAt: time.Now().UnixMilli(), PrevUntil: time.Now().Add(time.Hour).UnixMilli()}
+	if err := victim.validateKeySet(ks); err == nil {
+		t.Fatal("a key set from another fleet validated")
+	}
+	victim.handleRekey(&link{role: "peer", peerID: "mallory"}, ks)
+	after, _ := os.ReadFile(filepath.Join(dir, config.CertFile))
+	if !bytes.Equal(before, after) || keyAtOf(victim) != 0 {
+		t.Fatal("a refused key set was installed")
+	}
+	bad := ks
+	bad.Key = "not a key"
+	if victim.validateKeySet(bad) == nil {
+		t.Fatal("a malformed key set validated")
+	}
+}
+
+// Rotating again inside a grace period: a machine left on the middle key and one still on the
+// original key both still connect to the newest, and catch up to it.
+func TestOverlappingRotationsKeepEveryGraceKeyWorking(t *testing.T) {
+	newMeshDir(t)
+	a, aAddr, _ := keyedNode(t, "atelier")
+	middle, _, _ := keyedNode(t, "forge")
+	oldest, _, _ := keyedNode(t, "orchard")
+	a.mu.Lock()
+	a.peers["forge"] = &peerState{id: "forge"}
+	a.peers["orchard"] = &peerState{id: "orchard"}
+	a.mu.Unlock()
+	k2, err := a.rotateKey(nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks2, err := a.keySet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := middle.validateKeySet(ks2); err != nil {
+		t.Fatal(err)
+	}
+	if err := middle.installKeySet(ks2); err != nil { // forge took K2, then went offline
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	k3, err := a.rotateKey(nil, time.Hour)
+	if err != nil || k3 <= k2 {
+		t.Fatal(err)
+	}
+	runNodes(t, a, middle, oldest)
+	for _, n := range []*Node{middle, oldest} {
+		n.mu.Lock()
+		n.peers["atelier"] = &peerState{id: "atelier", addr: aAddr, addrs: []string{aAddr}}
+		n.mu.Unlock()
+		n.setWantFleet(true)
+	}
+	waitFor(t, "forge (on K2) to reach K3", func() bool { return keyAtOf(middle) == k3 })
+	waitFor(t, "orchard (on K1) to reach K3", func() bool { return keyAtOf(oldest) == k3 })
+}
