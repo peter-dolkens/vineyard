@@ -57,7 +57,7 @@
     "viewsWelcome": [
       {
         "view": "vineyard.fleet",
-        "contents": "Vineyard runs a tiny daemon on each machine; they talk to each other only while a VS Code window is watching.\n\nThis machine is not set up yet.\n\n[Set Up This Machine](command:vineyard.setupLocal)\n\nStart a new fleet here: writes ~/.vineyard/config.json, generates the fleet certificate and installs a login service.\n\n[Join Fleet with Invite Code](command:vineyard.joinWithCode)\n\nAlready have a fleet? Create an invite code from a machine that is in it (Vineyard: Create Invite Code) and paste it here. No SSH needed.",
+        "contents": "Vineyard runs a tiny daemon on each machine; they talk to each other only while a VS Code window is watching.\n\nThis machine is not set up yet.\n\n[Set Up This Machine](command:vineyard.setupLocal)\n\nStart a new fleet here: writes ~/.vineyard/config.json, generates the fleet certificate and installs a login service.\n\n[Join Fleet with Invite Code](command:vineyard.joinWithCode)\n\nAlready have a fleet? Create an invite code from a machine that is in it (Vineyard: Create Invite Code) and paste it here. No SSH needed.\n\n[Setup guide](https://github.com/peter-dolkens/vineyard/blob/main/docs/SETUP.md) with screenshots and troubleshooting.",
         "when": "vineyard.daemonState == 'no-config'"
       },
       {

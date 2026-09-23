@@ -105,6 +105,9 @@ it does that the pane has no equivalent for.
 
 ## Getting started
 
+**[The setup guide](docs/SETUP.md)** walks through creating a fleet and adding machines step by
+step, with screenshots, network requirements and troubleshooting. In short:
+
 1. Install **Vineyard** from the Extensions view and open its icon in the Activity Bar.
 2. **Set Up This Machine.** This writes `~/.vineyard/config.json`, generates the fleet certificate and
    installs a login service. Your local agents appear within a second.
@@ -262,6 +265,8 @@ Blocked by Claude Code itself or by the agent living on another machine.
 
 ## Learn more
 
+* [Setting up a fleet](docs/SETUP.md): the first machine, invite codes, adding machines over SSH,
+  networks and firewalls, removing machines, troubleshooting.
 * [How it works](docs/DESIGN.md): the daemon, the mesh, how agent state is derived, the wire protocol,
   building from source and cutting a release.
 * [Releases](https://github.com/peter-dolkens/vineyard/releases) carry a `.vsix` with every platform's

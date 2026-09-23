@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="../../media/codicon.css">
+<style>
+  /* A small VS Code window for the setup guide: activity bar, the Vineyard side bar, an empty editor
+     area, and whichever notification or input box the step shows. Pick the step with the URL hash. */
+  html, body { margin: 0; height: 100%; }
+  body { font-family: var(--vscode-font-family); font-size: 13px; color: var(--vscode-foreground); background: var(--vscode-editor-background); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  .win { flex: 1; display: flex; min-height: 0; position: relative; }
+  .activity { width: 48px; flex: none; background: #181818; border-right: 1px solid #2b2b2b; display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+  .activity .act { width: 48px; height: 48px; display: grid; place-items: center; color: #868686; position: relative; }
+  .activity .act i { font-size: 24px; }
+  .activity .act.on { color: #d7d7d7; }
+  .activity .act.on::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #0078d4; }
+  .activity .act svg { width: 24px; height: 24px; }
+  .side { width: 330px; flex: none; background: var(--vscode-sideBar-background); border-right: 1px solid #2b2b2b; display: flex; flex-direction: column; }
+  .editor { flex: 1; position: relative; background: var(--vscode-editor-background); }
+  .titlebar { height: 35px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 20px; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; }
+  .titlebar .acts { display: flex; gap: 2px; position: relative; }
+  .titlebar .acts i { font-size: 16px; padding: 3px; border-radius: 4px; }
+  .titlebar .acts i.hot { background: var(--vscode-toolbar-hoverBackground); outline: 1px solid var(--vscode-focusBorder); }
+  .tooltip { position: absolute; top: 30px; right: 18px; z-index: 5; background: #202020; border: 1px solid #454545; border-radius: 4px; padding: 4px 8px; font-size: 12px; text-transform: none; letter-spacing: 0; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.36); }
+  .section { height: 22px; display: flex; align-items: center; gap: 2px; padding-left: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .section i { font-size: 16px; }
+  .welcome { padding: 4px 20px 12px; line-height: 1.4; }
+  .welcome p { margin: 0 0 12px; }
+  .welcome .btn { display: block; max-width: 260px; margin: 0 auto 12px; text-align: center; padding: 4px; border-radius: 2px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .welcome .btn.hot { outline: 1px solid #fff; outline-offset: 2px; }
+  .welcome a { color: var(--vscode-textLink-foreground); }
+  code { font-family: var(--vscode-editor-font-family); font-size: 12px; }
+  .row { height: 22px; display: flex; align-items: center; white-space: nowrap; overflow: hidden; position: relative; }
+  .tw { width: 16px; flex: none; display: grid; place-items: center; }
+  .tw i { font-size: 16px; }
+  .ico { width: 16px; height: 16px; flex: none; display: grid; place-items: center; margin-right: 6px; }
+  .ico i { font-size: 16px; }
+  .desc { margin-left: 6px; font-size: 0.9em; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; }
+  .row.new { background: rgba(55,148,255,.14); }
+  .guide { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(88,88,88,.4); }
+  .d0 { padding-left: 8px; } .d1 { padding-left: 24px; }
+  .blue { color: var(--vscode-charts-blue); } .green { color: var(--vscode-charts-green); } .dim { color: var(--vscode-disabledForeground); } .warn { color: var(--vscode-editorWarning-foreground); }
+  /* Notification toasts, bottom right of the editor area. */
+  .toasts { position: absolute; right: 12px; bottom: 12px; width: 450px; display: flex; flex-direction: column; gap: 6px; }
+  .toast { background: #202020; border: 1px solid #2b2b2b; border-radius: 4px; box-shadow: 0 0 8px 2px rgba(0,0,0,.36); padding: 10px 10px 10px 12px; position: relative; overflow: hidden; }
+  .toast .msg { display: flex; gap: 8px; line-height: 1.4; padding-right: 20px; }
+  .toast .msg i { font-size: 16px; margin-top: 1px; flex: none; }
+  .toast .close { position: absolute; right: 8px; top: 9px; font-size: 16px; color: #9d9d9d; }
+  .toast .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+  .toast .src { font-size: 12px; color: var(--vscode-descriptionForeground); }
+  .toast .btns { display: flex; gap: 6px; }
+  .toast .b { padding: 3px 9px; border-radius: 2px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); font-size: 13px; }
+  .toast .b.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .toast .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, transparent 0 30%, #0078d4 30% 55%, transparent 55%); }
+  /* Quick input, top centre of the window. */
+  .quick { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 620px; background: #222222; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 0 8px 2px rgba(0,0,0,.36); padding: 6px 6px 8px; z-index: 4; }
+  .quick .qt { text-align: center; font-size: 13px; padding: 2px 0 6px; }
+  .quick .in { background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); border-radius: 2px; padding: 4px 6px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quick .in .ph { color: #8b8b8b; }
+  .quick .in .caret { display: inline-block; width: 1px; height: 14px; background: #ccc; vertical-align: -2px; }
+  .quick .hint { padding: 6px 4px 0; font-size: 13px; line-height: 1.4; color: var(--vscode-foreground); }
+  .statusbar { height: 22px; background: #181818; border-top: 1px solid #2b2b2b; display: flex; align-items: center; font-size: 12px; padding-left: 8px; }
+  .sb-item { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; }
+  .sb-item i { font-size: 14px; }
+  .sb-right { margin-left: auto; display: flex; }
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="activity">
+    <div class="act"><i class="codicon codicon-files"></i></div>
+    <div class="act"><i class="codicon codicon-search"></i></div>
+    <div class="act"><i class="codicon codicon-source-control"></i></div>
+    <div class="act on"><!-- media/vineyard.svg, inlined so currentColor applies --><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-label="Vineyard"><g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path stroke-width="1.7" d="M7.2 9.2 C5.4 11.6 2.4 10.5 2.8 7.5 C3.1 4.6 5.9 3.1 8.2 4.0 C10.7 5.0 11.0 7.7 11.0 10.1 V14.1"/><path stroke-width="1.5" d="M11 9.2 L17.6 13.4 M11 11.8 L6.7 16.4 M13.8 11.1 V15.7 L17.1 19 M11 14 V19.8"/></g><path d="M12.8 9.7 C12.7 6.7 14.4 5.3 18.0 4.7 C19.4 4.5 20.2 3.7 21.0 3.0 C21.3 7.8 18.5 10.2 15.4 10.6 C14.4 10.7 13.5 10.3 12.8 9.7 Z" fill="currentColor"/><g fill="currentColor"><circle cx="6.7" cy="16.4" r="1.95"/><circle cx="17.6" cy="13.4" r="1.95"/><circle cx="17.1" cy="19" r="1.95"/><circle cx="11" cy="20" r="1.95"/></g></svg></div>
+  </div>
+  <div class="side">
+    <div class="titlebar"><span>Vineyard</span><span class="acts" id="acts"><i class="codicon codicon-add" id="act-add"></i><i class="codicon codicon-history"></i><i class="codicon codicon-link" id="act-invite"></i><i class="codicon codicon-refresh"></i><i class="codicon codicon-ellipsis"></i></span></div>
+    <div class="section"><i class="codicon codicon-chevron-down"></i>Agents</div>
+    <div id="side"></div>
+  </div>
+  <div class="editor" id="editor"></div>
+</div>
+<div class="statusbar" id="status">
+  <span class="sb-item"><i class="codicon codicon-remote"></i></span>
+  <span class="sb-item"><i class="codicon codicon-source-control"></i> main</span>
+  <span class="sb-item" id="sb-fleet"></span>
+  <span class="sb-right"><span class="sb-item"><i class="codicon codicon-bell"></i></span></span>
+</div>
+<script>
+// Synthetic only: atelier is the first machine, forge joins with a code, orchard is added over SSH.
+const CODE = 'vineyard:eyJ2IjoxLCJhIjpbImF0ZWxpZXIubG9jYWw6NzczNCIsIjE5Mi4xNjguMjAuMTQ6NzczNCJdLCJmIjoiUW05bmRYTkdhVzVuWlhKd2NtbHVkQSIsInQiOiJjM2x1ZEdobGRHbGpMWFJ2YTJWdUxURSIsIm4iOiJhdGVsaWVyIiwibSI6ImF0ZWxpZXIubG9jYWwifQ';
+
+const WELCOME = (hot) => `<div class="welcome">
+  <p>Vineyard runs a tiny daemon on each machine; they talk to each other only while a VS Code window is watching.</p>
+  <p>This machine is not set up yet.</p>
+  <span class="btn${hot === 'setup' ? ' hot' : ''}">Set Up This Machine</span>
+  <p>Start a new fleet here: writes ~/.vineyard/config.json, generates the fleet certificate and installs a login service.</p>
+  <span class="btn${hot === 'join' ? ' hot' : ''}">Join Fleet with Invite Code</span>
+  <p>Already have a fleet? Create an invite code from a machine that is in it (Vineyard: Create Invite Code) and paste it here. No SSH needed.</p>
+  <p><a>Setup guide</a> with screenshots and troubleshooting.</p>
+</div>`;
+
+// [depth, twistie, icon, colour, label, description, highlighted]
+const ATELIER = [
+  [0, 'down', 'device-desktop', 'blue', 'atelier', '1 working · 1 idle'],
+  [1, 'right', 'loading codicon-modifier-spin', 'blue', 'storefront-api', '1 working'],
+  [1, 'right', 'circle-large-filled', 'green', 'design-system', '1 idle'],
+];
+const FORGE_LOCAL = [[0, 'right', 'device-desktop', 'green', 'forge', 'no agents', true]];
+const ATELIER_REMOTE = [[0, 'right', 'server', 'blue', 'atelier', '1 working · 1 idle']];
+const FORGE_REMOTE = [[0, 'right', 'server', 'green', 'forge', 'no agents']];
+
+function tree(rows) {
+  return rows.map(([d, tw, icon, colour, label, desc, hi]) => {
+    let guides = '';
+    for (let i = 1; i <= d; i++) guides += `<span class="guide" style="left:${8 + i * 16 - 1}px"></span>`;
+    const twist = tw === 'none' ? '' : `<i class="codicon codicon-chevron-${tw}"></i>`;
+    return `<div class="row d${d}${hi ? ' new' : ''}">${guides}<span class="tw">${twist}</span><span class="ico ${colour}"><i class="codicon codicon-${icon}"></i></span><span>${label}</span><span class="desc">${desc}</span></div>`;
+  }).join('');
+}
+
+function toast({ icon = 'info', colour = 'blue', text, buttons = [], progress = false }) {
+  const btns = buttons.map((b, i) => `<span class="b${i === 0 ? ' primary' : ''}">${b}</span>`).join('');
+  return `<div class="toast"><div class="msg"><i class="codicon codicon-${icon} ${colour}"></i><span>${text}</span></div><i class="codicon codicon-close close"></i>
+    <div class="foot"><span class="src">Source: Vineyard</span><span class="btns">${btns}</span></div>${progress ? '<span class="bar"></span>' : ''}</div>`;
+}
+
+function quick({ title, value, placeholder, hint }) {
+  const body = value ? `${value}<span class="caret"></span>` : `<span class="caret"></span><span class="ph">${placeholder}</span>`;
+  return `<div class="quick"><div class="qt">${title}</div><div class="in">${body}</div><div class="hint">${hint} (Press 'Enter' to confirm or 'Escape' to cancel)</div></div>`;
+}
+
+const fleetStatus = (working, idle) => `<i class="codicon codicon-loading codicon-modifier-spin"></i> ${working}&nbsp;&nbsp;<i class="codicon codicon-circle-large-filled"></i> ${idle}`;
+
+const STEPS = {
+  // First machine, before anything is installed.
+  welcome: () => ({ side: WELCOME('setup') }),
+  // Set Up This Machine running; local agents already listed.
+  setup: () => ({
+    side: tree(ATELIER),
+    toasts: [toast({ text: 'Vineyard: setting up this machine: installing background service', progress: true })],
+    status: fleetStatus(1, 1),
+  }),
+  // Create Invite Code from the view's toolbar.
+  invite: () => ({
+    side: tree(ATELIER),
+    hot: 'act-invite',
+    tip: 'Create Invite Code (join without SSH)',
+    toasts: [toast({ text: 'Invite code copied to the clipboard (single use, valid 15 min). On the other machine run "Vineyard: Join Fleet with Invite Code" and paste it, or open the link.', buttons: ['Copy as vscode:// link', 'Show code'] })],
+    status: fleetStatus(1, 1),
+  }),
+  // On the joining machine: paste the code.
+  join: () => ({
+    side: WELCOME('join'),
+    overlay: quick({ title: 'Join fleet', value: CODE, hint: 'Paste the invite code from another machine (starts with vineyard: or vscode://)' }),
+  }),
+  // Joined: the joiner sees itself and the inviter.
+  joined: () => ({
+    side: tree([...FORGE_LOCAL, ...ATELIER_REMOTE]),
+    toasts: [toast({ text: 'Joined the fleet. forge will appear on the other machines as soon as they look.' })],
+    status: fleetStatus(1, 1),
+  }),
+  // Add Machine over SSH.
+  ssh: () => ({
+    side: tree([...ATELIER, ...FORGE_REMOTE]),
+    overlay: quick({ title: 'Add machine', value: 'orchard.local', hint: 'SSH host of the machine (hostname, IP or ~/.ssh/config alias). You must be able to SSH to it without a password prompt.' }),
+    status: fleetStatus(1, 1),
+  }),
+  // Add Machine finishing.
+  sshdone: () => ({
+    side: tree([...ATELIER, ...FORGE_REMOTE, [0, 'right', 'server', 'green', 'orchard', 'no agents', true]]),
+    toasts: [toast({ text: 'Vineyard daemon installed on orchard and connected.' })],
+    status: fleetStatus(1, 1),
+  }),
+};
+
+const step = (STEPS[location.hash.slice(1)] ?? STEPS.welcome)();
+document.getElementById('side').innerHTML = step.side;
+const editor = document.getElementById('editor');
+if (step.toasts) editor.insertAdjacentHTML('beforeend', `<div class="toasts">${step.toasts.join('')}</div>`);
+if (step.overlay) document.querySelector('.win').insertAdjacentHTML('beforeend', step.overlay);
+if (step.hot) document.getElementById(step.hot).classList.add('hot');
+if (step.tip) document.getElementById('acts').insertAdjacentHTML('beforeend', `<span class="tooltip">${step.tip}</span>`);
+document.getElementById('sb-fleet').innerHTML = step.status ?? '';
+</script>
+</body>
+</html>

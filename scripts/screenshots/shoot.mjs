@@ -46,4 +46,11 @@ await shot('chat.html', 'chat-question', {
   },
 });
 
+// The setup guide (docs/SETUP.md), one window per step.
+for (const step of ['welcome', 'setup', 'invite', 'join', 'joined', 'ssh', 'sshdone']) {
+  // The welcome view is taller than the tree steps.
+  const height = step === 'welcome' || step === 'join' ? 450 : 400;
+  await shot('setup.html', `setup-${step}`, { width: 960, height, hash: `#${step}` });
+}
+
 await browser.close();
