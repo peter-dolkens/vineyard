@@ -7,6 +7,7 @@ import { marked } from 'marked';
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
 import { contextFor, contextGauge } from '../core/composer.ts';
+import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -802,7 +803,7 @@ function renderCards() {
   }
   const pending = agent.managed && !agent.managed.exited ? agent.managed.pending : undefined;
   if (pending) {
-    cardsEl.appendChild(pending.toolName === 'AskUserQuestion' ? questionCard(pending) : permissionCard(pending));
+    cardsEl.appendChild(pending.toolName === 'AskUserQuestion' ? questionCard(pending) : pending.toolName === 'ExitPlanMode' ? planCard(pending) : permissionCard(pending));
     return;
   }
   const q = agent.pendingTools.find((t) => t.name === 'AskUserQuestion');
@@ -916,6 +917,53 @@ function permissionCard(p: Pending): HTMLElement {
   const reason = el('input', 'deny-reason') as HTMLInputElement;
   reason.placeholder = 'Optional: tell Claude what to do instead';
   card.appendChild(reason);
+  function respond(response: unknown) {
+    card.classList.add('busy');
+    vscode.postMessage({ type: 'respond', requestId: p.requestId, response });
+  }
+  return card;
+}
+
+/**
+ * ExitPlanMode as the Claude Code pane shows it: the plan as Markdown and three choices. "Yes" approves
+ * and keeps the mode; "Yes, and don't ask again" approves and switches the session to acceptEdits so
+ * the edits run without prompts; "No, keep planning" denies with the feedback as the deny message.
+ */
+function planCard(p: Pending): HTMLElement {
+  const card = el('div', 'card plan');
+  const title = el('div', 'card-title');
+  title.appendChild(iconFor(p.toolName));
+  title.appendChild(el('span', undefined, ' Plan ready for review'));
+  card.appendChild(title);
+  const body = el('div', 'plan-body');
+  const text = planText(p.input);
+  body.appendChild(text ? md(text) : el('div', 'card-hint', 'Claude sent an empty plan.'));
+  card.appendChild(body);
+  const row = el('div', 'btn-row');
+  const yes = el('button', 'primary', 'Yes');
+  yes.title = 'Approve the plan and keep the current permission mode';
+  yes.onclick = () => respond({ behavior: 'allow', updatedInput: p.input ?? {} });
+  row.appendChild(yes);
+  const always = el('button', undefined, "Yes, and don't ask again");
+  always.title = 'Approve the plan and switch this session to accept edits, so the changes run without prompts';
+  always.onclick = () => {
+    const sugg = acceptEditsSuggestions(p.suggestions);
+    if (sugg) respond({ behavior: 'allow', updatedInput: p.input ?? {}, updatedPermissions: sugg });
+    else {
+      // Claude Code offered no mode switch to ride on: approve, then change the mode ourselves.
+      respond({ behavior: 'allow', updatedInput: p.input ?? {} });
+      configure({ permissionMode: 'acceptEdits' });
+    }
+  };
+  row.appendChild(always);
+  const no = el('button', 'danger', 'No, keep planning');
+  no.onclick = () => respond({ behavior: 'deny', message: feedback.value.trim() || PLAN_REJECTED });
+  row.appendChild(no);
+  card.appendChild(row);
+  const feedback = el('textarea', 'plan-feedback') as HTMLTextAreaElement;
+  feedback.placeholder = 'Tell Claude what to change';
+  feedback.rows = 2;
+  card.appendChild(feedback);
   function respond(response: unknown) {
     card.classList.add('busy');
     vscode.postMessage({ type: 'respond', requestId: p.requestId, response });

@@ -104,6 +104,11 @@ details.thinking .md { padding: 4px 12px 10px; opacity: 0.8; font-size: 12px; }
 .opt-desc { font-size: 11px; opacity: 0.75; }
 input.other, input.deny-reason { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; padding: 5px 8px; }
 input:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+/* plan review card: the plan as Markdown in a scroll box, feedback for "No, keep planning" below */
+.card.plan .plan-body { max-height: min(50vh, 420px); overflow: auto; padding: 8px 10px; background: var(--vscode-textCodeBlock-background); border-radius: 4px; }
+.card.plan .plan-body .md > :first-child { margin-top: 0; }
+.card.plan .plan-body .md > :last-child { margin-bottom: 0; }
+.card.plan textarea.plan-feedback { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; padding: 5px 8px; resize: vertical; min-height: 2.6em; max-height: 120px; }
 
 /* composer */
 .composer { padding: 8px 12px 12px; }
