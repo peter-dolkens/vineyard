@@ -548,6 +548,19 @@
           "default": "default",
           "description": "Pre-selected permission mode when starting a new agent from Vineyard."
         },
+        "vineyard.chat.openIn": {
+          "type": "string",
+          "enum": [
+            "activeGroup",
+            "beside"
+          ],
+          "enumDescriptions": [
+            "Open the chat as a new tab in the editor group that has focus.",
+            "Open the chat in a new editor group next to the one that has focus, splitting the pane."
+          ],
+          "default": "activeGroup",
+          "description": "Where agent and workload chats open."
+        },
         "vineyard.autoUpdateDaemons": {
           "type": "boolean",
           "default": true,
