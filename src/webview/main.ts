@@ -961,6 +961,10 @@ function planCard(p: Pending): HTMLElement {
   feedback.placeholder = 'Tell Claude what to change';
   feedback.rows = 2;
   card.appendChild(feedback);
+  function respond(response: unknown) {
+    card.classList.add('busy');
+    vscode.postMessage({ type: 'respond', requestId: p.requestId, response });
+  }
   return card;
 }
 
