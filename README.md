@@ -27,9 +27,11 @@ be added.
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear
   as cards in the chat and are answered there. They still write the normal registry and transcript.
-  New agents start with no questions asked (default model and effort, the configured permission
-  mode, no first prompt); the composer carries pickers for **model, reasoning effort and permission
-  mode** that change the running session in place, like the ones in the Claude Code pane.
+  New agents start with no questions asked (the model and effort last chosen in that workspace, or
+  Claude Code's defaults the first time; the configured permission mode; no first prompt); the
+  composer carries pickers for **model, reasoning effort and permission mode** that change the
+  running session in place, like the ones in the Claude Code pane, and are remembered per workspace
+  for the next new session there.
 * **Resume a past session** (*Resume a Past Session…*, the history button) from the transcripts on
   any machine, newest first with title, first/last prompt, model and branch, whether or not an agent
   is currently attached to it. **Stop / Terminate** ends any live session: managed ones cleanly over

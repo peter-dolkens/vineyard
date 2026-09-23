@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import type { Agent } from '../core/model.ts';
 import type { FleetService, MachineView } from './fleet.ts';
+import type { SessionPrefStore } from './sessionPrefs.ts';
 import { agentLabel, basename } from '../core/format.ts';
 
 interface TranscriptData {
@@ -55,6 +56,7 @@ class ChatPanel {
     private agent: Agent,
     private readonly extensionUri: vscode.Uri,
     private readonly log: vscode.OutputChannel,
+    private readonly prefs: SessionPrefStore,
     private readonly onDispose: () => void,
   ) {
     panel.webview.html = this.html();
@@ -191,6 +193,8 @@ class ChatPanel {
             await this.fleet.client.request('configure', this.machine.id, args, 30_000);
             const what = m.model !== undefined ? `Model set to ${m.model || 'the default'}` : m.effort !== undefined ? `Effort set to ${m.effort || 'the default'}` : `Permission mode set to ${m.permissionMode}`;
             this.post({ type: 'status', text: `${what}. Takes effect from the next request.`, kind: 'ok' });
+            // The next session in this workspace starts with the same choice.
+            if (m.model !== undefined || m.effort !== undefined) await this.prefs.remember(this.machine.id, this.agent.workspacePath, { model: m.model, effort: m.effort });
           } finally {
             // Whether it worked or not, re-send the agent so the controls show the daemon's truth.
             this.lastAgentJson = '';
@@ -255,6 +259,7 @@ export class ChatPanels implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly fleet: FleetService,
     private readonly log: vscode.OutputChannel,
+    private readonly prefs: SessionPrefStore,
   ) {}
 
   open(machine: MachineView, agent: Agent): void {
@@ -269,7 +274,7 @@ export class ChatPanels implements vscode.Disposable {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist'), vscode.Uri.joinPath(this.context.extensionUri, 'media')],
     });
     panel.iconPath = new vscode.ThemeIcon('hubot');
-    const chat = new ChatPanel(panel, this.fleet, machine, agent, this.context.extensionUri, this.log, () => this.panels.delete(agent.id));
+    const chat = new ChatPanel(panel, this.fleet, machine, agent, this.context.extensionUri, this.log, this.prefs, () => this.panels.delete(agent.id));
     this.panels.set(agent.id, chat);
     void basename; // (kept for symmetry with tree labels)
   }

@@ -8,6 +8,7 @@ import { Notifier } from './notify.ts';
 import { TRANSCRIPT_SCHEME, TranscriptProvider, transcriptUri } from './transcript.ts';
 import { Setup } from './setup.ts';
 import { ChatPanels } from './chatPanel.ts';
+import { SessionPrefStore } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 
@@ -21,7 +22,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const notifier = new Notifier(fleet);
   const transcripts = new TranscriptProvider(fleet);
   const setup = new Setup(context, client, fleet, log);
-  const chats = new ChatPanels(context, fleet, log);
+  const sessionPrefs = new SessionPrefStore(context.globalState);
+  const chats = new ChatPanels(context, fleet, log, sessionPrefs);
   const updater = new Updater(context, client, fleet, setup, log);
 
   context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
@@ -202,16 +204,18 @@ export function activate(context: vscode.ExtensionContext): void {
   // ---- managed sessions ---------------------------------------------------------------------
 
   /**
-   * Start (or resume) a managed session with no questions asked: default model and effort, the
-   * configured permission mode, no first prompt. Everything is adjustable afterwards from the chat.
+   * Start (or resume) a managed session with no questions asked: the model and effort last chosen in
+   * that workspace (Claude Code's defaults if none), the configured permission mode, no first prompt.
+   * Everything is adjustable afterwards from the chat. A resumed session keeps its own settings.
    */
   const spawnFlow = async (machine: MachineView, cwd: string, resume?: string) => {
     if (!machine.online) throw new Error(`${machine.name} is offline`);
     const cfg = vscode.workspace.getConfiguration('vineyard');
+    const remembered = resume ? {} : sessionPrefs.get(machine.id, cwd);
     const res = await fleet.client.request<{ sessionId: string }>(
       'spawn',
       machine.id,
-      { cwd, permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default'), resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
+      { cwd, ...remembered, permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default'), resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
       30_000,
     );
     // Wait briefly for the agent to appear in the fleet, then open its chat.
