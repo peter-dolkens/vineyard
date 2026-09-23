@@ -451,8 +451,45 @@ func (n *Node) hello(role string) protocol.Hello {
 	return protocol.Hello{
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
 		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: n.selfAddrs(),
-		Peers: n.knownPeers(), Uplinks: n.uplinks(),
+		Peers: n.knownPeers(), Uplinks: n.uplinks(), Removed: n.removals(), Added: n.cfg.Added,
 	}
+}
+
+func (n *Node) removals() []protocol.Removal {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone([]protocol.Removal(n.cfg.Removed))
+}
+
+// applyRemovalLocked takes a removal (ours or a peer's) and, if it stands, drops the machine: its
+// link, its peer state, and its entry in the view. Returns true if anything changed.
+func (n *Node) applyRemovalLocked(r protocol.Removal) bool {
+	if !n.cfg.ApplyRemoval(r) {
+		return false
+	}
+	if p := n.peers[r.MachineID]; p != nil {
+		if p.link != nil {
+			p.link.conn.Close()
+		}
+		delete(n.peers, r.MachineID)
+	}
+	delete(n.store, r.MachineID)
+	n.markCacheDirty()
+	return true
+}
+
+// refreshViewers sends every viewer a fresh fleet, for when a machine has gone from it.
+func (n *Node) refreshViewers() {
+	n.mu.Lock()
+	vs := make([]*link, 0, len(n.viewers))
+	for v := range n.viewers {
+		vs = append(vs, v)
+	}
+	n.mu.Unlock()
+	for _, v := range vs {
+		n.sendFleet(v)
+	}
+	n.broadcastPeerStatus()
 }
 
 func (n *Node) uplinks() []string {
@@ -470,7 +507,7 @@ func (n *Node) knownPeers() []protocol.PeerAddr {
 	out := make([]protocol.PeerAddr, 0, len(n.peers))
 	for _, p := range n.peers {
 		if len(p.addrs) > 0 {
-			out = append(out, protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: append([]string(nil), p.addrs...)})
+			out = append(out, protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: append([]string(nil), p.addrs...), Added: n.cfg.PeerAdded(p.id)})
 		}
 	}
 	return out
@@ -483,7 +520,7 @@ func (n *Node) knownPeers() []protocol.PeerAddr {
 // worth a direct probe.
 func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) (changed bool, probe []*peerState) {
 	for _, pa := range peers {
-		if pa.MachineID == "" || pa.MachineID == n.cfg.MachineID || n.cfg.IsRemoved(pa.MachineID) {
+		if pa.MachineID == "" || pa.MachineID == n.cfg.MachineID || n.cfg.RemovalBeats(pa.MachineID, pa.Added) {
 			continue
 		}
 		p := n.peers[pa.MachineID]
@@ -503,7 +540,7 @@ func (n *Node) learnPeersLocked(peers []protocol.PeerAddr) (changed bool, probe 
 		if p.addr == "" {
 			p.addr = p.addrs[0]
 		}
-		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: p.addrs}) {
+		if n.cfg.AddPeer(protocol.PeerAddr{MachineID: p.id, Addr: p.addr, Addrs: p.addrs, Added: pa.Added}) {
 			changed = true
 		}
 	}
@@ -607,6 +644,12 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	}
 
 	// Peer.
+	if n.cfg.RemovalBeats(l.peerID, h.Added) {
+		n.mu.Unlock()
+		n.logf("refused %s: removed from the fleet", l.peerID)
+		l.conn.Close()
+		return
+	}
 	if h.Uplink {
 		l.uplink = true
 	}
@@ -638,10 +681,17 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	if l.via != "" && gained(before, p.addrs) {
 		probe = append(probe, p)
 	}
-	persist := p.addr != "" && n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr, Addrs: p.addrs})
+	persist := p.addr != "" && n.cfg.AddPeer(protocol.PeerAddr{MachineID: l.peerID, Addr: p.addr, Addrs: p.addrs, Added: h.Added})
 	learnedCfg, learnedProbe := n.learnPeersLocked(h.Peers)
 	if learnedCfg {
 		persist = true
+	}
+	removedAny := false
+	for _, r := range h.Removed {
+		if r.MachineID != l.peerID && n.applyRemovalLocked(r) {
+			n.logf("%s removed from the fleet (heard from %s)", r.MachineID, l.peerID)
+			removedAny, persist = true, true
+		}
 	}
 	probe = append(probe, learnedProbe...)
 	if persist {
@@ -687,6 +737,9 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	n.considerPeer(l.peerID, h.Version, "", "")
 	if l.onRegister != nil {
 		l.onRegister()
+	}
+	if removedAny {
+		n.refreshViewers()
 	}
 	for _, q := range probe {
 		go n.probeDirect(q)
@@ -1145,6 +1198,26 @@ func (n *Node) dispatch(l *link, b []byte) {
 		return
 	}
 	switch env.T {
+	case "removed":
+		var m protocol.Removed
+		if json.Unmarshal(b, &m) != nil || l.role != "peer" {
+			return
+		}
+		n.mu.Lock()
+		changed := false
+		for _, r := range m.Removals {
+			if r.MachineID != l.peerID && n.applyRemovalLocked(r) {
+				n.logf("%s removed from the fleet (heard from %s)", r.MachineID, l.peerID)
+				changed = true
+			}
+		}
+		n.mu.Unlock()
+		if changed {
+			if err := n.cfg.Save(); err != nil {
+				n.logf("save config: %v", err)
+			}
+			n.refreshViewers()
+		}
 	case "uplink":
 		n.mu.Lock()
 		l.uplink = true
@@ -1295,7 +1368,11 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		}
 		n.mu.Lock()
 		var changed bool
+		var removal protocol.Removal
 		if r.Op == "addpeer" {
+			if a.Added == 0 {
+				a.Added = time.Now().UnixMilli() // a deliberate add beats any earlier removal
+			}
 			changed = n.cfg.AddPeer(a)
 			if p := n.peers[a.MachineID]; p != nil {
 				p.addr = a.Addr
@@ -1306,17 +1383,22 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 				n.peers[a.MachineID] = &peerState{id: a.MachineID, addr: a.Addr, addrs: []string{a.Addr}}
 			}
 		} else {
-			changed = n.cfg.RemovePeer(a.MachineID)
-			if p := n.peers[a.MachineID]; p != nil {
-				if p.link != nil {
-					p.link.conn.Close()
+			removal = protocol.Removal{MachineID: a.MachineID, At: time.Now().UnixMilli()}
+			changed = n.applyRemovalLocked(removal)
+		}
+		var peerLinks []*link
+		if r.Op == "removepeer" && changed {
+			for l := range n.links {
+				if l.role == "peer" {
+					peerLinks = append(peerLinks, l)
 				}
-				delete(n.peers, a.MachineID)
 			}
-			delete(n.store, a.MachineID)
-			n.markCacheDirty()
 		}
 		n.mu.Unlock()
+		// Tell whoever is connected now; everyone else hears it in hellos.
+		for _, l := range peerLinks {
+			_ = l.conn.Send(protocol.Removed{T: "removed", Removals: []protocol.Removal{removal}})
+		}
 		if changed {
 			if err := n.cfg.Save(); err != nil {
 				return nil, err
@@ -1325,16 +1407,7 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.reconcileSubscriptions()
 		n.broadcastPeerStatus()
 		if r.Op == "removepeer" {
-			// Viewers need to drop the machine; send a fresh fleet to each.
-			n.mu.Lock()
-			vs := make([]*link, 0, len(n.viewers))
-			for v := range n.viewers {
-				vs = append(vs, v)
-			}
-			n.mu.Unlock()
-			for _, v := range vs {
-				n.sendFleet(v)
-			}
+			n.refreshViewers() // viewers need to drop the machine
 		}
 		return json.RawMessage(`{"ok":true}`), nil
 	case "send":
@@ -1835,7 +1908,7 @@ func (n *Node) loadCache() {
 	}
 	for _, e := range entries {
 		id := e.Snapshot.MachineID
-		if id == "" || id == n.cfg.MachineID {
+		if id == "" || id == n.cfg.MachineID || n.cfg.IsRemoved(id) {
 			continue
 		}
 		e.Online = false

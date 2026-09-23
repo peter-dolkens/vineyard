@@ -35,8 +35,13 @@ use it.
   most recently used first (a successful dial or the machine reporting or presenting an address counts
   as use; addresses heard second-hand queue behind, so they are evicted first). The receiver adds machines it has never heard of, and dials them while watched. Sent once per
   connection, never forwarded, so a machine added over SSH or joined from the CLI reaches every view
-  without ever being watched itself. *Remove Machine* records the id in `removed` so other members'
-  hellos do not bring it back; adding it again or a direct connection from it clears that. Candidates
+  without ever being watched itself.
+* **Removal is fleet-wide.** *Remove Machine* records `{machineId, at}` in `removed`, sends a
+  `removed` message to every connected peer, and every hello carries the whole record, so it reaches
+  all members. Members drop the machine and refuse its hellos. Deliberate adds (the `addpeer` op
+  behind *Add Machine*, an invite, `peer add`, `init --peer`) stamp `added`; the later of a removal
+  and an add wins everywhere. A joiner learns its own `added` from the invite and states it in its
+  hello, so members still holding an older removal let it back in. Candidates
   are dialed happy-eyeballs style, 250 ms apart, first fleet-authenticated connection wins.
 * **One-hop relay.** When no candidate answers, the watcher asks each member it holds a direct link to
   (the last relay that worked first) to splice it through: a fresh connection whose first line is
@@ -216,6 +221,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `sync {entries}` | accepting peer→dialer | once per connection: last-known state of other machines |
+| `removed {removals}` | peer→peer | a machine was just removed from the fleet |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
 | `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |

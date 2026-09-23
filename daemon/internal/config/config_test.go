@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -57,7 +58,33 @@ func TestRemovedPeerIsRecordedUntilAddedAgain(t *testing.T) {
 	if !c.RemovePeer("orchard") || len(c.Peers) != 0 || !c.IsRemoved("orchard") {
 		t.Fatalf("remove: peers %v removed %v", c.Peers, c.Removed)
 	}
-	if !c.AddPeer(protocol.PeerAddr{MachineID: "orchard", Addr: "orchard.local:7734"}) || c.IsRemoved("orchard") {
-		t.Fatalf("re-adding should un-remove: removed %v", c.Removed)
+	at, _ := c.RemovedAt("orchard")
+	// Second-hand news (no deliberate add, or one older than the removal) does not bring it back.
+	if c.AddPeer(protocol.PeerAddr{MachineID: "orchard", Addr: "orchard.local:7734"}) ||
+		c.AddPeer(protocol.PeerAddr{MachineID: "orchard", Addr: "orchard.local:7734", Added: at - 1}) {
+		t.Fatal("a removed machine came back without a later deliberate add")
+	}
+	if !c.AddPeer(protocol.PeerAddr{MachineID: "orchard", Addr: "orchard.local:7734", Added: at + 1}) || c.IsRemoved("orchard") {
+		t.Fatalf("a later deliberate add should un-remove: removed %v", c.Removed)
+	}
+	// A removal older than that add loses; a newer one wins.
+	if c.ApplyRemoval(protocol.Removal{MachineID: "orchard", At: at}) {
+		t.Fatal("an older removal beat a later add")
+	}
+	if !c.ApplyRemoval(protocol.Removal{MachineID: "orchard", At: at + 2}) || len(c.Peers) != 0 {
+		t.Fatal("a newer removal should win")
+	}
+	if c.ApplyRemoval(protocol.Removal{MachineID: "atelier", At: at + 3}) {
+		t.Fatal("removed ourselves")
+	}
+}
+
+func TestRemovalsReadTheOldIDList(t *testing.T) {
+	var c Config
+	if err := json.Unmarshal([]byte(`{"machineId":"atelier","removed":["orchard"]}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if !c.IsRemoved("orchard") {
+		t.Fatalf("legacy removal lost: %+v", c.Removed)
 	}
 }

@@ -17,6 +17,22 @@ type PeerAddr struct {
 	MachineID string   `json:"machineId"`
 	Addr      string   `json:"addr"` // host:port
 	Addrs     []string `json:"addrs,omitempty"`
+	// Added is when someone last deliberately added this machine (Add Machine, an invite, peer add),
+	// Unix ms. It beats any removal recorded before it; see Removal.
+	Added int64 `json:"added,omitempty"`
+}
+
+// Removal records that a machine was removed from the fleet, and when (Unix ms). Removals travel in
+// hellos and `removed` messages; the later of a removal and a deliberate add wins everywhere.
+type Removal struct {
+	MachineID string `json:"machineId"`
+	At        int64  `json:"at"`
+}
+
+// Removed tells connected peers about removals as they happen.
+type Removed struct {
+	T        string    `json:"t"` // "removed"
+	Removals []Removal `json:"removals"`
 }
 
 // Envelope is decoded first to learn the message type.
@@ -44,6 +60,11 @@ type Hello struct {
 	// Uplinks lists machines holding an uplink to the sender, so a watcher asks the sender first when
 	// it needs a relay to one of them.
 	Uplinks []string `json:"uplinks,omitempty"`
+	// Removed is every removal the sender knows of, so removals reach the whole fleet.
+	Removed []Removal `json:"removed,omitempty"`
+	// Added is when the sender itself was last deliberately added (joined with an invite), so a
+	// member still holding an older removal of it lets it back in.
+	Added int64 `json:"added,omitempty"`
 }
 
 // DialbackArgs asks a member to try connecting to the sender at these addresses (op "dialback").
@@ -186,6 +207,8 @@ type Joined struct {
 	Cert  string     `json:"cert,omitempty"` // PEM
 	Key   string     `json:"key,omitempty"`  // PEM
 	Peers []PeerAddr `json:"peers,omitempty"`
+	// Added is when the inviter admitted the joiner (Unix ms); the joiner puts it in its hellos.
+	Added int64 `json:"added,omitempty"`
 }
 
 // Invite is what gets encoded into the shareable code.

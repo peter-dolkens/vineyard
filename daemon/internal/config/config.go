@@ -36,9 +36,11 @@ type Config struct {
 	Listen    string              `json:"listen"`              // e.g. ":7734"
 	Advertise string              `json:"advertise,omitempty"` // host:port peers should dial
 	Peers     []protocol.PeerAddr `json:"peers"`
-	// Removed lists machines removed from this machine's view. Other members still mention them in
-	// their hellos; this stops them being learned back. Adding one again takes it off the list.
-	Removed []string `json:"removed,omitempty"`
+	// Removed records machines removed from the fleet and when. Removals spread to every member; a
+	// machine is let back in only by a deliberate add (PeerAddr.Added) later than its removal.
+	Removed Removals `json:"removed,omitempty"`
+	// Added is when this machine was last deliberately admitted (the inviter's clock, from an invite).
+	Added int64 `json:"added,omitempty"`
 	// Uplink: "auto" (default) holds one idle link to a member when no member can connect to this
 	// machine, so it stays reachable through that member while unwatched; "off" never does; any
 	// other value is the machine id to prefer for it.
@@ -139,13 +141,41 @@ func MergeAddrs(primary string, fresh, old []string) []string {
 	return out
 }
 
+// Removals is the removal record. It also reads the plain id list written by 0.3.21.
+type Removals []protocol.Removal
+
+func (r *Removals) UnmarshalJSON(b []byte) error {
+	var recs []protocol.Removal
+	if err := json.Unmarshal(b, &recs); err == nil {
+		*r = recs
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal(b, &ids); err != nil {
+		return err
+	}
+	*r = nil
+	for _, id := range ids {
+		*r = append(*r, protocol.Removal{MachineID: id})
+	}
+	return nil
+}
+
 // AddPeer merges what we know about a peer and returns true if anything changed. p.Addr, when set,
-// becomes the primary; p.Addrs are added as candidates. Adding a removed machine un-removes it.
+// becomes the primary; p.Addrs are added as candidates. A removed machine comes back only when
+// p.Added (a deliberate add) is later than its removal.
 func (c *Config) AddPeer(p protocol.PeerAddr) bool {
 	if p.MachineID == "" || (p.Addr == "" && len(p.Addrs) == 0) || p.MachineID == c.MachineID {
 		return false
 	}
-	changed := c.unremove(p.MachineID)
+	changed := false
+	if at, ok := c.RemovedAt(p.MachineID); ok {
+		if p.Added <= at {
+			return false
+		}
+		c.unremove(p.MachineID)
+		changed = true
+	}
 	for i, e := range c.Peers {
 		if e.MachineID != p.MachineID {
 			continue
@@ -158,44 +188,81 @@ func (c *Config) AddPeer(p protocol.PeerAddr) bool {
 		if primary == "" {
 			primary = addrs[0]
 		}
-		if primary == e.Addr && slices.Equal(addrs, e.Addrs) {
+		added := max(e.Added, p.Added)
+		if primary == e.Addr && slices.Equal(addrs, e.Addrs) && added == e.Added {
 			return changed
 		}
 		c.Peers[i].Addr = primary
 		c.Peers[i].Addrs = addrs
+		c.Peers[i].Added = added
 		return true
 	}
 	addrs := MergeAddrs(p.Addr, p.Addrs, nil)
-	c.Peers = append(c.Peers, protocol.PeerAddr{MachineID: p.MachineID, Addr: addrs[0], Addrs: addrs})
+	c.Peers = append(c.Peers, protocol.PeerAddr{MachineID: p.MachineID, Addr: addrs[0], Addrs: addrs, Added: p.Added})
 	return true
 }
 
-// RemovePeer forgets a machine and records it as removed, so it is not learned back from other
-// members' hellos.
+// PeerAdded is when a peer was last deliberately added, or 0.
+func (c *Config) PeerAdded(machineID string) int64 {
+	for _, e := range c.Peers {
+		if e.MachineID == machineID {
+			return e.Added
+		}
+	}
+	return 0
+}
+
+// RemovePeer removes a machine from the fleet now: forgets it and records the removal, which then
+// spreads to the other members.
 func (c *Config) RemovePeer(machineID string) bool {
+	return c.ApplyRemoval(protocol.Removal{MachineID: machineID, At: time.Now().UnixMilli()})
+}
+
+// ApplyRemoval takes a removal (ours or a peer's) unless a later deliberate add, or a record of the
+// same removal at least as new, already beats it. Returns true if anything changed.
+func (c *Config) ApplyRemoval(r protocol.Removal) bool {
+	if r.MachineID == "" || r.MachineID == c.MachineID {
+		return false
+	}
+	if c.PeerAdded(r.MachineID) > r.At {
+		return false // added back after this removal
+	}
 	changed := false
-	if machineID != "" && !c.IsRemoved(machineID) {
-		c.Removed = append(c.Removed, machineID)
+	if at, ok := c.RemovedAt(r.MachineID); !ok || at < r.At {
+		c.unremove(r.MachineID)
+		c.Removed = append(c.Removed, r)
 		changed = true
 	}
-	for i, e := range c.Peers {
-		if e.MachineID == machineID {
-			c.Peers = append(c.Peers[:i], c.Peers[i+1:]...)
-			return true
-		}
+	if i := slices.IndexFunc(c.Peers, func(p protocol.PeerAddr) bool { return p.MachineID == r.MachineID }); i >= 0 {
+		c.Peers = slices.Delete(c.Peers, i, i+1)
+		changed = true
 	}
 	return changed
 }
 
-func (c *Config) IsRemoved(machineID string) bool { return slices.Contains(c.Removed, machineID) }
-
-func (c *Config) unremove(machineID string) bool {
-	i := slices.Index(c.Removed, machineID)
-	if i < 0 {
-		return false
+// RemovedAt reports whether a machine is removed, and when.
+func (c *Config) RemovedAt(machineID string) (int64, bool) {
+	for _, r := range c.Removed {
+		if r.MachineID == machineID {
+			return r.At, true
+		}
 	}
-	c.Removed = slices.Delete(c.Removed, i, i+1)
-	return true
+	return 0, false
+}
+
+func (c *Config) IsRemoved(machineID string) bool {
+	_, ok := c.RemovedAt(machineID)
+	return ok
+}
+
+// RemovalBeats reports whether a machine last admitted at added is still removed.
+func (c *Config) RemovalBeats(machineID string, added int64) bool {
+	at, ok := c.RemovedAt(machineID)
+	return ok && added <= at
+}
+
+func (c *Config) unremove(machineID string) {
+	c.Removed = slices.DeleteFunc(c.Removed, func(r protocol.Removal) bool { return r.MachineID == machineID })
 }
 
 func ShortName(host string) string {

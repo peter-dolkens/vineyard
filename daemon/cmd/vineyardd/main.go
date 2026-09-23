@@ -123,7 +123,7 @@ func cmdInit(args []string) error {
 		if !ok {
 			return fmt.Errorf("bad --peer %q, want ID=HOST:PORT", p)
 		}
-		c.AddPeer(protocol.PeerAddr{MachineID: id, Addr: addr})
+		c.AddPeer(protocol.PeerAddr{MachineID: id, Addr: addr, Added: time.Now().UnixMilli()})
 	}
 	if err := c.Save(); err != nil {
 		return err
@@ -239,7 +239,7 @@ func cmdPeer(args []string) error {
 		if len(args) != 3 {
 			return fmt.Errorf("usage: peer add ID HOST:PORT")
 		}
-		cfg.AddPeer(protocol.PeerAddr{MachineID: args[1], Addr: args[2]})
+		cfg.AddPeer(protocol.PeerAddr{MachineID: args[1], Addr: args[2], Added: time.Now().UnixMilli()})
 		return cfg.Save()
 	case "remove":
 		if len(args) != 2 {
@@ -476,6 +476,7 @@ func cmdJoin(args []string) error {
 	if err := os.WriteFile(config.Path(config.KeyFile), []byte(joined.Key), 0o600); err != nil {
 		return err
 	}
+	c.Added = joined.Added
 	for _, p := range joined.Peers {
 		c.AddPeer(p)
 	}

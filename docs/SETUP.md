@@ -227,10 +227,12 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
 
 ## Removing, leaving and rejoining
 
-* **Remove a machine:** right-click it in the tree, then *Remove Machine*. *Remove* forgets it on
-  this machine and stops this machine learning it back from the others, who still list it until you
-  remove it there too. *Remove and uninstall daemon* also runs `vineyardd uninstall` on it over SSH.
-  Adding it again, or the machine itself connecting, puts it back.
+* **Remove a machine:** right-click it in the tree, then *Remove Machine*. The removal reaches every
+  member: those connected at the time hear at once, the rest the next time they connect to anyone
+  who knows. From then on members refuse its connections, even though it still holds the fleet key
+  (to lock it out for good, rotate the key as well). *Remove and uninstall daemon* also runs
+  `vineyardd uninstall` on it over SSH. To bring it back, add it again deliberately: *Add Machine*,
+  a new invite code, or `vineyardd peer add`. A later add beats an earlier removal everywhere.
 * **Uninstall on a machine itself:** `~/.vineyard/bin/vineyardd uninstall` stops and removes the
   service. Delete `~/.vineyard` as well to remove its config and its copy of the fleet key.
 * **Rejoin or move to another fleet:** *Join Fleet with Invite Code* with a code from that fleet. You

@@ -179,8 +179,9 @@ func (n *Node) handleJoin(l *link) {
 		}
 	}
 	changed := false
+	added := time.Now().UnixMilli() // admitting the joiner beats any earlier removal of it
 	if j.MachineID != "" && j.Listen != "" && j.MachineID != n.cfg.MachineID {
-		changed = n.cfg.AddPeer(protocol.PeerAddr{MachineID: j.MachineID, Addr: j.Listen})
+		changed = n.cfg.AddPeer(protocol.PeerAddr{MachineID: j.MachineID, Addr: j.Listen, Added: added})
 		if p := n.peers[j.MachineID]; p != nil {
 			addCandidates(p, j.Listen)
 		} else {
@@ -198,7 +199,7 @@ func (n *Node) handleJoin(l *link) {
 			n.logf("save config: %v", err)
 		}
 	}
-	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: string(certPEM), Key: string(keyPEM), Peers: peers})
+	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: string(certPEM), Key: string(keyPEM), Peers: peers, Added: added})
 	n.logf("machine %s (%s) joined via invite from %s", j.MachineID, j.Name, l.conn.RemoteAddr())
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()
