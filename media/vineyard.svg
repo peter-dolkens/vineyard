@@ -1,15 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <!-- trellis post -->
-  <path d="M12 21V9"/>
-  <!-- vine -->
-  <path d="M12 9c-1.5-2-4-2-5 0 1 2 3.5 2 5 0z"/>
-  <path d="M12 9c1.5-2 4-2 5 0-1 2-3.5 2-5 0z"/>
-  <path d="M12 13c-1.5-2-4-2-5 0 1 2 3.5 2 5 0z"/>
-  <path d="M12 13c1.5-2 4-2 5 0-1 2-3.5 2-5 0z"/>
-  <!-- grapes -->
-  <circle cx="12" cy="4.5" r="1.6"/>
-  <circle cx="10.2" cy="7" r="1.2"/>
-  <circle cx="13.8" cy="7" r="1.2"/>
-  <!-- ground -->
-  <path d="M5 21h14"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-label="Vineyard">
+  <!-- Transparent monochrome Activity Bar icon, currentColor follows VS Code themes. -->
+  <!-- Curl remains identifiable at 24 px; simplified nodes are larger for 16 px. -->
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="1.7" d="M7.2 9.2 C5.4 11.6 2.4 10.5 2.8 7.5 C3.1 4.6 5.9 3.1 8.2 4.0 C10.7 5.0 11.0 7.7 11.0 10.1 V14.1"/>
+    <path stroke-width="1.5" d="M11 9.2 L17.6 13.4 M11 11.8 L6.7 16.4 M13.8 11.1 V15.7 L17.1 19 M11 14 V19.8"/>
+  </g>
+  <path d="M12.8 9.7 C12.7 6.7 14.4 5.3 18.0 4.7 C19.4 4.5 20.2 3.7 21.0 3.0 C21.3 7.8 18.5 10.2 15.4 10.6 C14.4 10.7 13.5 10.3 12.8 9.7 Z" fill="currentColor"/>
+  <g fill="currentColor">
+    <circle cx="6.7" cy="16.4" r="1.95"/>
+    <circle cx="17.6" cy="13.4" r="1.95"/>
+    <circle cx="17.1" cy="19" r="1.95"/>
+    <circle cx="11" cy="20" r="1.95"/>
+  </g>
 </svg>

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Vineyard — Circuit Vine</title>
+  <desc id="desc">A curling ivory grapevine branching into four purple agent nodes with a green leaf, on a deep-green rounded-square background.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#144935"/>
+      <stop offset="1" stop-color="#0C3528"/>
+    </linearGradient>
+  </defs>
+  <!-- Marketplace tile: matches the original concept's palette and rounded shape. -->
+  <rect x="1" y="1" width="254" height="254" rx="53" fill="url(#background)" stroke="#276047" stroke-width="2"/>
+
+  <!-- The vine is itself the topology: tendril, trunk, branching connectors. -->
+  <g fill="none" stroke="#FFF8EA" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="13.5" d="M76 103 C62 120 35 110 37 83 C39 55 65 36 91 42 C115 48 125 65 126 87 C127 104 126 117 126 151"/>
+    <path stroke-width="13.5" d="M126 87 C145 98 162 110 183 126"/>
+    <path stroke-width="10.5" d="M126 121 L87 165"/>
+    <path stroke-width="10.5" d="M126 151 V202"/>
+    <path stroke-width="10.5" d="M155 106 V160 L184 198"/>
+    <path stroke-width="11" d="M155 106 L183 126"/>
+  </g>
+  <!-- A single substantial leaf (legible at 32 px), with a cut-style tapered base. -->
+  <path d="M147 94 C147 70 158 54 187 48 C202 45 209 40 216 34 C219 66 210 87 189 100 C172 108 157 106 147 94 Z" fill="#8DCA9A"/>
+  <path d="M148 97 C165 98 182 85 194 64 C181 88 168 103 151 106 Z" fill="#14543C"/>
+  <!-- Each grape is one agent in the fleet. One green junction references the vine. -->
+  <circle cx="126" cy="169" r="14" fill="#1B5C40"/>
+  <g fill="#B580EF">
+    <circle cx="76" cy="172" r="22"/>
+    <circle cx="192" cy="133" r="21"/>
+    <circle cx="182" cy="200" r="21"/>
+    <circle cx="126" cy="219" r="22"/>
+  </g>
+</svg>
