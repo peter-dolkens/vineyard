@@ -6,7 +6,7 @@
 import { marked } from 'marked';
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
-import { contextFor, contextGauge } from '../core/composer.ts';
+import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/composer.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -108,6 +108,13 @@ const stats = {
   toolCalls: 0,
   turns: 0,
   subagents: new Map<string, { name: string; desc: string; done: boolean; error: boolean; at: string }>(),
+  // Prompt-cache clock (core/composer.ts cacheClock): the last main-thread call's usage, when its
+  // request went out and its response landed, the lifetime it bought, and any compaction since.
+  cacheUsage: undefined as CacheUsage | undefined,
+  cacheRequestAt: undefined as number | undefined,
+  cacheRespondedAt: undefined as number | undefined,
+  cacheTtlMs: undefined as number | undefined,
+  compactedAt: undefined as number | undefined,
 };
 
 // ---- skeleton -------------------------------------------------------------------------------------
@@ -155,7 +162,7 @@ const btnSend = document.getElementById('btnSend') as HTMLButtonElement;
 const jump = document.getElementById('jump') as HTMLButtonElement;
 const banner = document.getElementById('banner')!;
 // Toolbar under the message box, like the Claude Code pane: attach, "/" actions, context ring, cache
-// dot, subagent count, model + effort, permission mode. composer.ts draws it; this file acts on it.
+// clock, subagent count, model + effort, permission mode. composer.ts draws it; this file acts on it.
 const barDeps: BarDeps = {
   configure,
   run: runAction,
@@ -169,7 +176,14 @@ const barDeps: BarDeps = {
 const bar = createComposerBar(document.querySelector<HTMLElement>('.composer-actions')!, document.querySelector<HTMLElement>('.composer')!, barDeps);
 let attachmentCount = 0;
 function barStats(): BarStats {
-  return { lastCacheRead: stats.lastCacheRead, lastCacheCreate: stats.lastCacheCreate, lastInput: stats.lastInput, calls: stats.calls, transcriptAgents: [...stats.subagents.values()] };
+  return {
+    lastCacheRead: stats.lastCacheRead,
+    lastCacheCreate: stats.lastCacheCreate,
+    lastInput: stats.lastInput,
+    calls: stats.calls,
+    cache: { usage: stats.cacheUsage, requestAt: stats.cacheRequestAt, respondedAt: stats.cacheRespondedAt, compactedAt: stats.compactedAt, ttlMs: stats.cacheTtlMs },
+    transcriptAgents: [...stats.subagents.values()],
+  };
 }
 function configure(change: { model?: string; effort?: string; permissionMode?: string }) {
   bar.setBusy(true);
@@ -333,7 +347,7 @@ function resetLog() {
   toolNames.clear();
   turnsEl.innerHTML = '';
   currentTurn = undefined;
-  Object.assign(stats, { input: 0, cacheRead: 0, cacheCreate: 0, output: 0, lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, toolCalls: 0, turns: 0 });
+  Object.assign(stats, { input: 0, cacheRead: 0, cacheCreate: 0, output: 0, lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, toolCalls: 0, turns: 0, cacheUsage: undefined, cacheRequestAt: undefined, cacheRespondedAt: undefined, cacheTtlMs: undefined, compactedAt: undefined });
   stats.subagents.clear();
 }
 
@@ -384,6 +398,13 @@ function fmtTime(ts: unknown): string {
   if (typeof ts !== 'string') return '';
   const d = new Date(ts);
   return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** A transcript timestamp as epoch ms, or nothing when it is missing or unreadable. */
+function epoch(ts: unknown): number | undefined {
+  if (typeof ts !== 'string') return undefined;
+  const t = Date.parse(ts);
+  return isNaN(t) ? undefined : t;
 }
 
 function fmtTokens(n: number): string {
@@ -539,6 +560,7 @@ function renderEntry(e: Entry) {
     const sub = e.subtype ?? 'system';
     if (sub === 'compact_boundary') {
       turnFor().appendChild(rail('system', el('div', 'divider', `Conversation compacted · ${time}`), time));
+      if (!side) stats.compactedAt = epoch(e.timestamp) ?? Date.now(); // the cache no longer covers the conversation
     } else if (sub === 'api_error' || e.level === 'error') {
       const msg = typeof e.content === 'string' ? e.content : e.error?.formatted ?? e.error?.message ?? 'error';
       turnFor().appendChild(rail('error', el('div', 'sys error', msg), time));
@@ -558,6 +580,17 @@ function renderEntry(e: Entry) {
     stats.cacheRead += stats.lastCacheRead;
     stats.cacheCreate += stats.lastCacheCreate;
     stats.output += u.output_tokens ?? 0;
+    if (!side && msg.model !== '<synthetic>') {
+      // Main-thread calls restart the cache clock; a subagent's calls cache its own prefix, and a
+      // synthetic line (an error stand-in with zero usage) was never a call.
+      stats.cacheUsage = u;
+      stats.cacheRespondedAt = epoch(e.timestamp);
+      stats.cacheTtlMs = cacheTtlMs(u) ?? stats.cacheTtlMs;
+    }
+  } else if (type === 'user' && !side) {
+    // The request behind the next response: the pane anchors the countdown at this moment.
+    stats.cacheRequestAt = epoch(e.timestamp);
+    if (e.isCompactSummary === true) stats.compactedAt = epoch(e.timestamp) ?? Date.now();
   }
   const blocks: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
 

@@ -1,7 +1,7 @@
 /**
  * The composer's toolbar, modelled on the Claude Code pane: attach (+), the "/" actions menu, a
  * context-window donut (exact figure in its tooltip; spins while Claude Code compacts), a prompt-cache
- * dot, the subagent count, and the model and permission-mode pills whose popovers carry the effort
+ * clock counting down to expiry, the subagent count, and the model and permission-mode pills whose popovers carry the effort
  * slider. main.ts owns the textarea and the transport; this module
  * owns everything under it and asks main.ts to act through BarDeps.
  */
@@ -9,9 +9,9 @@
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { resetsIn, usageRows, usageWarning, usageWarningKey } from '../core/usage.ts';
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
-import { shortModel, tokens as fmtTokens } from '../core/format.ts';
+import { duration, shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
-import { GROUP, MODES, buildActions, cacheState, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action } from '../core/composer.ts';
+import { GROUP, MODES, buildActions, cacheClock, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action, type CacheClockInput } from '../core/composer.ts';
 
 export interface BarAgent {
   sessionId: string;
@@ -47,6 +47,8 @@ export interface BarStats {
   lastCacheCreate: number;
   lastInput: number;
   calls: number;
+  /** What the prompt-cache clock counts from (core/composer.ts cacheClock). */
+  cache: CacheClockInput;
   transcriptAgents: { name: string; desc: string; done: boolean; error: boolean }[];
 }
 export interface AttachmentChip {
@@ -174,7 +176,9 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
 
   let agent: BarAgent | undefined;
   let machine: BarMachine | undefined;
-  let stats: BarStats = { lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, transcriptAgents: [] };
+  let stats: BarStats = { lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, cache: {}, transcriptAgents: [] };
+  /** Repaints the cache clock each second while it counts down, so the minutes tick and expiry shows itself. */
+  let cacheTimer: number | undefined;
 
   const managedLive = () => !!agent?.managed && !agent.managed.exited && !!machine?.online && agent.alive;
   const canSend = () => !!machine?.online && !!agent?.alive && agent.kind !== 'subagent';
@@ -604,6 +608,41 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   agentsPill.onclick = () => (open === 'agents' ? close() : openAgents());
 
   // ---- render --------------------------------------------------------------------------------------
+  /**
+   * The prompt-cache clock: a clock with the minutes left while the cache is warm ("12m"), a bare
+   * clock in the error colour once it expired or right after a compaction. Hidden until a call has
+   * touched the cache. Ticks once a second while warm so the minutes count down and expiry shows.
+   */
+  function paintCache() {
+    const cc = cacheClock(stats.cache);
+    cachePill.hidden = cc.state === 'unknown';
+    if (cc.state === 'warm') {
+      if (!cacheTimer) cacheTimer = window.setInterval(paintCache, 1000);
+    } else if (cacheTimer) {
+      clearInterval(cacheTimer);
+      cacheTimer = undefined;
+    }
+    if (cachePill.hidden) return;
+    cachePill.innerHTML = '';
+    cachePill.append(icon('clock'));
+    if (cc.label) cachePill.append(el('span', 'cache-left', cc.label));
+    cachePill.className = `pill cache cache-${cc.state}`;
+    const lifetime = cc.ttlMs >= 60 * 60_000 ? '1 hour' : `${Math.round(cc.ttlMs / 60_000)} minutes`;
+    const at = (t: number | undefined) => (t === undefined ? '' : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    const lines: string[] = [];
+    if (cc.state === 'warm') lines.push(`Prompt cache warm, about ${Math.ceil(cc.remainingMs / 60_000)} min left.`, `Lifetime ${lifetime}; the countdown restarted at ${at(cc.anchorAt)} with the last response.`);
+    else if (cc.state === 'expired') lines.push(`Prompt cache likely expired (idle ${duration(Date.now() - (cc.anchorAt ?? Date.now()))}).`, `Lifetime ${lifetime}; the next response re-caches the conversation.`);
+    else lines.push('Prompt cache does not cover the compacted conversation yet.', 'The next response re-caches it.');
+    const u = stats.cache.usage;
+    if (cc.hitRate !== undefined && u) {
+      const read = u.cache_read_input_tokens ?? 0;
+      const total = read + (u.cache_creation_input_tokens ?? 0) + (u.input_tokens ?? 0);
+      lines.push(`Last call: ${cc.hitRate}% of its input read from cache (${fmtTokens(read) || '0'} of ${fmtTokens(total)} tokens).`);
+    }
+    cachePill.title = lines.join('\n');
+    cachePill.setAttribute('aria-label', lines[0]!);
+  }
+
   function render(a: BarAgent | undefined, m: BarMachine | undefined, s: BarStats) {
     agent = a;
     machine = m;
@@ -658,15 +697,9 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       ctxPill.setAttribute('aria-label', ctxPill.title.split('\n')[0]!);
     }
 
-    // Prompt cache: hit rate of the last call, and whether the prefix is likely still cached.
-    const cs = cacheState({ cacheRead: stats.lastCacheRead, cacheCreate: stats.lastCacheCreate, input: stats.lastInput, calls: stats.calls }, agent?.lastActivityAt);
-    cachePill.hidden = cs.state === 'none';
-    if (cs.state !== 'none') {
-      cachePill.innerHTML = '';
-      cachePill.append(el('span', `dot cache-${cs.state}`), el('span', undefined, `${cs.hitPercent}%`));
-      cachePill.className = 'pill cache';
-      cachePill.title = `Prompt cache ${cs.state}: ${cs.hitPercent}% of the last call's input was read from cache (${fmtTokens(stats.lastCacheRead)} of ${fmtTokens(stats.lastCacheRead + stats.lastCacheCreate + stats.lastInput)})` + (cs.state === 'cold' ? '\nMore than 5 minutes since the last call, so the cached prefix has likely expired' : '');
-    }
+    // Prompt-cache clock, like the Claude Code pane's: minutes until the cache expires while it is
+    // warm, a bare red clock once it has expired or right after a compaction, until the next response.
+    paintCache();
 
     // Subagents and background tasks: the daemon's lists when it sends them, else what the loaded
     // transcript shows for agents (tasks come only from the daemon).

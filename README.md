@@ -32,12 +32,13 @@ be added.
   the turn is still running. Under the message box sits the same toolbar as the Claude Code pane:
   attach (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window donut
   (the exact figure in its tooltip; click it to `/compact`; it spins while Claude Code compacts), a
-  prompt-cache dot with the last call's hit rate, an **agent map** (the subagent tree with state,
-  running time and tokens, each opening its own transcript, then the shell commands the session left
-  running in the background), and the **model** and **permission-mode** pills whose popovers carry
-  the effort slider (a filled track up to the current level, named at its end). For a managed session
-  the menu also lists every slash command its Claude Code offers, ready to run, and shows the account
-  it is signed in as.
+  prompt-cache clock counting down the minutes until the cache expires (red once it has, or right
+  after a compaction, until the next response; the hover has the lifetime and hit rate), an **agent
+  map** (the subagent tree with state, running time and tokens, each opening its own transcript, then
+  the shell commands the session left running in the background), and the **model** and
+  **permission-mode** pills whose popovers carry the effort slider (a filled track up to the current
+  level, named at its end). For a managed session the menu also lists every slash command its Claude
+  Code offers, ready to run, and shows the account it is signed in as.
 * **The context donut costs nothing extra.** The transcript already carries the tokens each API call
   saw, the same figure Claude Code's own `/context` uses, so the donut follows it for free. The
   daemon asks a managed session's Claude Code (`get_context_usage`, a local computation in the child,
