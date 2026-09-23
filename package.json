@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "license": "MIT",
