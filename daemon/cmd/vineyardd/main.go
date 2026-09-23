@@ -357,6 +357,21 @@ func cmdStatus(args []string) error {
 		}
 	}
 	w.Flush()
+	for _, id := range ids {
+		if up := entries[id].Snapshot.Uplink; up != "" {
+			if names[up] != "" {
+				up = names[up]
+			}
+			fmt.Printf("%s: nobody can connect to it; keeps an uplink to %s\n", entries[id].Snapshot.Name, up)
+		}
+	}
+	if cfg.KeyAt > 0 {
+		fmt.Printf("fleet key rotated %s", time.UnixMilli(cfg.KeyAt).Format(time.DateTime))
+		if cfg.PrevUntil > time.Now().UnixMilli() {
+			fmt.Printf("; the previous key is accepted until %s", time.UnixMilli(cfg.PrevUntil).Format(time.DateTime))
+		}
+		fmt.Println()
+	}
 	if len(peers) > 0 {
 		fmt.Println()
 		sort.Slice(peers, func(i, j int) bool { return peers[i].MachineID < peers[j].MachineID })

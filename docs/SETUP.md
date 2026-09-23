@@ -248,6 +248,8 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
   After the grace period the old key stops working, and a machine that missed it has to join again
   with an invite code. Until then, someone holding the old key could still pretend to be one of the
   machines that has not switched yet, so keep the grace period as short as your fleet allows.
+  Rotate once every machine's Vineyard extension is up to date: an extension from 0.3.21 or earlier
+  cannot open its own machine's view during the grace period, until it updates.
 
 ## Troubleshooting
 
