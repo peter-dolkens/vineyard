@@ -137,6 +137,27 @@ export interface PendingRequest {
   suggestions?: unknown[];
   description?: string;
   at: number;
+  /** What is asked: a can_use_tool permission prompt (missing or 'permission') or an MCP server's elicitation. */
+  kind?: 'permission' | 'elicitation';
+  elicitation?: ElicitationRequest;
+}
+
+/**
+ * An MCP server's question to the user, relayed by Claude Code as an elicitation control request.
+ * `mode` is 'form' (answer the fields `requestedSchema` describes: a JSON Schema object with
+ * `properties` and `required`) or 'url' (open `url`, then confirm). The answer posted back is
+ * `{action:'accept', content:{…}}`, `{action:'decline'}` or `{action:'cancel'}`.
+ */
+export interface ElicitationRequest {
+  serverName: string;
+  displayName?: string;
+  message?: string;
+  mode?: 'form' | 'url';
+  url?: string;
+  elicitationId?: string;
+  requestedSchema?: Record<string, unknown>;
+  title?: string;
+  description?: string;
 }
 
 /**

@@ -472,26 +472,96 @@ func (m *Manager) Stop(sid string) error {
 	return nil
 }
 
+// controlRequest is the request body of a control_request Claude Code sends us: a can_use_tool
+// permission prompt (tool_* fields), an MCP server's elicitation (mcp_server_name, message, mode,
+// url, elicitation_id, requested_schema) or a hook callback / mcp message we only acknowledge.
+type controlRequest struct {
+	Subtype                 string          `json:"subtype"`
+	ToolName                string          `json:"tool_name"`
+	DisplayName             string          `json:"display_name"`
+	Input                   json.RawMessage `json:"input"`
+	ToolUseID               string          `json:"tool_use_id"`
+	RequiresUserInteraction bool            `json:"requires_user_interaction"`
+	PermissionSuggestions   json.RawMessage `json:"permission_suggestions"`
+	Description             string          `json:"description"`
+	McpServerName           string          `json:"mcp_server_name"`
+	Message                 string          `json:"message"`
+	Mode                    string          `json:"mode"`
+	URL                     string          `json:"url"`
+	ElicitationID           string          `json:"elicitation_id"`
+	RequestedSchema         json.RawMessage `json:"requested_schema"`
+	Title                   string          `json:"title"`
+}
+
+// parseControlRequest turns a control_request the user must answer into the PendingRequest the UI
+// shows; nil for subtypes we acknowledge ourselves. Both a permission prompt and an elicitation keep
+// RequestID, so Respond forwards the webview's answer as the control_response either way.
+func parseControlRequest(requestID string, req controlRequest, now int64) *model.PendingRequest {
+	switch req.Subtype {
+	case "can_use_tool":
+		return &model.PendingRequest{
+			RequestID: requestID, ToolName: req.ToolName, DisplayName: req.DisplayName,
+			Input: req.Input, ToolUseID: req.ToolUseID, RequiresUserInteraction: req.RequiresUserInteraction,
+			Suggestions: req.PermissionSuggestions, Description: req.Description, At: now,
+		}
+	case "elicitation":
+		mode := req.Mode
+		if mode == "" {
+			if req.URL != "" {
+				mode = "url"
+			} else {
+				mode = "form"
+			}
+		}
+		return &model.PendingRequest{
+			RequestID: requestID, ToolName: "elicitation", DisplayName: req.DisplayName, Description: req.Description, At: now,
+			Kind: model.PendingElicitation,
+			Elicitation: &model.ElicitationRequest{
+				ServerName: req.McpServerName, DisplayName: req.DisplayName, Message: req.Message, Mode: mode, URL: req.URL,
+				ElicitationID: req.ElicitationID, RequestedSchema: req.RequestedSchema, Title: req.Title, Description: req.Description,
+			},
+		}
+	}
+	return nil
+}
+
+// elicitationSummary is the state detail for an agent blocked on an MCP server's question.
+func elicitationSummary(e *model.ElicitationRequest) string {
+	if e == nil {
+		return "Waiting for your answer"
+	}
+	who := e.DisplayName
+	if who == "" {
+		who = e.ServerName
+	}
+	if who == "" {
+		who = "An MCP server"
+	}
+	what := e.Title
+	if what == "" {
+		what = e.Message
+	}
+	what = strings.Join(strings.Fields(what), " ")
+	if r := []rune(what); len(r) > 80 {
+		what = string(r[:79]) + "…"
+	}
+	if what == "" {
+		return who + " asks a question"
+	}
+	return who + " asks: " + what
+}
+
 func (m *Manager) readStdout(p *proc, r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
 		line := sc.Bytes()
 		var env struct {
-			Type      string `json:"type"`
-			Subtype   string `json:"subtype"`
-			RequestID string `json:"request_id"`
-			Request   struct {
-				Subtype                 string          `json:"subtype"`
-				ToolName                string          `json:"tool_name"`
-				DisplayName             string          `json:"display_name"`
-				Input                   json.RawMessage `json:"input"`
-				ToolUseID               string          `json:"tool_use_id"`
-				RequiresUserInteraction bool            `json:"requires_user_interaction"`
-				PermissionSuggestions   json.RawMessage `json:"permission_suggestions"`
-				Description             string          `json:"description"`
-			} `json:"request"`
-			Response struct {
+			Type      string         `json:"type"`
+			Subtype   string         `json:"subtype"`
+			RequestID string         `json:"request_id"`
+			Request   controlRequest `json:"request"`
+			Response  struct {
 				Subtype   string          `json:"subtype"`
 				RequestID string          `json:"request_id"`
 				Error     string          `json:"error"`
@@ -502,6 +572,8 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 			Status          *string         `json:"status"`
 			CompactMetadata json.RawMessage `json:"compact_metadata"`
 			SessionID       string          `json:"session_id"`
+			McpServerName   string          `json:"mcp_server_name"` // with ElicitationID: which question a
+			ElicitationID   string          `json:"elicitation_id"`  // system/elicitation_complete closes
 			Model           string          `json:"model"`
 			PermissionMode  string          `json:"permissionMode"`
 			TotalCostUSD    float64         `json:"total_cost_usd"`
@@ -529,17 +601,14 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				}
 			}
 		case "control_request":
-			if env.Request.Subtype == "can_use_tool" {
+			if pr := parseControlRequest(env.RequestID, env.Request, time.Now().UnixMilli()); pr != nil {
 				m.mu.Lock()
-				p.info.Pending = &model.PendingRequest{
-					RequestID: env.RequestID, ToolName: env.Request.ToolName, DisplayName: env.Request.DisplayName,
-					Input: env.Request.Input, ToolUseID: env.Request.ToolUseID, RequiresUserInteraction: env.Request.RequiresUserInteraction,
-					Suggestions: env.Request.PermissionSuggestions, Description: env.Request.Description, At: time.Now().UnixMilli(),
-				}
+				p.info.Pending = pr
 				m.mu.Unlock()
 				m.changed()
 			} else {
 				// Anything else (hook callbacks, mcp messages) we acknowledge so the session never hangs.
+				m.log.Printf("managed: %s acknowledged control_request %q with an empty response", p.info.SessionID, env.Request.Subtype)
 				_ = m.write(p, map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": env.RequestID, "response": map[string]any{}}})
 			}
 		case "system":
@@ -581,6 +650,20 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				m.mu.Unlock()
 				m.changed()
 				go m.refreshContext(p)
+			case "elicitation_complete":
+				// The MCP server's question was answered or withdrawn. Respond already clears Pending
+				// on our own answer; this covers a server that gives up first.
+				m.mu.Lock()
+				cleared := false
+				if e := p.info.Pending; e != nil && e.Kind == model.PendingElicitation && e.Elicitation != nil &&
+					(e.Elicitation.ElicitationID == env.ElicitationID || (env.ElicitationID == "" && e.Elicitation.ServerName == env.McpServerName)) {
+					p.info.Pending = nil
+					cleared = true
+				}
+				m.mu.Unlock()
+				if cleared {
+					m.changed()
+				}
 			}
 		case "rate_limit_event":
 			// The account's limit picture changed (read from the API's rate-limit headers).
@@ -703,7 +786,10 @@ func (m *Manager) Merge(machineID string, agents []model.Agent) []model.Agent {
 			}
 		}
 		if info.Pending != nil {
-			if info.Pending.ToolName == "AskUserQuestion" {
+			if info.Pending.Kind == model.PendingElicitation {
+				a.State = model.StateQuestion
+				a.StateDetail = elicitationSummary(info.Pending.Elicitation)
+			} else if info.Pending.ToolName == "AskUserQuestion" {
 				a.State = model.StateQuestion
 				a.StateDetail = questionSummary(info.Pending.Input)
 			} else {
