@@ -5,14 +5,17 @@
  * owns everything under it and asks main.ts to act through BarDeps.
  */
 
-import type { CommandInfo, ModelInfo } from '../core/model.ts';
+import type { BackgroundTask, CommandInfo, ModelInfo, Subagent } from '../core/model.ts';
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { shortModel, tokens as fmtTokens } from '../core/format.ts';
+import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { GROUP, MODES, buildActions, cacheState, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type Action } from '../core/composer.ts';
 
 export interface BarAgent {
   sessionId: string;
   alive: boolean;
+  name?: string;
+  title?: string;
   kind?: string;
   state: string;
   model?: string;
@@ -21,7 +24,8 @@ export interface BarAgent {
   contextTokens?: number;
   lastActivityAt?: number;
   version?: string;
-  subagents?: { state: string }[];
+  subagents?: Subagent[];
+  tasks?: BackgroundTask[];
   managed?: { exited: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string };
 }
 export interface BarMachine {
@@ -29,14 +33,16 @@ export interface BarMachine {
   name: string;
   online: boolean;
 }
-/** Token counters from the loaded transcript window (main.ts's stats) plus its subagent tally. */
+/**
+ * Token counters from the loaded transcript window (main.ts's stats) plus the Agent-tool calls it
+ * saw, used for the map when the daemon sends no subagent tree (older daemon, or a subagent's view).
+ */
 export interface BarStats {
   lastCacheRead: number;
   lastCacheCreate: number;
   lastInput: number;
   calls: number;
-  subagentsSpawned: number;
-  subagentsRunning: number;
+  transcriptAgents: { name: string; desc: string; done: boolean; error: boolean }[];
 }
 export interface AttachmentChip {
   id: string;
@@ -130,7 +136,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   const pop = el('div', 'pop');
   pop.hidden = true;
   popHost.appendChild(pop);
-  let open: 'actions' | 'typed' | 'model' | 'mode' | undefined;
+  let open: 'actions' | 'typed' | 'model' | 'mode' | 'agents' | undefined;
   let rows: HTMLElement[] = [];
   let hi = -1;
   let filterBox: HTMLInputElement | undefined;
@@ -139,7 +145,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
 
   let agent: BarAgent | undefined;
   let machine: BarMachine | undefined;
-  let stats: BarStats = { lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, subagentsSpawned: 0, subagentsRunning: 0 };
+  let stats: BarStats = { lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, transcriptAgents: [] };
 
   const managedLive = () => !!agent?.managed && !agent.managed.exited && !!machine?.online && agent.alive;
   const canSend = () => !!machine?.online && !!agent?.alive && agent.kind !== 'subagent';
@@ -161,7 +167,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     rows = [];
     hi = -1;
     filterBox = undefined;
-    for (const b of [btnActions, modelPill, modePill]) b.classList.remove('open');
+    for (const b of [btnActions, modelPill, modePill, agentsPill]) b.classList.remove('open');
   }
   function show(kind: typeof open, anchor: HTMLElement) {
     close();
@@ -325,6 +331,84 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     highlight(Math.max(0, MODES.findIndex((m) => m.value === cur)));
   }
 
+  // ---- agent map ---------------------------------------------------------------------------------
+  const dotClass = (state: string) => (ACTIVE.has(state) ? 'live' : state === 'done' || state === 'idle' ? 'ok' : 'off');
+  function subagentRow(sub: Subagent, now: number): HTMLElement {
+    const row = el('div', 'amap-row' + (agent?.kind === 'subagent' ? '' : ' clickable'));
+    row.append(el('span', `amap-dot ${dotClass(sub.state)}`));
+    const text = el('div', 'amap-text');
+    text.append(el('div', 'amap-name', sub.description || sub.type || sub.agentId.slice(0, 8)));
+    const elapsed = sub.startedAt ? Math.max(0, (ACTIVE.has(sub.state) ? now : sub.lastActivityAt || now) - sub.startedAt) : 0;
+    const meta = [elapsed ? clock(elapsed) : '', sub.contextTokens ? `${fmtTokens(sub.contextTokens)} tokens` : '', sub.type && sub.description ? sub.type : '', sub.background ? 'background' : ''].filter(Boolean);
+    text.append(el('div', 'amap-meta', meta.join(' · ')));
+    row.append(text);
+    row.title = `${sub.state}${sub.stateDetail ? ` — ${sub.stateDetail}` : ''}${sub.model ? `\n${shortModel(sub.model)}` : ''}\nClick to open its transcript`;
+    row.onclick = () => {
+      close();
+      deps.run('openSubagent', sub.agentId);
+    };
+    return row;
+  }
+  function subagentTree(host: HTMLElement, subs: Subagent[], parentId: string | undefined, now: number) {
+    const kids = subs.filter((s) => (s.parentAgentId || undefined) === parentId);
+    if (!kids.length) return;
+    const box = el('div', 'amap-children');
+    for (const k of kids) {
+      box.append(subagentRow(k, now));
+      subagentTree(box, subs, k.agentId, now);
+    }
+    host.append(box);
+  }
+  function openAgents() {
+    show('agents', agentsPill);
+    const now = Date.now();
+    const subs = agent?.subagents;
+    const tasks = agent?.tasks ?? [];
+    const total = subs ? subs.length : stats.transcriptAgents.length;
+    pop.append(el('div', 'pop-title', 'Agent map'));
+    pop.append(el('div', 'pop-hint', `${total} agent${total === 1 ? '' : 's'}${subs?.length ? ' · click an agent for its transcript' : ''}`));
+    const map = el('div', 'amap');
+    const root = el('div', 'amap-row root');
+    root.append(el('span', `amap-dot ${dotClass(agent?.alive ? agent.state : 'exited')}`));
+    const rootText = el('div', 'amap-text');
+    rootText.append(el('div', 'amap-name', agent?.title || agent?.name || agent?.sessionId.slice(0, 8) || 'session'));
+    rootText.append(el('div', 'amap-meta', [modelLabel(), agent?.contextTokens ? `${fmtTokens(agent.contextTokens)} tokens in context` : ''].filter(Boolean).join(' · ')));
+    root.append(rootText);
+    map.append(root);
+    if (subs) subagentTree(map, subs, undefined, now);
+    else if (stats.transcriptAgents.length) {
+      const box = el('div', 'amap-children');
+      for (const s of stats.transcriptAgents.slice(-20)) {
+        const row = el('div', 'amap-row');
+        row.append(el('span', `amap-dot ${s.done ? (s.error ? 'err' : 'ok') : 'live'}`));
+        const text = el('div', 'amap-text');
+        text.append(el('div', 'amap-name', s.desc || s.name), el('div', 'amap-meta', [s.name, s.done ? (s.error ? 'failed' : 'done') : 'running'].join(' · ')));
+        row.append(text);
+        box.append(row);
+      }
+      map.append(box);
+    }
+    pop.append(map);
+    if (tasks.length) {
+      const running = tasks.filter(taskActive).length;
+      pop.append(el('div', 'pop-sep'));
+      pop.append(el('div', 'pop-hint', `${running || tasks.length} background task${(running || tasks.length) === 1 ? '' : 's'}${running ? '' : ' finished'}`));
+      const list = el('div', 'amap tasks');
+      for (const t of tasks) {
+        const row = el('div', 'amap-row');
+        row.append(el('span', `amap-dot ${taskActive(t) ? 'live' : t.state === 'completed' ? 'ok' : 'err'}`));
+        const text = el('div', 'amap-text');
+        text.append(el('div', 'amap-name', taskLabel(t)));
+        const elapsed = taskElapsed(t, now);
+        text.append(el('div', 'amap-meta', [t.kind || 'shell', taskActive(t) ? '' : taskStateLabel(t).toLowerCase(), elapsed ? clock(elapsed) : ''].filter(Boolean).join(' · ')));
+        row.append(text);
+        if (t.taskId) row.title = `Task ${t.taskId}`;
+        list.append(row);
+      }
+      pop.append(list);
+    }
+  }
+
   // ---- actions menu ------------------------------------------------------------------------------
   function actions(): Action[] {
     return buildActions({
@@ -417,7 +501,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
   ctxPill.onclick = () => {
     if (managedLive()) deps.run('compact');
   };
-  agentsPill.onclick = () => deps.run('info');
+  agentsPill.onclick = () => (open === 'agents' ? close() : openAgents());
 
   // ---- render --------------------------------------------------------------------------------------
   function render(a: BarAgent | undefined, m: BarMachine | undefined, s: BarStats) {
@@ -452,15 +536,22 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       cachePill.title = `Prompt cache ${cs.state}: ${cs.hitPercent}% of the last call's input was read from cache (${fmtTokens(stats.lastCacheRead)} of ${fmtTokens(stats.lastCacheRead + stats.lastCacheCreate + stats.lastInput)})` + (cs.state === 'cold' ? '\nMore than 5 minutes since the last call, so the cached prefix has likely expired' : '');
     }
 
-    // Subagents: the daemon's tree when it has one, else what the loaded transcript shows.
+    // Subagents and background tasks: the daemon's lists when it sends them, else what the loaded
+    // transcript shows for agents (tasks come only from the daemon).
     const subs = agent?.subagents;
-    const total = subs ? subs.length : stats.subagentsSpawned;
-    const running = subs ? subs.filter((x) => ACTIVE.has(x.state)).length : stats.subagentsRunning;
-    agentsPill.hidden = !total;
-    if (total) {
+    const total = subs ? subs.length : stats.transcriptAgents.length;
+    const running = subs ? subs.filter((x) => ACTIVE.has(x.state)).length : stats.transcriptAgents.filter((x) => !x.done).length;
+    const tasks = agent?.tasks ?? [];
+    const runningTasks = tasks.filter(taskActive).length;
+    agentsPill.hidden = !total && !tasks.length;
+    if (total || tasks.length) {
+      const words: string[] = [];
+      if (total) words.push(`${total} agent${total === 1 ? '' : 's'}`);
+      if (runningTasks) words.push(`${runningTasks} task${runningTasks === 1 ? '' : 's'}`);
+      else if (!total) words.push(`${tasks.length} task${tasks.length === 1 ? '' : 's'} finished`);
       agentsPill.innerHTML = '';
-      agentsPill.append(el('span', 'dot' + (running ? ' live' : '')), el('span', undefined, `${total} agent${total === 1 ? '' : 's'}`));
-      agentsPill.title = `${total} subagent${total === 1 ? '' : 's'} spawned${running ? `, ${running} running` : ''}\nClick for session info`;
+      agentsPill.append(el('span', 'dot' + (running || runningTasks ? ' live' : '')), el('span', undefined, words.join(' · ')));
+      agentsPill.title = `${total} subagent${total === 1 ? '' : 's'} spawned${running ? `, ${running} running` : ''}${tasks.length ? `\n${tasks.length} background task${tasks.length === 1 ? '' : 's'}${runningTasks ? `, ${runningTasks} running` : ''}` : ''}\nClick for the agent map`;
     }
 
     // Model + effort, and mode.
@@ -477,6 +568,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     // A popover showing stale values is worse than none.
     if (open === 'model') openModel();
     else if (open === 'mode') openMode();
+    else if (open === 'agents') openAgents();
   }
 
   function setAttachments(items: AttachmentChip[]) {

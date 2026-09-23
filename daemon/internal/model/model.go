@@ -67,6 +67,21 @@ type Agent struct {
 	Managed *ManagedInfo `json:"managed,omitempty"`
 	// Subagents are the Agent-tool invocations under this session, every depth, in spawn order.
 	Subagents []Subagent `json:"subagents,omitempty"`
+	// Tasks are the shell commands the session left running in the background, plus ones that
+	// finished in the last half hour, in start order.
+	Tasks []BackgroundTask `json:"tasks,omitempty"`
+}
+
+// BackgroundTask is a Bash call made with run_in_background, or a foreground one that outlived its
+// timeout and was moved to the background, tracked until its <task-notification> arrives.
+type BackgroundTask struct {
+	ToolUseID   string `json:"toolUseId"`
+	TaskID      string `json:"taskId,omitempty"`
+	Description string `json:"description,omitempty"`
+	Kind        string `json:"kind,omitempty"` // "shell"
+	State       string `json:"state"`          // running | completed | failed | …
+	StartedAt   int64  `json:"startedAt,omitempty"`
+	EndedAt     int64  `json:"endedAt,omitempty"`
 }
 
 // Subagent is one Agent-tool invocation: its own transcript beside the session's, with a state

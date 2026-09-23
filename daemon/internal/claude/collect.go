@@ -40,6 +40,7 @@ type RawTranscript struct {
 	Path      string
 	Entries   []map[string]any
 	Subagents []RawSubagent // transcripts under <sid>/subagents/, unordered
+	Tasks     []model.BackgroundTask
 }
 
 type RawProject struct {
@@ -93,6 +94,9 @@ type Collector struct {
 	tailCache map[string]tailEntry
 	// subCache does the same for subagent transcripts, keyed by path.
 	subCache map[string]subEntry
+	// taskCache remembers each live session's background tasks between polls, so one whose start
+	// has scrolled out of the tail is still listed while it runs (see tasks.go).
+	taskCache map[string][]model.BackgroundTask
 }
 
 type tailEntry struct {
@@ -113,7 +117,7 @@ func NewCollector(claudeDir string, tailLines int) *Collector {
 	if tailLines <= 0 {
 		tailLines = 80
 	}
-	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}, subCache: map[string]subEntry{}}
+	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}, subCache: map[string]subEntry{}, taskCache: map[string][]model.BackgroundTask{}}
 }
 
 func (c *Collector) Collect() *Report {
@@ -182,6 +186,11 @@ func (c *Collector) collectSessions(r *Report) {
 		}
 		c.mu.Unlock()
 		c.pruneSubCache()
+		live := make(map[string]bool, len(r.Transcripts))
+		for sid := range r.Transcripts {
+			live[sid] = true
+		}
+		c.pruneTaskCache(live)
 	}()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -242,6 +251,7 @@ func (c *Collector) collectSessions(r *Report) {
 			c.mu.Unlock()
 		}
 		c.collectSubagents(&t)
+		t.Tasks = c.mergeTasks(sid, BuildTasks(t.Entries), time.Now().UnixMilli())
 		r.Transcripts[sid] = t
 	}
 }

@@ -4,7 +4,7 @@
  */
 
 import { marked } from 'marked';
-import type { CommandInfo, ModelInfo } from '../core/model.ts';
+import type { BackgroundTask, CommandInfo, ModelInfo, Subagent } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
@@ -40,7 +40,8 @@ interface Agent {
   gitBranch?: string;
   version?: string;
   pendingTools: { id: string; name: string; summary?: string }[];
-  subagents?: { state: string }[];
+  subagents?: Subagent[];
+  tasks?: BackgroundTask[];
   managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string };
 }
 interface MachineInfo {
@@ -167,8 +168,7 @@ const barDeps: BarDeps = {
 const bar = createComposerBar(document.querySelector<HTMLElement>('.composer-actions')!, document.querySelector<HTMLElement>('.composer')!, barDeps);
 let attachmentCount = 0;
 function barStats(): BarStats {
-  const subs = [...stats.subagents.values()];
-  return { lastCacheRead: stats.lastCacheRead, lastCacheCreate: stats.lastCacheCreate, lastInput: stats.lastInput, calls: stats.calls, subagentsSpawned: subs.length, subagentsRunning: subs.filter((s) => !s.done).length };
+  return { lastCacheRead: stats.lastCacheRead, lastCacheCreate: stats.lastCacheCreate, lastInput: stats.lastInput, calls: stats.calls, transcriptAgents: [...stats.subagents.values()] };
 }
 function configure(change: { model?: string; effort?: string; permissionMode?: string }) {
   bar.setBusy(true);
@@ -182,6 +182,9 @@ function runAction(id: string, arg?: string) {
       break;
     case 'removeAttachment':
       vscode.postMessage({ type: 'removeAttachment', id: arg });
+      break;
+    case 'openSubagent':
+      vscode.postMessage({ type: 'openSubagent', agentId: arg });
       break;
     case 'compact':
       vscode.postMessage({ type: 'slash', text: '/compact' });

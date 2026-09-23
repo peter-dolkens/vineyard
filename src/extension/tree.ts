@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
-import type { Agent, AgentState, Subagent, Workspace } from '../core/model.ts';
+import type { Agent, AgentState, BackgroundTask, Subagent, Workspace } from '../core/model.ts';
 import { STATE_PRIORITY, isBusy, needsAttention } from '../core/model.ts';
 import { subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
+import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import type { FleetService, MachineView } from './fleet.ts';
 import { STATE_LABEL, agentLabel, basename, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
 
-export type Node = MachineNode | WorkspaceNode | AgentNode | SubagentNode;
+export type Node = MachineNode | WorkspaceNode | AgentNode | SubagentNode | TaskNode;
 
 export interface MachineNode {
   kind: 'machine';
@@ -29,6 +30,14 @@ export interface SubagentNode {
   workspace: Workspace;
   agent: Agent;
   sub: Subagent;
+}
+/** A shell command `agent` (the session) left running in the background. */
+export interface TaskNode {
+  kind: 'task';
+  machine: MachineView;
+  workspace: Workspace;
+  agent: Agent;
+  task: BackgroundTask;
 }
 
 function color(id: string): vscode.ThemeColor {
@@ -128,6 +137,16 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     return this.visibleSubagents(agent, parentAgentId).map((sub) => ({ kind: 'subagent', machine, workspace, agent, sub }));
   }
 
+  /** Background tasks under a session; finished ones follow the same toggle as finished subagents. */
+  private visibleTasks(agent: Agent): BackgroundTask[] {
+    const tasks = agent.tasks ?? [];
+    return this.showFinishedSubagents ? tasks : tasks.filter(taskActive);
+  }
+
+  private taskNodes(machine: MachineView, workspace: Workspace, agent: Agent): TaskNode[] {
+    return this.visibleTasks(agent).map((task) => ({ kind: 'task', machine, workspace, agent, task }));
+  }
+
   private sortMode(tier: 'machines' | 'workspaces' | 'agents', def: string): string {
     return vscode.workspace.getConfiguration('vineyard').get<string>(`sort.${tier}`, def);
   }
@@ -188,7 +207,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
         .map((agent) => ({ kind: 'agent', machine, workspace, agent }));
     }
     if (element.kind === 'agent') {
-      return this.subagentNodes(element.machine, element.workspace, element.agent);
+      return [...this.subagentNodes(element.machine, element.workspace, element.agent), ...this.taskNodes(element.machine, element.workspace, element.agent)];
     }
     if (element.kind === 'subagent') {
       return this.subagentNodes(element.machine, element.workspace, element.agent, element.sub.agentId);
@@ -202,6 +221,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
       const parent = sub.parentAgentId ? agent.subagents?.find((s) => s.agentId === sub.parentAgentId) : undefined;
       return parent ? { kind: 'subagent', machine, workspace, agent, sub: parent } : { kind: 'agent', machine, workspace, agent };
     }
+    if (element.kind === 'task') return { kind: 'agent', machine: element.machine, workspace: element.workspace, agent: element.agent };
     if (element.kind === 'agent') return { kind: 'workspace', machine: element.machine, workspace: element.workspace };
     if (element.kind === 'workspace') return { kind: 'machine', machine: element.machine };
     return undefined;
@@ -217,6 +237,8 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
         return this.agentItem(node);
       case 'subagent':
         return this.subagentItem(node);
+      case 'task':
+        return this.taskItem(node);
     }
   }
 
@@ -275,7 +297,10 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const subs = this.visibleSubagents(agent);
     const allSubs = agent.subagents ?? [];
     const activeSubs = allSubs.filter(subagentActive).length;
-    const item = new vscode.TreeItem(agentLabel(agent), !subs.length ? vscode.TreeItemCollapsibleState.None : activeSubs ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    const tasks = this.visibleTasks(agent);
+    const activeTasks = (agent.tasks ?? []).filter(taskActive).length;
+    const children = subs.length + tasks.length;
+    const item = new vscode.TreeItem(agentLabel(agent), !children ? vscode.TreeItemCollapsibleState.None : activeSubs || activeTasks ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `agent:${agent.id}`;
     const managedLive = !!agent.managed && !agent.managed.exited;
     item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '');
@@ -286,6 +311,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
     if (activeSubs) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
+    if (activeTasks) bits.push(`${activeTasks} background task${activeTasks === 1 ? '' : 's'}`);
     if (agent.lastActivityAt) bits.push(relativeTime(agent.lastActivityAt));
     item.description = bits.join(' · ');
     item.command = { command: 'vineyard.showTranscript', title: 'Show Transcript', arguments: [node] };
@@ -308,6 +334,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
       ['Last activity', agent.lastActivityAt ? relativeTime(agent.lastActivityAt) : undefined],
       ['Registry', agent.registryStatus],
       ['Subagents', allSubs.length ? `${activeSubs} running · ${allSubs.length} total` : undefined],
+      ['Background tasks', agent.tasks?.length ? `${activeTasks} running · ${agent.tasks.length} total` : undefined],
     ];
     for (const [k, v] of rows) if (v) md.appendMarkdown(`${k}: ${escapeMd(v)}  \n`);
     if (agent.lastPrompt) md.appendMarkdown(`\n> ${escapeMd(agent.lastPrompt.slice(0, 300))}${agent.lastPrompt.length > 300 ? '…' : ''}\n`);
@@ -357,6 +384,35 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
       md.appendMarkdown('\nPending tools:  \n');
       for (const t of sub.pendingTools) md.appendMarkdown(`- \`${t.name}\`${t.summary ? ` ${escapeMd(t.summary)}` : ''}  \n`);
     }
+    item.tooltip = md;
+    return item;
+  }
+
+  private taskItem(node: TaskNode): vscode.TreeItem {
+    const { agent, task } = node;
+    const running = taskActive(task);
+    const item = new vscode.TreeItem(taskLabel(task), vscode.TreeItemCollapsibleState.None);
+    item.id = `task:${agent.id}/${task.toolUseId}`;
+    item.contextValue = `task-${task.state}`;
+    item.iconPath = running ? new vscode.ThemeIcon('terminal', color('charts.blue')) : task.state === 'completed' ? new vscode.ThemeIcon('pass', color('charts.green')) : new vscode.ThemeIcon('error', color('errorForeground'));
+    const bits = [task.kind || 'shell', taskStateLabel(task).toLowerCase()];
+    const elapsed = taskElapsed(task);
+    if (elapsed) bits.push(clock(elapsed));
+    item.description = bits.join(' · ');
+    // A task has no transcript of its own; open the session it belongs to.
+    item.command = { command: 'vineyard.showTranscript', title: 'Show Transcript', arguments: [node] };
+
+    const md = new vscode.MarkdownString('', true);
+    md.appendMarkdown(`**${escapeMd(taskLabel(task))}**  \nBackground ${escapeMd(task.kind || 'shell')} command of ${escapeMd(agentLabel(agent))}  \n`);
+    md.appendMarkdown(`$(${running ? 'terminal' : task.state === 'completed' ? 'pass' : 'error'}) **${taskStateLabel(task)}**\n\n`);
+    const rows: [string, string | undefined][] = [
+      ['Started', task.startedAt ? relativeTime(task.startedAt) : undefined],
+      [running ? 'Running for' : 'Ran for', elapsed ? clock(elapsed) : undefined],
+      ['Ended', task.endedAt ? relativeTime(task.endedAt) : undefined],
+      ['Task id', task.taskId],
+      ['Tool use', task.toolUseId],
+    ];
+    for (const [k, v] of rows) if (v) md.appendMarkdown(`${k}: ${escapeMd(v)}  \n`);
     item.tooltip = md;
     return item;
   }

@@ -396,6 +396,9 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 	}
 
 	a.Subagents = BuildSubagents(t, s.Alive, now)
+	if t != nil && s.Alive {
+		a.Tasks = t.Tasks
+	}
 
 	if !s.Alive {
 		a.State = model.StateExited

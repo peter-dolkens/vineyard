@@ -72,6 +72,23 @@ export interface Agent {
   managed?: ManagedInfo;
   /** Agent-tool invocations under this session, every depth, in spawn order. */
   subagents?: Subagent[];
+  /** Shell commands left running in the background, plus ones finished in the last half hour, in start order. */
+  tasks?: BackgroundTask[];
+}
+
+/**
+ * A Bash call made with run_in_background, or a foreground one that outlived its timeout and was
+ * moved to the background, tracked until its task notification arrives.
+ */
+export interface BackgroundTask {
+  toolUseId: string;
+  taskId?: string;
+  description?: string;
+  kind?: string;
+  /** running | completed | failed | … */
+  state: string;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 /**

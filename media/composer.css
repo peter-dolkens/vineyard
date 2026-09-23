@@ -83,3 +83,20 @@
 .eslider.readonly .estop:hover { transform: none; opacity: 0.45; }
 .eslider.readonly .estop.active { transform: scale(2.2); opacity: 1; }
 .eslider .dim { font-size: 11px; opacity: 0.6; }
+
+/* agent map: the session, its subagents nested by parent, then background tasks */
+.amap { padding: 2px 14px 6px; }
+.amap.tasks { padding-top: 0; }
+.amap-row { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 6px; }
+.amap-row.root { padding-left: 0; }
+.amap-row.clickable { cursor: pointer; }
+.amap-row.clickable:hover { background: var(--vscode-list-hoverBackground); }
+.amap-children { margin-left: 11px; padding-left: 12px; border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.3))); }
+.amap-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; background: var(--vscode-descriptionForeground); opacity: 0.5; }
+.amap-dot.live { background: var(--vscode-charts-blue, #3794ff); opacity: 1; animation: pulse 1.2s ease-in-out infinite; }
+.amap-dot.ok { background: var(--vscode-charts-green, #89d185); opacity: 1; }
+.amap-dot.err { background: var(--vscode-errorForeground, #f14c4c); opacity: 1; }
+.amap-text { min-width: 0; flex: 1; }
+.amap-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.amap-row.root .amap-name { font-weight: 600; }
+.amap-meta { font-size: 11px; opacity: 0.6; margin-top: 1px; }

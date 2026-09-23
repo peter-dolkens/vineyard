@@ -55,7 +55,9 @@ type FromWebview =
   /** A slash command for a managed session; `confirm` asks first with that text. */
   | { type: 'slash'; text: string; confirm?: string }
   /** An entry of the "/" menu the extension performs: settings, help, report, copySessionId, resumeTerminal, rawTranscript. */
-  | { type: 'action'; id: string };
+  | { type: 'action'; id: string }
+  /** From the Agent map: open that subagent's transcript in its own chat panel. */
+  | { type: 'openSubagent'; agentId: string };
 
 class ChatPanel {
   private offset = 0;
@@ -203,6 +205,12 @@ class ChatPanel {
         case 'action':
           await this.action(m.id);
           break;
+        case 'openSubagent': {
+          const sub = this.agent.subagents?.find((s) => s.agentId === m.agentId);
+          if (!sub) throw new Error('That subagent is no longer listed.');
+          await vscode.commands.executeCommand('vineyard.showTranscript', { kind: 'subagent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath }, sub });
+          break;
+        }
         case 'respond':
           await this.fleet.client.request('respond', this.machine.id, { sessionId: this.agent.sessionId, requestId: m.requestId, response: m.response }, 20_000);
           break;

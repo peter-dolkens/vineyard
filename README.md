@@ -11,7 +11,9 @@ be added.
 
 ## What you can do
 
-* **See every agent** on every machine, grouped Machines › Workspaces › Agents, with live state,
+* **See every agent** on every machine, grouped Machines › Workspaces › Agents › Subagents and
+  background tasks (a Bash call left running with `run_in_background`, or one that outlived its
+  timeout, until its task notification arrives), with live state,
   model, effort, context size, title and last prompt. Each tier's order is yours to choose
   (`vineyard.sort.machines` / `.workspaces` / `.agents`: status, name, recent or attention-first) with
   stable tie-breaks, so rows stay put while agents work. *Vineyard: Settings* opens all of them.
@@ -26,8 +28,10 @@ be added.
   busy) with an info strip for model, effort, mode, prompt-cache hit rate, token totals and a map of
   spawned subagents. Under the message box sits the same toolbar as the Claude Code pane: attach
   (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window ring (click
-  it to `/compact`), a prompt-cache dot with the last call's hit rate, the subagent count, and the
-  **model** and **permission-mode** pills whose popovers carry the effort slider. For a managed
+  it to `/compact`), a prompt-cache dot with the last call's hit rate, an **agent map** (the subagent
+  tree with state, running time and tokens, each opening its own transcript, then the shell commands
+  the session left running in the background), and the **model** and **permission-mode** pills whose
+  popovers carry the effort slider. For a managed
   session the menu also lists every slash command its Claude Code offers, ready to run, and shows the
   account it is signed in as.
 * **Message any running agent** from the composer, with files attached: images reach a managed

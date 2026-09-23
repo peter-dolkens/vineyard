@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "license": "MIT",
@@ -511,7 +511,7 @@
         "vineyard.showFinishedSubagents": {
           "type": "boolean",
           "default": true,
-          "description": "Under each agent, show subagents that have finished as well as those still running. Running ones are always shown."
+          "description": "Under each agent, show subagents and background tasks that have finished as well as those still running. Running ones are always shown."
         },
         "vineyard.notify.attention": {
           "type": "boolean",

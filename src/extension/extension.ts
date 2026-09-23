@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const agentOf = async (node: Node | undefined): Promise<AgentNode | undefined> => {
     if (node?.kind === 'agent') return node;
     if (node?.kind === 'subagent') return { kind: 'agent', machine: node.machine, workspace: node.workspace, agent: subagentAsAgent(node.agent, node.sub) };
+    if (node?.kind === 'task') return { kind: 'agent', machine: node.machine, workspace: node.workspace, agent: node.agent }; // a task belongs to its session
     const items: (vscode.QuickPickItem & { node: AgentNode })[] = [];
     for (const machine of fleet.machines()) {
       for (const workspace of machine.entry.snapshot.workspaces) {
@@ -143,7 +144,7 @@ export function activate(context: vscode.ExtensionContext): void {
     tree.refresh();
   });
 
-  const pathOf = (node: Node): string | undefined => (node.kind === 'workspace' ? node.workspace.path : node.kind === 'agent' || node.kind === 'subagent' ? node.agent.workspacePath : undefined);
+  const pathOf = (node: Node): string | undefined => (node.kind === 'workspace' ? node.workspace.path : node.kind === 'agent' || node.kind === 'subagent' || node.kind === 'task' ? node.agent.workspacePath : undefined);
 
   const sessionOnly = (a: AgentNode, verb: string): void => {
     if (a.agent.kind === 'subagent') throw new Error(`Cannot ${verb} a subagent on its own; it belongs to ${a.agent.sessionId.slice(0, 8)}. Use the session instead.`);
