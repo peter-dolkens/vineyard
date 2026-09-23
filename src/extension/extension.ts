@@ -235,12 +235,10 @@ export function activate(context: vscode.ExtensionContext): void {
     // A resumed session keeps its own permission mode (Claude Code restores it); only new ones get
     // the configured default.
     const remembered = resume ? {} : { ...sessionPrefs.get(machine.id, cwd), permissionMode: cfg.get<string>('spawn.defaultPermissionMode', 'default') };
-    const res = await fleet.client.request<{ sessionId: string }>(
-      'spawn',
-      machine.id,
-      { cwd, ...remembered, resume, name: resume ? undefined : `vineyard-${basename(cwd)}` },
-      30_000,
-    );
+    // No --name: a named session is treated by Claude Code as titled by the user, so it never
+    // generates the AI title the pane shows after the first prompt. Left unnamed, Claude Code writes
+    // an ai-title line a few seconds in (and again every turn), which the daemon already reads.
+    const res = await fleet.client.request<{ sessionId: string }>('spawn', machine.id, { cwd, ...remembered, resume }, 30_000);
     openWhenManaged(machine, res.sessionId);
   };
 

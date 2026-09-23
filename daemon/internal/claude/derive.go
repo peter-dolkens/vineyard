@@ -621,7 +621,8 @@ func Regroup(machineID string, agents []model.Agent, workspaces []model.Workspac
 }
 
 // PreferredTitle picks what to show: a custom title (from /rename or Vineyard) beats the AI one, except
-// for the "vineyard-<workspace>" names Vineyard gives sessions it spawns, which are only a fallback.
+// for the "vineyard-<workspace>" names Vineyard gave sessions it spawned before 0.3.18, which were only
+// a fallback (and, it turned out, stopped Claude Code from generating an AI title at all).
 func PreferredTitle(custom, ai string) string {
 	if custom != "" && (ai == "" || !strings.HasPrefix(custom, "vineyard-")) {
 		return custom
