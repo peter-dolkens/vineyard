@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"testing"
+	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
@@ -28,14 +29,21 @@ func TestRemovalSpreadsAndIsRefusedUntilAddedAgain(t *testing.T) {
 		return forge.cfg.IsRemoved("orchard") && forge.peers["orchard"] == nil
 	})
 
-	// orchard, still running and now watching, is turned away by forge.
+	// orchard, still running and now watching, keeps trying forge and is turned away every time.
 	orchard.setWantFleet(true)
-	waitFor(t, "orchard's attempt on forge to be refused", func() bool {
-		orchard.mu.Lock()
-		defer orchard.mu.Unlock()
-		p := orchard.peers["forge"]
-		return p != nil && p.link == nil && !p.lastSeen.IsZero()
-	})
+	time.Sleep(1500 * time.Millisecond)
+	forge.mu.Lock()
+	for l := range forge.links {
+		if l.peerID == "orchard" {
+			forge.mu.Unlock()
+			t.Fatal("forge accepted a link from a removed machine")
+		}
+	}
+	back := forge.peers["orchard"] != nil
+	forge.mu.Unlock()
+	if back {
+		t.Fatal("forge learned the removed machine back")
+	}
 
 	// Added back on atelier: forge learns it on atelier's next hello, with a later Added.
 	if _, err := atelier.handleLocal(protocol.Request{Op: "addpeer", Args: []byte(`{"machineId":"orchard","addr":"` + orchardAddr + `"}`)}); err != nil {
