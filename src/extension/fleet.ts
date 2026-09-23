@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import type { Agent, FleetEntry, FleetSummary, PeerStatus } from '../core/model.ts';
 import { isBusy, needsAttention } from '../core/model.ts';
+import { findSubagent, subagentAsAgent } from '../core/subagents.ts';
 import { DaemonClient } from './daemonClient.ts';
 
 export interface MachineView {
@@ -116,10 +117,13 @@ export class FleetService implements vscode.Disposable {
     return this.machines().find((m) => m.id === id);
   }
 
+  /** Finds a session by id, or a subagent by its "<session id>/<agent id>" as an Agent-shaped view. */
   findAgent(agentId: string): { agent: Agent; machine: MachineView } | undefined {
     for (const m of this.machines()) {
       const agent = m.entry.snapshot.agents.find((a) => a.id === agentId);
       if (agent) return { agent, machine: m };
+      const sub = findSubagent(m.entry.snapshot.agents, agentId);
+      if (sub) return { agent: subagentAsAgent(sub.parent, sub.sub), machine: m };
     }
     return undefined;
   }

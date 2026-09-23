@@ -412,6 +412,21 @@
           "group": "2_copy@0"
         },
         {
+          "command": "vineyard.showTranscript",
+          "when": "view == vineyard.fleet && viewItem =~ /^subagent/",
+          "group": "inline@1"
+        },
+        {
+          "command": "vineyard.showRawTranscript",
+          "when": "view == vineyard.fleet && viewItem =~ /^subagent/",
+          "group": "2_copy@0"
+        },
+        {
+          "command": "vineyard.copyPath",
+          "when": "view == vineyard.fleet && viewItem =~ /^subagent/",
+          "group": "2_copy@2"
+        },
+        {
           "command": "vineyard.resumeFromHistory",
           "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
           "group": "0_agent@2"
@@ -492,6 +507,11 @@
           "type": "boolean",
           "default": false,
           "description": "Show sessions whose process has exited but whose registry entry is still on disk."
+        },
+        "vineyard.showFinishedSubagents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Under each agent, show subagents that have finished as well as those still running. Running ones are always shown."
         },
         "vineyard.notify.attention": {
           "type": "boolean",

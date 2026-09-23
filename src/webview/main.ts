@@ -26,6 +26,8 @@ interface Agent {
   alive: boolean;
   name?: string;
   title?: string;
+  /** "subagent" for an Agent-tool thread viewed on its own: read-only, driven by its parent. */
+  kind?: string;
   state: string;
   stateDetail?: string;
   model?: string;
@@ -56,6 +58,7 @@ const STATE_LABEL: Record<string, string> = {
   tool: 'Running a tool',
   shell: 'In a shell',
   idle: 'Idle',
+  done: 'Finished',
   exited: 'Exited',
   unknown: 'Unknown',
 };
@@ -67,6 +70,7 @@ const STATE_ICON: Record<string, string> = {
   tool: 'tools',
   shell: 'terminal',
   idle: 'circle-large-filled',
+  done: 'pass',
   exited: 'circle-slash',
   unknown: 'circle-outline',
 };
@@ -206,7 +210,7 @@ selMode.onchange = () => configure({ permissionMode: selMode.value });
 const titleEl = document.getElementById('title')!;
 const titleEdit = document.getElementById('titleEdit') as HTMLInputElement;
 function beginRename() {
-  if (!agent || !machine?.online) return;
+  if (!agent || !machine?.online || agent.kind === 'subagent') return;
   titleEdit.value = agent.title || agent.name || '';
   titleEl.hidden = true;
   titleEdit.hidden = false;
@@ -623,14 +627,15 @@ function renderHeader() {
   document.getElementById('sub')!.textContent = `${bits.join(' — ')}   ·   ${meta.join(' · ')}`;
 
   const managedLive = !!agent.managed && !agent.managed.exited;
-  btnStop.hidden = !(agent.alive && machine.online);
+  const subagent = agent.kind === 'subagent';
+  btnStop.hidden = subagent || !(agent.alive && machine.online);
   btnStop.title = managedLive ? 'Stop this session' : 'Terminate this session';
   btnInterrupt.hidden = !managedLive;
-  const canSend = machine.online && agent.alive;
+  const canSend = machine.online && agent.alive && !subagent;
   btnSend.disabled = !canSend || sending;
   input.disabled = !canSend;
-  input.placeholder = !machine.online ? `${machine.name} is offline` : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
-  document.getElementById('hint')!.textContent = managedLive ? '' : agent.alive ? 'observed session' : '';
+  input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
+  document.getElementById('hint')!.textContent = subagent ? 'subagent · read-only' : managedLive ? '' : agent.alive ? 'observed session' : '';
 
   controlsEl.classList.remove('busy');
   renderControls();

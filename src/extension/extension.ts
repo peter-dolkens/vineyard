@@ -11,6 +11,7 @@ import { ChatPanels } from './chatPanel.ts';
 import { SessionPrefStore } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
+import { subagentAsAgent } from '../core/subagents.ts';
 
 export function activate(context: vscode.ExtensionContext): void {
   const log = vscode.window.createOutputChannel('Vineyard');
@@ -67,8 +68,11 @@ export function activate(context: vscode.ExtensionContext): void {
     return pick?.m;
   };
 
+  // A subagent node stands in as an Agent-shaped view of its transcript; commands that would act on
+  // the process (stop, rename, resume) refuse it below.
   const agentOf = async (node: Node | undefined): Promise<AgentNode | undefined> => {
     if (node?.kind === 'agent') return node;
+    if (node?.kind === 'subagent') return { kind: 'agent', machine: node.machine, workspace: node.workspace, agent: subagentAsAgent(node.agent, node.sub) };
     const items: (vscode.QuickPickItem & { node: AgentNode })[] = [];
     for (const machine of fleet.machines()) {
       for (const workspace of machine.entry.snapshot.workspaces) {
@@ -125,7 +129,8 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:peter-dolkens.vineyard'));
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('vineyard.sort') || e.affectsConfiguration('vineyard.showHistoricalWorkspaces') || e.affectsConfiguration('vineyard.showExitedAgents')) tree.refresh();
+      if (e.affectsConfiguration('vineyard.showFinishedSubagents')) tree.showFinishedSubagents = vscode.workspace.getConfiguration('vineyard').get('showFinishedSubagents', true);
+      if (e.affectsConfiguration('vineyard.sort') || e.affectsConfiguration('vineyard.showHistoricalWorkspaces') || e.affectsConfiguration('vineyard.showExitedAgents') || e.affectsConfiguration('vineyard.showFinishedSubagents')) tree.refresh();
     }),
   );
 
@@ -138,7 +143,11 @@ export function activate(context: vscode.ExtensionContext): void {
     tree.refresh();
   });
 
-  const pathOf = (node: Node): string | undefined => (node.kind === 'workspace' ? node.workspace.path : node.kind === 'agent' ? node.agent.workspacePath : undefined);
+  const pathOf = (node: Node): string | undefined => (node.kind === 'workspace' ? node.workspace.path : node.kind === 'agent' || node.kind === 'subagent' ? node.agent.workspacePath : undefined);
+
+  const sessionOnly = (a: AgentNode, verb: string): void => {
+    if (a.agent.kind === 'subagent') throw new Error(`Cannot ${verb} a subagent on its own; it belongs to ${a.agent.sessionId.slice(0, 8)}. Use the session instead.`);
+  };
 
   cmd('vineyard.openWorkspace', async (node?: Node) => {
     if (!node) return;
@@ -176,6 +185,7 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.resumeSession', async (node?: Node) => {
     const a = await agentOf(node);
     if (!a) return;
+    sessionOnly(a, 'resume');
     if (a.agent.alive) {
       const ok = await vscode.window.showWarningMessage(`${agentLabel(a.agent)} is still running on ${a.machine.name}. Resuming it in a second place can confuse the session. Continue?`, { modal: true }, 'Resume anyway');
       if (!ok) return;
@@ -309,6 +319,7 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.resumeManaged', async (node?: Node) => {
     const a = await agentOf(node);
     if (!a) return;
+    sessionOnly(a, 'resume');
     if (a.agent.alive) {
       const ok = await vscode.window.showWarningMessage(`${agentLabel(a.agent)} is still running on ${a.machine.name}. Resuming it in a second process would have two writers on one transcript. Stop it there first, or continue anyway?`, { modal: true }, 'Continue anyway');
       if (!ok) return;
@@ -321,6 +332,7 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.stopAgent', async (node?: Node) => {
     const a = await agentOf(node);
     if (!a || !a.agent.alive) return;
+    sessionOnly(a, 'stop');
     const managed = !!a.agent.managed && !a.agent.managed.exited;
     const ok = await vscode.window.showWarningMessage(
       `${managed ? 'Stop' : 'Terminate'} ${agentLabel(a.agent)} on ${a.machine.name}?`,
@@ -387,6 +399,7 @@ export function activate(context: vscode.ExtensionContext): void {
   cmd('vineyard.renameSession', async (node?: Node) => {
     const a = await agentOf(node);
     if (!a) return;
+    sessionOnly(a, 'rename');
     const title = await vscode.window.showInputBox({ title: `Rename session on ${a.machine.name}`, value: a.agent.title || a.agent.name || '', prompt: 'New session title', ignoreFocusOut: true });
     if (!title?.trim()) return;
     await fleet.client.request('rename', a.machine.id, { sessionId: a.agent.sessionId, title: title.trim(), path: a.agent.transcriptPath || undefined, cwd: a.agent.workspacePath }, 20_000);

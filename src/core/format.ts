@@ -1,4 +1,4 @@
-import type { Agent, AgentState } from './model.ts';
+import type { Agent, AgentState, Subagent } from './model.ts';
 
 export function relativeTime(epochMs: number | undefined, now = Date.now()): string {
   if (!epochMs) return '';
@@ -49,12 +49,17 @@ export const STATE_LABEL: Record<AgentState, string> = {
   tool: 'Running a tool',
   shell: 'In a shell',
   idle: 'Idle',
+  done: 'Finished',
   exited: 'Exited',
   unknown: 'Unknown',
 };
 
 export function agentLabel(agent: Agent): string {
   return agent.title ?? agent.name ?? agent.sessionId.slice(0, 8);
+}
+
+export function subagentLabel(sub: Subagent): string {
+  return sub.description || sub.type || sub.agentId.slice(0, 8);
 }
 
 export function basename(p: string): string {

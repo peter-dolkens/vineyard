@@ -15,6 +15,11 @@ be added.
   model, effort, context size, title and last prompt. Each tier's order is yours to choose
   (`vineyard.sort.machines` / `.workspaces` / `.agents`: status, name, recent or attention-first) with
   stable tie-breaks, so rows stay put while agents work. *Vineyard: Settings* opens all of them.
+* **See the subagent tree** under each agent: every Agent-tool invocation Claude Code spawned, nested
+  to any depth (a subagent's own subagents sit under it), each with its description, agent type,
+  model, background/foreground and live state derived from its own transcript. Running subagents are
+  always shown; finished ones can be hidden with `vineyard.showFinishedSubagents`. Clicking one opens
+  its transcript in a read-only chat view.
 * **Open a chat** for any agent: a panel styled like the Claude Code pane that streams the transcript
   as it grows (railway margin with coloured event markers, the current prompt pinned while you
   scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
@@ -118,12 +123,21 @@ explaining that and offers to open the workspace on that machine.
 | last assistant block is `thinking`, turn not ended | `thinking` |
 | assistant `stop_reason: end_turn` | `idle` |
 | registry `shell` | `shell` |
+| subagent whose turn ended, or whose result reached the parent | `done` |
 
 Sessions whose working directory is a Claude Code scratchpad (`…/claude-<uid>/<encoded project>/<session>/scratchpad`)
 are shown under the project that spawned them; the encoded name is decoded against the filesystem.
 
 Registry and transcript disagreements are reconciled (e.g. `busy` after `end_turn` = "starting next
 turn"; `idle` mid-turn for >30 s = "interrupted"). See `daemon/internal/claude/derive.go` and its tests.
+
+Subagents come from `<projects>/<encoded cwd>/<session>/subagents/agent-<id>.jsonl` plus the
+`.meta.json` beside each one (agent type, description, the parent's `toolUseId`, `parentAgentId`
+for nested spawns, background or foreground). Each file's tail is derived like a session's, with
+sidechain lines counted. A foreground subagent is `done` once the parent has its `tool_result`; a
+background one once the parent's tail carries its `<task-notification>`, or its own turn ends. One
+mid-turn but silent for 15 minutes is shown as `unknown`. A session contributes at most 60 subagents
+to a snapshot (oldest finished dropped first). See `daemon/internal/claude/subagents.go`.
 
 ## Repository layout
 

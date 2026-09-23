@@ -133,8 +133,21 @@ type Derived struct {
 // DeriveFromTranscript walks the tail once and decides where the conversation is. Only the main
 // thread matters: sidechain (subagent) lines never decide the parent's state.
 func DeriveFromTranscript(entries []map[string]any) Derived {
+	return deriveEntries(entries, false)
+}
+
+// deriveEntries is DeriveFromTranscript with a choice about sidechain lines: a subagent's own
+// transcript is nothing but sidechain lines, so for those they are the thread.
+func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 	d := Derived{State: model.StateUnknown, PendingTools: []model.PendingTool{}}
 	var last map[string]any
+	skip := func(e map[string]any) bool {
+		if sidechain {
+			return false
+		}
+		side, _ := e["isSidechain"].(bool)
+		return side
+	}
 
 	for _, e := range entries {
 		typ := str(e["type"])
@@ -159,7 +172,7 @@ func DeriveFromTranscript(entries []map[string]any) Derived {
 				d.PermissionMode = s
 			}
 		}
-		if side, _ := e["isSidechain"].(bool); side {
+		if skip(e) {
 			continue
 		}
 		if typ == "user" || typ == "assistant" {
@@ -201,7 +214,7 @@ func DeriveFromTranscript(entries []map[string]any) Derived {
 	var pending []model.PendingTool
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
-		if side, _ := e["isSidechain"].(bool); side {
+		if skip(e) {
 			continue
 		}
 		switch str(e["type"]) {
@@ -381,6 +394,8 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 	if t != nil {
 		a.TranscriptPath = t.Path
 	}
+
+	a.Subagents = BuildSubagents(t, s.Alive, now)
 
 	if !s.Alive {
 		a.State = model.StateExited

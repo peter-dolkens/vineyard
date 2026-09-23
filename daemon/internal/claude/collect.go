@@ -4,6 +4,7 @@
 //
 //	~/.claude/sessions/<pid>.json          live session registry (status busy|shell|idle|waiting)
 //	~/.claude/projects/<enc cwd>/<sid>.jsonl transcript – model, effort, title, pending tool calls
+//	~/.claude/projects/<enc cwd>/<sid>/subagents/ one transcript + meta per Agent-tool call (see subagents.go)
 //	~/.claude/ide/<port>.lock              which folders are open in VS Code
 package claude
 
@@ -38,6 +39,7 @@ type RawTranscript struct {
 	Size      int64
 	Path      string
 	Entries   []map[string]any
+	Subagents []RawSubagent // transcripts under <sid>/subagents/, unordered
 }
 
 type RawProject struct {
@@ -89,6 +91,8 @@ type Collector struct {
 	cwdCache map[string]cwdEntry // project dir → cwd (keyed by latest transcript path+mtime)
 	// tailCache avoids re-reading a transcript whose size and mtime have not changed since last poll.
 	tailCache map[string]tailEntry
+	// subCache does the same for subagent transcripts, keyed by path.
+	subCache map[string]subEntry
 }
 
 type tailEntry struct {
@@ -109,7 +113,7 @@ func NewCollector(claudeDir string, tailLines int) *Collector {
 	if tailLines <= 0 {
 		tailLines = 80
 	}
-	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}}
+	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}, subCache: map[string]subEntry{}}
 }
 
 func (c *Collector) Collect() *Report {
@@ -177,6 +181,7 @@ func (c *Collector) collectSessions(r *Report) {
 			}
 		}
 		c.mu.Unlock()
+		c.pruneSubCache()
 	}()
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -236,6 +241,7 @@ func (c *Collector) collectSessions(r *Report) {
 			c.tailCache[sid] = tailEntry{size: t.Size, mtime: t.Mtime, entries: t.Entries}
 			c.mu.Unlock()
 		}
+		c.collectSubagents(&t)
 		r.Transcripts[sid] = t
 	}
 }

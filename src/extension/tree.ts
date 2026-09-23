@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
-import type { Agent, AgentState, Workspace } from '../core/model.ts';
+import type { Agent, AgentState, Subagent, Workspace } from '../core/model.ts';
 import { STATE_PRIORITY, isBusy, needsAttention } from '../core/model.ts';
+import { subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
 import type { FleetService, MachineView } from './fleet.ts';
-import { STATE_LABEL, agentLabel, basename, duration, relativeTime, shortModel, tildify, tokens } from '../core/format.ts';
+import { STATE_LABEL, agentLabel, basename, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
 
-export type Node = MachineNode | WorkspaceNode | AgentNode;
+export type Node = MachineNode | WorkspaceNode | AgentNode | SubagentNode;
 
 export interface MachineNode {
   kind: 'machine';
@@ -20,6 +21,14 @@ export interface AgentNode {
   machine: MachineView;
   workspace: Workspace;
   agent: Agent;
+}
+/** One Agent-tool invocation under `agent` (the session), possibly nested under another subagent. */
+export interface SubagentNode {
+  kind: 'subagent';
+  machine: MachineView;
+  workspace: Workspace;
+  agent: Agent;
+  sub: Subagent;
 }
 
 function color(id: string): vscode.ThemeColor {
@@ -42,6 +51,8 @@ export function stateIcon(state: AgentState): vscode.ThemeIcon {
       return new vscode.ThemeIcon('terminal', color('charts.orange'));
     case 'idle':
       return new vscode.ThemeIcon('circle-large-filled', color('charts.green'));
+    case 'done':
+      return new vscode.ThemeIcon('pass', color('charts.green'));
     case 'exited':
       return new vscode.ThemeIcon('circle-slash', color('disabledForeground'));
     default:
@@ -85,11 +96,13 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
 
   showHistorical: boolean;
   showExited: boolean;
+  showFinishedSubagents: boolean;
 
   constructor(private readonly fleet: FleetService) {
     const c = vscode.workspace.getConfiguration('vineyard');
     this.showHistorical = c.get('showHistoricalWorkspaces', true);
     this.showExited = c.get('showExitedAgents', false);
+    this.showFinishedSubagents = c.get('showFinishedSubagents', true);
     fleet.onDidChange(() => this.refresh());
   }
 
@@ -99,6 +112,20 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
 
   private visibleAgents(w: Workspace): Agent[] {
     return this.showExited ? w.agents : w.agents.filter((a) => a.alive);
+  }
+
+  /**
+   * Direct subagent children of a session (parentAgentId undefined) or of another subagent. With
+   * finished ones hidden, a finished parent still shows while something under it is active.
+   */
+  private visibleSubagents(agent: Agent, parentAgentId?: string): Subagent[] {
+    const kids = subagentChildren(agent.subagents, parentAgentId);
+    if (this.showFinishedSubagents) return kids;
+    return kids.filter((s) => subagentActive(s) || subagentDescendants(agent.subagents, s.agentId).some(subagentActive));
+  }
+
+  private subagentNodes(machine: MachineView, workspace: Workspace, agent: Agent, parentAgentId?: string): SubagentNode[] {
+    return this.visibleSubagents(agent, parentAgentId).map((sub) => ({ kind: 'subagent', machine, workspace, agent, sub }));
   }
 
   private sortMode(tier: 'machines' | 'workspaces' | 'agents', def: string): string {
@@ -160,10 +187,21 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
         })
         .map((agent) => ({ kind: 'agent', machine, workspace, agent }));
     }
+    if (element.kind === 'agent') {
+      return this.subagentNodes(element.machine, element.workspace, element.agent);
+    }
+    if (element.kind === 'subagent') {
+      return this.subagentNodes(element.machine, element.workspace, element.agent, element.sub.agentId);
+    }
     return [];
   }
 
   getParent(element: Node): Node | undefined {
+    if (element.kind === 'subagent') {
+      const { machine, workspace, agent, sub } = element;
+      const parent = sub.parentAgentId ? agent.subagents?.find((s) => s.agentId === sub.parentAgentId) : undefined;
+      return parent ? { kind: 'subagent', machine, workspace, agent, sub: parent } : { kind: 'agent', machine, workspace, agent };
+    }
     if (element.kind === 'agent') return { kind: 'workspace', machine: element.machine, workspace: element.workspace };
     if (element.kind === 'workspace') return { kind: 'machine', machine: element.machine };
     return undefined;
@@ -177,6 +215,8 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
         return this.workspaceItem(node);
       case 'agent':
         return this.agentItem(node);
+      case 'subagent':
+        return this.subagentItem(node);
     }
   }
 
@@ -232,7 +272,10 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
 
   private agentItem(node: AgentNode): vscode.TreeItem {
     const { agent } = node;
-    const item = new vscode.TreeItem(agentLabel(agent), vscode.TreeItemCollapsibleState.None);
+    const subs = this.visibleSubagents(agent);
+    const allSubs = agent.subagents ?? [];
+    const activeSubs = allSubs.filter(subagentActive).length;
+    const item = new vscode.TreeItem(agentLabel(agent), !subs.length ? vscode.TreeItemCollapsibleState.None : activeSubs ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `agent:${agent.id}`;
     const managedLive = !!agent.managed && !agent.managed.exited;
     item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '');
@@ -242,6 +285,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     if (managedLive) bits.push('managed');
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
+    if (activeSubs) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
     if (agent.lastActivityAt) bits.push(relativeTime(agent.lastActivityAt));
     item.description = bits.join(' · ');
     item.command = { command: 'vineyard.showTranscript', title: 'Show Transcript', arguments: [node] };
@@ -263,12 +307,55 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
       ['Uptime', agent.startedAt ? duration(Date.now() - agent.startedAt) : undefined],
       ['Last activity', agent.lastActivityAt ? relativeTime(agent.lastActivityAt) : undefined],
       ['Registry', agent.registryStatus],
+      ['Subagents', allSubs.length ? `${activeSubs} running · ${allSubs.length} total` : undefined],
     ];
     for (const [k, v] of rows) if (v) md.appendMarkdown(`${k}: ${escapeMd(v)}  \n`);
     if (agent.lastPrompt) md.appendMarkdown(`\n> ${escapeMd(agent.lastPrompt.slice(0, 300))}${agent.lastPrompt.length > 300 ? '…' : ''}\n`);
     if (agent.pendingTools.length) {
       md.appendMarkdown('\nPending tools:  \n');
       for (const t of agent.pendingTools) md.appendMarkdown(`- \`${t.name}\`${t.summary ? ` ${escapeMd(t.summary)}` : ''}  \n`);
+    }
+    item.tooltip = md;
+    return item;
+  }
+
+  private subagentItem(node: SubagentNode): vscode.TreeItem {
+    const { agent, sub } = node;
+    const kids = this.visibleSubagents(agent, sub.agentId);
+    const activeBelow = subagentDescendants(agent.subagents, sub.agentId).some(subagentActive);
+    const item = new vscode.TreeItem(subagentLabel(sub), !kids.length ? vscode.TreeItemCollapsibleState.None : activeBelow ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+    item.id = `subagent:${agent.id}/${sub.agentId}`;
+    item.contextValue = `subagent-${sub.state}`;
+    item.iconPath = stateIcon(sub.state);
+
+    const bits: string[] = [STATE_LABEL[sub.state]];
+    if (sub.type) bits.push(sub.type);
+    const model = shortModel(sub.model);
+    if (model) bits.push(model);
+    if (sub.background) bits.push('background');
+    if (sub.lastActivityAt) bits.push(relativeTime(sub.lastActivityAt));
+    item.description = bits.join(' · ');
+    item.command = { command: 'vineyard.showTranscript', title: 'Show Transcript', arguments: [node] };
+
+    const md = new vscode.MarkdownString('', true);
+    md.appendMarkdown(`**${escapeMd(subagentLabel(sub))}**  \nSubagent of ${escapeMd(agentLabel(agent))}  \n`);
+    md.appendMarkdown(`$(${stateIcon(sub.state).id}) **${STATE_LABEL[sub.state]}**`);
+    if (sub.stateDetail) md.appendMarkdown(` — ${escapeMd(sub.stateDetail)}`);
+    md.appendMarkdown('\n\n');
+    const rows: [string, string | undefined][] = [
+      ['Agent type', sub.type],
+      ['Model', sub.model ? `${shortModel(sub.model)} (${sub.model})` : undefined],
+      ['Run', sub.background ? 'in the background' : 'in the foreground (parent waits)'],
+      ['Depth', sub.depth ? String(sub.depth) : undefined],
+      ['Context', sub.contextTokens ? `${tokens(sub.contextTokens)} tokens` : undefined],
+      ['Started', sub.startedAt ? relativeTime(sub.startedAt) : undefined],
+      ['Last activity', sub.lastActivityAt ? relativeTime(sub.lastActivityAt) : undefined],
+      ['Agent id', sub.agentId],
+    ];
+    for (const [k, v] of rows) if (v) md.appendMarkdown(`${k}: ${escapeMd(v)}  \n`);
+    if (sub.pendingTools?.length) {
+      md.appendMarkdown('\nPending tools:  \n');
+      for (const t of sub.pendingTools) md.appendMarkdown(`- \`${t.name}\`${t.summary ? ` ${escapeMd(t.summary)}` : ''}  \n`);
     }
     item.tooltip = md;
     return item;

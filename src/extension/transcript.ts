@@ -22,11 +22,13 @@ interface Block {
   tool_use_id?: string;
 }
 
+/** vineyard-transcript://<machine>/<session id>[/<subagent id>]/<label>.md?path=…&cwd=… */
 export function transcriptUri(machine: MachineView, agent: Agent): vscode.Uri {
+  const [sessionId, subagentId] = agent.id.split('::').slice(1).join('::').split('/');
   return vscode.Uri.from({
     scheme: TRANSCRIPT_SCHEME,
     authority: machine.id,
-    path: `/${agent.sessionId}/${encodeURIComponent(agentLabel(agent)).slice(0, 80)}.md`,
+    path: `/${sessionId || agent.sessionId}${subagentId ? `/${subagentId}` : ''}/${encodeURIComponent(agentLabel(agent)).slice(0, 80)}.md`,
     query: new URLSearchParams({ path: agent.transcriptPath ?? '', cwd: agent.workspacePath }).toString(),
   });
 }
@@ -43,7 +45,9 @@ export class TranscriptProvider implements vscode.TextDocumentContentProvider {
 
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
     const machineId = uri.authority;
-    const sessionId = uri.path.split('/')[1] ?? '';
+    const parts = uri.path.split('/');
+    const sessionId = parts[1] ?? '';
+    const subagentId = parts.length > 3 ? parts[2] : undefined;
     const params = new URLSearchParams(uri.query);
     const machine = this.fleet.machine(machineId);
     if (!machine) return `# Transcript unavailable\n\nMachine \`${machineId}\` is not in the fleet any more.`;
@@ -56,7 +60,7 @@ export class TranscriptProvider implements vscode.TextDocumentContentProvider {
     } catch (err) {
       return `# ${sessionId}\n\nCould not fetch transcript from ${machine.name}: ${(err as Error).message}`;
     }
-    const agent = this.fleet.findAgent(`${machineId}::${sessionId}`)?.agent;
+    const agent = this.fleet.findAgent(`${machineId}::${sessionId}${subagentId ? `/${subagentId}` : ''}`)?.agent;
     return renderTranscript(data.entries, { machine, agent, sessionId, path: data.path });
   }
 }

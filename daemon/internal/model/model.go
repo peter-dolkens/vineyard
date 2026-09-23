@@ -15,6 +15,7 @@ const (
 	StateTool       AgentState = "tool"       // a tool call is executing
 	StateShell      AgentState = "shell"      // the user dropped into a shell inside the CLI
 	StateIdle       AgentState = "idle"       // finished its turn, waiting for the next prompt
+	StateDone       AgentState = "done"       // a subagent that returned its result to its parent
 	StateExited     AgentState = "exited"     // process gone; registry entry is stale
 	StateUnknown    AgentState = "unknown"
 )
@@ -22,7 +23,7 @@ const (
 // StatePriority: lower = needs attention sooner.
 var StatePriority = map[AgentState]int{
 	StateQuestion: 0, StatePermission: 1, StateWorking: 2, StateThinking: 3,
-	StateTool: 4, StateShell: 5, StateIdle: 6, StateUnknown: 7, StateExited: 8,
+	StateTool: 4, StateShell: 5, StateIdle: 6, StateDone: 7, StateUnknown: 8, StateExited: 9,
 }
 
 func NeedsAttention(s AgentState) bool { return s == StateQuestion || s == StatePermission }
@@ -64,6 +65,29 @@ type Agent struct {
 	TranscriptPath string        `json:"transcriptPath,omitempty"`
 	// Managed is set when this daemon spawned the session and controls it over stream-json.
 	Managed *ManagedInfo `json:"managed,omitempty"`
+	// Subagents are the Agent-tool invocations under this session, every depth, in spawn order.
+	Subagents []Subagent `json:"subagents,omitempty"`
+}
+
+// Subagent is one Agent-tool invocation: its own transcript beside the session's, with a state
+// derived the same way. ParentAgentID is empty when the session itself spawned it; otherwise it
+// names another Subagent of the same session, so the list is a flat encoding of a tree.
+type Subagent struct {
+	AgentID        string        `json:"agentId"`
+	ParentAgentID  string        `json:"parentAgentId,omitempty"`
+	Depth          int           `json:"depth,omitempty"`
+	Type           string        `json:"type,omitempty"`        // general-purpose, Explore, claude, …
+	Description    string        `json:"description,omitempty"` // the 3–5 word label the parent gave it
+	Model          string        `json:"model,omitempty"`
+	Background     bool          `json:"background,omitempty"`
+	State          AgentState    `json:"state"`
+	StateDetail    string        `json:"stateDetail,omitempty"`
+	PendingTools   []PendingTool `json:"pendingTools,omitempty"`
+	StartedAt      int64         `json:"startedAt,omitempty"`
+	LastActivityAt int64         `json:"lastActivityAt,omitempty"`
+	ContextTokens  int64         `json:"contextTokens,omitempty"`
+	TranscriptPath string        `json:"transcriptPath,omitempty"`
+	ToolUseID      string        `json:"toolUseId,omitempty"`
 }
 
 // PendingRequest is a control_request the managed session is blocked on: a permission prompt or an

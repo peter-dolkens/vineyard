@@ -10,6 +10,7 @@ export type AgentState =
   | 'tool'
   | 'shell'
   | 'idle'
+  | 'done'
   | 'exited'
   | 'unknown';
 
@@ -22,8 +23,9 @@ export const STATE_PRIORITY: Record<AgentState, number> = {
   tool: 4,
   shell: 5,
   idle: 6,
-  unknown: 7,
-  exited: 8,
+  done: 7,
+  unknown: 8,
+  exited: 9,
 };
 
 export function needsAttention(state: AgentState): boolean {
@@ -68,6 +70,30 @@ export interface Agent {
   transcriptPath?: string;
   /** Set when the daemon on that machine spawned the session and controls it. */
   managed?: ManagedInfo;
+  /** Agent-tool invocations under this session, every depth, in spawn order. */
+  subagents?: Subagent[];
+}
+
+/**
+ * One Agent-tool invocation: its own transcript beside the session's. `parentAgentId` is empty when
+ * the session itself spawned it, otherwise it names another subagent of the same session.
+ */
+export interface Subagent {
+  agentId: string;
+  parentAgentId?: string;
+  depth?: number;
+  type?: string;
+  description?: string;
+  model?: string;
+  background?: boolean;
+  state: AgentState;
+  stateDetail?: string;
+  pendingTools?: PendingTool[];
+  startedAt?: number;
+  lastActivityAt?: number;
+  contextTokens?: number;
+  transcriptPath?: string;
+  toolUseId?: string;
 }
 
 export interface PendingRequest {
