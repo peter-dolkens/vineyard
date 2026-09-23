@@ -341,12 +341,14 @@ func (m *Manager) initialize(p *proc) {
 		m.log.Printf("managed: %s initialize: %v", p.info.SessionID, err)
 		return
 	}
-	models := parseModels(body)
-	if len(models) == 0 {
+	models, commands, account := parseModels(body), parseCommands(body), parseAccount(body)
+	if len(models) == 0 && len(commands) == 0 && account == "" {
 		return
 	}
 	m.mu.Lock()
 	p.info.Models = models
+	p.info.Commands = commands
+	p.info.Account = account
 	m.mu.Unlock()
 	m.changed()
 }

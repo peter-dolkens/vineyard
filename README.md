@@ -24,10 +24,16 @@ be added.
   as it grows (railway margin with coloured event markers, the current prompt pinned while you
   scroll, thinking collapsed and greyed, IN/OUT command blocks, an activity ticker while the agent is
   busy) with an info strip for model, effort, mode, prompt-cache hit rate, token totals and a map of
-  spawned subagents.
-* **Message any running agent** from the composer. For sessions you drive elsewhere (the Claude
-  extension, a terminal) the text is delivered over Claude Code's cross-session messaging socket and
-  read between tool calls or when the agent is idle.
+  spawned subagents. Under the message box sits the same toolbar as the Claude Code pane: attach
+  (**+**), a filterable **/ actions menu** (also opened by typing `/`), a context-window ring (click
+  it to `/compact`), a prompt-cache dot with the last call's hit rate, the subagent count, and the
+  **model** and **permission-mode** pills whose popovers carry the effort slider. For a managed
+  session the menu also lists every slash command its Claude Code offers, ready to run, and shows the
+  account it is signed in as.
+* **Message any running agent** from the composer, with files attached: images reach a managed
+  session as image blocks, other files are inlined as text (all the cross-session socket can carry).
+  For sessions you drive elsewhere (the Claude extension, a terminal) the text is delivered over
+  Claude Code's cross-session messaging socket and read between tool calls or when the agent is idle.
 * **Start agents from Vineyard** in any workspace on any machine (*New Agent Here…*), or **resume** an
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear

@@ -141,6 +141,22 @@ export interface ManagedInfo {
   lastError?: string;
   /** What this session's Claude Code offers in its model picker; absent until it has answered initialize. */
   models?: ModelInfo[];
+  /** Slash commands it offers (no leading slash) and the account it is signed in as, from the same handshake. */
+  commands?: CommandInfo[];
+  account?: string;
+}
+
+export interface CommandInfo {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+}
+
+/** A file sent with a prompt: an image block for a managed session, inlined text otherwise. Base64 data. */
+export interface Attachment {
+  name: string;
+  mediaType: string;
+  data: string;
 }
 
 export interface Workspace {

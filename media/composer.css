@@ -1,0 +1,85 @@
+/* Composer toolbar and popovers (src/webview/composer.ts). Loaded after chat.css. */
+
+.composer { position: relative; }
+.composer-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.composer-actions .hint { margin-right: 0; }
+.bar { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.bar.busy { opacity: 0.5; pointer-events: none; }
+
+/* pills */
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 12px; border: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1; white-space: nowrap; cursor: pointer; }
+.pill:hover, .pill.open { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.pill:disabled { opacity: 0.4; cursor: default; }
+.pill .codicon { font-size: 14px; }
+.pill .dim { opacity: 0.6; }
+.pill#btnAttach, .pill#btnActions { padding: 0 6px; width: 26px; justify-content: center; }
+.slash-glyph { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 3px; font-size: 10px; font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); }
+.pill#modelPill, .pill#modePill, .pill#ctxPill, .pill#cachePill, .pill#agentsPill { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.pill#modelPill:hover, .pill#modePill:hover, .pill#ctxPill.action:hover, .pill#agentsPill:hover, .pill.open { filter: brightness(1.15); }
+.pill#modePill { margin-left: auto; }
+.pill.ctx:not(.action) { cursor: default; }
+.pill.cache { cursor: default; }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-descriptionForeground); }
+.pill .dot.live { background: var(--vscode-charts-blue, #3794ff); animation: pulse 1.2s ease-in-out infinite; }
+.pill .dot.cache-warm { background: var(--vscode-charts-orange, #d18616); box-shadow: 0 0 6px var(--vscode-charts-orange, #d18616); }
+.pill .dot.cache-cold { background: var(--vscode-descriptionForeground); opacity: 0.6; }
+
+/* context ring */
+.ring { width: 14px; height: 14px; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 2.5; }
+.ring-track { stroke: currentColor; opacity: 0.2; }
+.ring-fill { stroke: var(--vscode-charts-green, #89d185); stroke-linecap: round; transition: stroke-dasharray .3s; }
+.ring-warn .ring-fill { stroke: var(--vscode-charts-yellow, #cca700); }
+.ring-hot .ring-fill { stroke: var(--vscode-errorForeground, #f14c4c); }
+
+/* attachment chips above the toolbar */
+.attachments { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 4px 0 8px; border-radius: 11px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); font-size: 11px; max-width: 100%; }
+.chip .codicon { font-size: 13px; }
+.chip-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.chip .dim { opacity: 0.6; }
+.chip-x { background: transparent; border: none; padding: 0 3px; height: 18px; border-radius: 9px; color: inherit; opacity: 0.7; display: inline-grid; place-items: center; }
+.chip-x:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+.chip-x .codicon { font-size: 12px; }
+
+/* popover */
+.pop { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px); z-index: 5; max-height: min(70vh, 520px); overflow: auto; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.35))); border-radius: 8px; background: var(--vscode-editorWidget-background, var(--vscode-menu-background)); color: var(--vscode-editorWidget-foreground, var(--vscode-foreground)); box-shadow: 0 -2px 16px rgba(0,0,0,.35); padding: 6px 0; font-size: 13px; }
+.pop-title { padding: 6px 14px 4px; font-size: 11px; opacity: 0.6; }
+.pop-hint { padding: 0 14px 6px; font-size: 11px; opacity: 0.5; }
+.pop-filter { display: block; width: calc(100% - 12px); margin: 0 6px 6px; padding: 6px 10px; font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 6px; }
+.pop-filter:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pop-group { padding: 8px 14px 2px; font-size: 11px; opacity: 0.55; }
+.pop-group:not(:first-child) { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.25))); margin-top: 4px; padding-top: 8px; }
+.pop-item { display: flex; align-items: center; gap: 10px; padding: 6px 14px; cursor: pointer; }
+.pop-item:hover, .pop-item.hi { background: var(--vscode-list-hoverBackground); }
+.pop-item.selected .pop-label { font-weight: 600; }
+.pop-item.disabled { opacity: 0.45; cursor: default; }
+.pop-item.disabled:hover { background: transparent; }
+.pop-item.readonly { cursor: default; }
+.pop-item.readonly:hover { background: transparent; }
+.pop-item > .codicon { font-size: 15px; opacity: 0.85; flex-shrink: 0; }
+.pop-item > .codicon-check { margin-left: auto; color: var(--vscode-foreground); }
+.pop-text { min-width: 0; flex: 1; }
+.pop-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pop-label .dim { opacity: 0.55; }
+.pop-desc { font-size: 11px; opacity: 0.6; margin-top: 1px; white-space: normal; }
+.pop-value { margin-left: auto; font-size: 12px; opacity: 0.6; white-space: nowrap; flex-shrink: 0; }
+.pop-empty { padding: 12px 14px; opacity: 0.6; }
+.pop-sep { height: 1px; margin: 6px 0; background: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.25))); }
+.pop-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 14px; }
+.pop-note { padding: 6px 14px 2px; font-size: 11px; opacity: 0.6; }
+.pop-foot { display: flex; justify-content: space-between; gap: 8px; padding: 8px 14px 2px; margin-top: 6px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.25))); font-size: 11px; opacity: 0.6; }
+.effort-row { cursor: default; }
+.effort-row:hover { background: transparent; }
+
+/* effort slider: one stop per level, the current one enlarged, the top level purple */
+.eslider { display: inline-flex; align-items: center; gap: 12px; padding: 0 10px; height: 22px; border-radius: 11px; background: var(--vscode-badge-background); flex-shrink: 0; }
+.estop { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-badge-foreground); opacity: 0.45; cursor: pointer; transition: transform .12s, opacity .12s; }
+.estop:hover { opacity: 0.9; transform: scale(1.4); }
+.estop.top { background: var(--vscode-charts-purple, #b180d7); opacity: 0.8; }
+.estop.active { opacity: 1; transform: scale(2.2); }
+.estop.active.top { box-shadow: 0 0 6px var(--vscode-charts-purple, #b180d7); }
+.eslider.readonly .estop { cursor: default; }
+.eslider.readonly .estop:hover { transform: none; opacity: 0.45; }
+.eslider.readonly .estop.active { transform: scale(2.2); opacity: 1; }
+.eslider .dim { font-size: 11px; opacity: 0.6; }

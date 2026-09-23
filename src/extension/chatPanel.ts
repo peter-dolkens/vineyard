@@ -6,10 +6,20 @@
 
 import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
-import type { Agent } from '../core/model.ts';
+import type { Agent, Attachment } from '../core/model.ts';
 import type { FleetService, MachineView } from './fleet.ts';
 import type { SessionPrefStore } from './sessionPrefs.ts';
 import { agentLabel, basename } from '../core/format.ts';
+import { attachmentMediaType, attachmentProblem } from '../core/attachments.ts';
+
+const HELP_URL = 'https://github.com/peter-dolkens/vineyard#readme';
+const ISSUES_URL = 'https://github.com/peter-dolkens/vineyard/issues/new';
+
+/** A file picked for the next message, kept here (not in the webview) until it is sent or removed. */
+interface PendingAttachment extends Attachment {
+  id: string;
+  size: number;
+}
 
 interface TranscriptData {
   path: string;
@@ -20,7 +30,8 @@ interface TranscriptData {
 }
 
 type ToWebview =
-  | { type: 'init'; agent: Agent; machine: { id: string; name: string; online: boolean }; localName: string }
+  | { type: 'init'; agent: Agent; machine: { id: string; name: string; online: boolean }; localName: string; extVersion?: string }
+  | { type: 'attachments'; items: { id: string; name: string; mediaType: string; size: number }[] }
   | { type: 'agent'; agent: Agent; machine: { id: string; name: string; online: boolean } }
   | { type: 'entries'; entries: Record<string, unknown>[]; reset: boolean }
   | { type: 'status'; text: string; kind: 'info' | 'error' | 'ok' }
@@ -38,7 +49,13 @@ type FromWebview =
   | { type: 'rename'; title: string }
   | { type: 'openWorkspace' }
   | { type: 'openTerminal' }
-  | { type: 'reload' };
+  | { type: 'reload' }
+  | { type: 'attach' }
+  | { type: 'removeAttachment'; id: string }
+  /** A slash command for a managed session; `confirm` asks first with that text. */
+  | { type: 'slash'; text: string; confirm?: string }
+  /** An entry of the "/" menu the extension performs: settings, help, report, copySessionId, resumeTerminal, rawTranscript. */
+  | { type: 'action'; id: string };
 
 class ChatPanel {
   private offset = 0;
@@ -47,6 +64,7 @@ class ChatPanel {
   private lastActivity = 0;
   private lastAgentJson = '';
   private disposed = false;
+  private attachments: PendingAttachment[] = [];
   private readonly subs: vscode.Disposable[] = [];
 
   constructor(
@@ -57,6 +75,7 @@ class ChatPanel {
     private readonly extensionUri: vscode.Uri,
     private readonly log: vscode.OutputChannel,
     private readonly prefs: SessionPrefStore,
+    private readonly extVersion: string | undefined,
     private readonly onDispose: () => void,
   ) {
     panel.webview.html = this.html();
@@ -141,7 +160,8 @@ class ChatPanel {
     try {
       switch (m.type) {
         case 'ready':
-          this.post({ type: 'init', agent: this.agent, machine: this.machineInfo(), localName: this.fleet.machine(this.fleet.self ?? '')?.name ?? 'here' });
+          this.post({ type: 'init', agent: this.agent, machine: this.machineInfo(), localName: this.fleet.machine(this.fleet.self ?? '')?.name ?? 'here', extVersion: this.extVersion });
+          this.postAttachments();
           await this.fetch(true);
           break;
         case 'reload':
@@ -150,16 +170,39 @@ class ChatPanel {
           break;
         case 'send': {
           const text = m.text.trim();
-          if (!text) return;
+          const attachments: Attachment[] = this.attachments.map(({ name, mediaType, data }) => ({ name, mediaType, data }));
+          if (!text && !attachments.length) return;
           this.post({ type: 'sending', busy: true });
           const isManaged = !!this.agent.managed && !this.agent.managed.exited;
           const localName = this.fleet.machine(this.fleet.self ?? '')?.name ?? 'Vineyard';
           // Observed sessions receive it as a cross-session message; say plainly who it is from.
           const payload = isManaged ? text : `[Message typed by the user in Vineyard on ${localName}. Treat it as the user's instruction.]\n${text}`;
-          await this.fleet.client.request('send', this.machine.id, { sessionId: this.agent.sessionId, text: payload }, 20_000);
+          await this.fleet.client.request('send', this.machine.id, { sessionId: this.agent.sessionId, text: payload, attachments: attachments.length ? attachments : undefined }, 60_000);
+          this.attachments = [];
+          this.postAttachments();
           this.post({ type: 'status', text: isManaged ? 'Sent.' : 'Delivered to the session; it reads messages between tool calls or when idle.', kind: 'ok' });
           break;
         }
+        case 'attach':
+          await this.pickAttachments();
+          break;
+        case 'removeAttachment':
+          this.attachments = this.attachments.filter((a) => a.id !== m.id);
+          this.postAttachments();
+          break;
+        case 'slash': {
+          if (!this.agent.managed || this.agent.managed.exited) throw new Error('Slash commands only work in sessions started by Vineyard.');
+          if (m.confirm) {
+            const ok = await vscode.window.showWarningMessage(m.confirm, { modal: true }, 'Continue');
+            if (!ok) break;
+          }
+          await this.fleet.client.request('send', this.machine.id, { sessionId: this.agent.sessionId, text: m.text }, 20_000);
+          this.post({ type: 'status', text: `Sent ${m.text.split(/\s+/)[0]}.`, kind: 'ok' });
+          break;
+        }
+        case 'action':
+          await this.action(m.id);
+          break;
         case 'respond':
           await this.fleet.client.request('respond', this.machine.id, { sessionId: this.agent.sessionId, requestId: m.requestId, response: m.response }, 20_000);
           break;
@@ -230,16 +273,69 @@ class ChatPanel {
     }
   }
 
+  private postAttachments(): void {
+    this.post({ type: 'attachments', items: this.attachments.map(({ id, name, mediaType, size }) => ({ id, name, mediaType, size })) });
+  }
+
+  /** The "+" button: pick files, keep them here until the next send, tell the webview what is queued. */
+  private async pickAttachments(): Promise<void> {
+    const uris = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Attach', title: `Attach to ${agentLabel(this.agent)}` });
+    if (!uris?.length) return;
+    const isManaged = !!this.agent.managed && !this.agent.managed.exited;
+    const skipped: string[] = [];
+    for (const uri of uris) {
+      const name = basename(uri.fsPath);
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const problem = attachmentProblem(name, bytes, isManaged);
+      if (problem) {
+        skipped.push(`${name}: ${problem}`);
+        continue;
+      }
+      this.attachments.push({ id: crypto.randomUUID(), name, mediaType: attachmentMediaType(name), size: bytes.byteLength, data: Buffer.from(bytes).toString('base64') });
+    }
+    this.postAttachments();
+    if (skipped.length) this.post({ type: 'status', text: `Not attached. ${skipped.join('; ')}.`, kind: 'error' });
+  }
+
+  /** Entries of the "/" menu that need VS Code rather than the session. */
+  private async action(id: string): Promise<void> {
+    const node = { kind: 'agent', machine: this.machine, agent: this.agent, workspace: { path: this.agent.workspacePath } };
+    switch (id) {
+      case 'settings':
+        await vscode.commands.executeCommand('vineyard.openSettings');
+        break;
+      case 'resumeTerminal':
+        await vscode.commands.executeCommand('vineyard.resumeSession', node);
+        break;
+      case 'rawTranscript':
+        await vscode.commands.executeCommand('vineyard.showRawTranscript', node);
+        break;
+      case 'copySessionId':
+        await vscode.env.clipboard.writeText(this.agent.sessionId);
+        this.post({ type: 'status', text: 'Session ID copied.', kind: 'ok' });
+        break;
+      case 'help':
+        await vscode.env.openExternal(vscode.Uri.parse(HELP_URL));
+        break;
+      case 'report':
+        await vscode.env.openExternal(vscode.Uri.parse(ISSUES_URL));
+        break;
+      default:
+        throw new Error(`Unknown action: ${id}`);
+    }
+  }
+
   private html(): string {
     const w = this.panel.webview;
     const nonce = crypto.randomBytes(16).toString('base64');
     const script = w.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'));
     const css = w.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.css'));
+    const composerCss = w.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'composer.css'));
     const codicons = w.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'codicon.css'));
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${w.cspSource}; font-src ${w.cspSource}; img-src ${w.cspSource} https: data:; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="${codicons}"><link rel="stylesheet" href="${css}">
+<link rel="stylesheet" href="${codicons}"><link rel="stylesheet" href="${css}"><link rel="stylesheet" href="${composerCss}">
 <title>${escapeHtml(agentLabel(this.agent))}</title></head>
 <body><div id="app"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
   }
@@ -274,9 +370,9 @@ export class ChatPanels implements vscode.Disposable {
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist'), vscode.Uri.joinPath(this.context.extensionUri, 'media')],
     });
     panel.iconPath = new vscode.ThemeIcon('hubot');
-    const chat = new ChatPanel(panel, this.fleet, machine, agent, this.context.extensionUri, this.log, this.prefs, () => this.panels.delete(agent.id));
+    const extVersion = (this.context.extension.packageJSON as { version?: string }).version;
+    const chat = new ChatPanel(panel, this.fleet, machine, agent, this.context.extensionUri, this.log, this.prefs, extVersion, () => this.panels.delete(agent.id));
     this.panels.set(agent.id, chat);
-    void basename; // (kept for symmetry with tree labels)
   }
 
   dispose(): void {

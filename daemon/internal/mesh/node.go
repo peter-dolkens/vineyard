@@ -931,13 +931,17 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
-			if err := n.opts.Managed.Send(a.SessionID, a.Text); err != nil {
+			if err := n.opts.Managed.SendWithAttachments(a.SessionID, a.Text, a.Attachments); err != nil {
 				return nil, err
 			}
 			n.kickCollector()
 			return json.RawMessage(`{"managed":true}`), nil
 		}
-		id, err := claude.SendToSession(n.opts.ClaudeDir, a.SessionID, a.Text)
+		text, err := managed.InlineAttachments(a.Text, a.Attachments)
+		if err != nil {
+			return nil, err
+		}
+		id, err := claude.SendToSession(n.opts.ClaudeDir, a.SessionID, text)
 		if err != nil {
 			return nil, err
 		}

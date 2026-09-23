@@ -115,6 +115,22 @@ type ModelInfo struct {
 	SupportedEffortLevels []string `json:"supportedEffortLevels,omitempty"` // empty: the model takes no effort setting
 }
 
+// CommandInfo is one slash command the session's Claude Code offers (built-in, project, plugin or
+// skill), as the initialize handshake lists them. Name has no leading slash.
+type CommandInfo struct {
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	ArgumentHint string `json:"argumentHint,omitempty"`
+}
+
+// Attachment is a file sent with a prompt. Images (png, jpeg, gif, webp) become image blocks for a
+// managed session; anything else is inlined as text. Data is standard base64.
+type Attachment struct {
+	Name      string `json:"name"`
+	MediaType string `json:"mediaType"`
+	Data      string `json:"data"`
+}
+
 type ManagedInfo struct {
 	SessionID      string          `json:"sessionId"`
 	PID            int             `json:"pid"`
@@ -135,6 +151,10 @@ type ManagedInfo struct {
 	// Models is what this session's Claude Code offers in its model picker; empty until the harness
 	// has answered the initialize request sent at spawn.
 	Models []ModelInfo `json:"models,omitempty"`
+	// Commands are the slash commands the session offers, from the same handshake; Account is the
+	// e-mail it is signed in as.
+	Commands []CommandInfo `json:"commands,omitempty"`
+	Account  string        `json:"account,omitempty"`
 }
 
 type Workspace struct {

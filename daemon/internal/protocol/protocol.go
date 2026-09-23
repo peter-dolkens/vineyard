@@ -154,6 +154,9 @@ const InvitePrefix = "vineyard:"
 type SendArgs struct {
 	SessionID string `json:"sessionId"`
 	Text      string `json:"text"`
+	// Attachments ride along with the prompt: image blocks and inlined files for a managed session,
+	// inlined text only over the cross-session inbox (images are refused there).
+	Attachments []model.Attachment `json:"attachments,omitempty"`
 }
 
 // UpgradeArgs streams a new vineyardd binary to the target machine in base64 chunks. The first chunk

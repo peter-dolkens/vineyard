@@ -4,8 +4,8 @@
  */
 
 import { marked } from 'marked';
-import { modelOptions, selectedModel, effortOptions, type PickerOption } from '../core/models.ts';
-import type { ModelInfo } from '../core/model.ts';
+import type { CommandInfo, ModelInfo } from '../core/model.ts';
+import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -40,7 +40,8 @@ interface Agent {
   gitBranch?: string;
   version?: string;
   pendingTools: { id: string; name: string; summary?: string }[];
-  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[] };
+  subagents?: { state: string }[];
+  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string };
 }
 interface MachineInfo {
   id: string;
@@ -133,11 +134,6 @@ app.innerHTML = `
   <div class="composer-box">
     <textarea id="input" rows="1" placeholder="Message this agent…"></textarea>
     <div class="composer-actions">
-      <div class="controls" id="controls" hidden>
-        <label class="ctl" title="Model for the rest of this session"><i class="codicon codicon-hubot"></i><select id="selModel"></select></label>
-        <label class="ctl" title="Reasoning effort"><i class="codicon codicon-dashboard"></i><select id="selEffort"></select></label>
-        <label class="ctl" title="Permission mode"><i class="codicon codicon-shield"></i><select id="selMode"></select></label>
-      </div>
       <span class="hint" id="hint"></span>
       <button class="icon" id="btnInterrupt" title="Interrupt current turn" hidden><i class="codicon codicon-debug-pause"></i></button>
       <button class="send" id="btnSend" title="Send (Enter)"><i class="codicon codicon-send"></i></button>
@@ -156,55 +152,69 @@ const btnInterrupt = document.getElementById('btnInterrupt') as HTMLButtonElemen
 const btnStop = document.getElementById('btnStop') as HTMLButtonElement;
 const jump = document.getElementById('jump') as HTMLButtonElement;
 const banner = document.getElementById('banner')!;
-const controlsEl = document.getElementById('controls')!;
-const selModel = document.getElementById('selModel') as HTMLSelectElement;
-const selEffort = document.getElementById('selEffort') as HTMLSelectElement;
-const selMode = document.getElementById('selMode') as HTMLSelectElement;
-
-// Live session controls (managed sessions only), mirroring the pickers in the Claude Code pane. The
-// model rows and each model's effort range are whatever this session's Claude Code reported when it
-// started (agent.managed.models), so they match the harness and account actually in use.
-const MODES: PickerOption[] = [
-  ['default', 'Ask before acting'],
-  ['acceptEdits', 'Accept edits'],
-  ['plan', 'Plan mode'],
-  ['auto', 'Auto mode'],
-  ['bypassPermissions', 'Bypass permissions'],
-];
-function fillSelect(sel: HTMLSelectElement, options: PickerOption[], current: string, labelFor: (v: string) => string) {
-  const opts = current && !options.some(([v]) => v === current) ? [...options, [current, labelFor(current)] as PickerOption] : options;
-  if (sel.dataset.sig !== JSON.stringify(opts)) {
-    sel.innerHTML = '';
-    for (const [v, label, title] of opts) {
-      const o = document.createElement('option');
-      o.value = v;
-      o.textContent = label;
-      if (title) o.title = title;
-      sel.appendChild(o);
-    }
-    sel.dataset.sig = JSON.stringify(opts);
-  }
-  sel.value = current;
-}
-function renderControls() {
-  const live = !!agent?.managed && !agent.managed.exited && !!machine?.online;
-  controlsEl.hidden = !live;
-  if (!live || !agent) return;
-  const models = agent.managed?.models;
-  const model = selectedModel(models, agent.managed?.model || agent.model || '');
-  fillSelect(selModel, modelOptions(models), model, (v) => shortModel(v) || v);
-  const efforts = effortOptions(models, model);
-  fillSelect(selEffort, efforts, agent.managed?.effort || agent.effort || '', (v) => v);
-  selEffort.disabled = efforts.length === 1; // the model takes no effort setting
-  fillSelect(selMode, MODES, agent.managed?.permissionMode || agent.permissionMode || 'default', (v) => v);
+// Toolbar under the message box, like the Claude Code pane: attach, "/" actions, context ring, cache
+// dot, subagent count, model + effort, permission mode. composer.ts draws it; this file acts on it.
+const barDeps: BarDeps = {
+  configure,
+  run: runAction,
+  insert(text) {
+    input.value = text;
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+    autoGrow();
+  },
+};
+const bar = createComposerBar(document.querySelector<HTMLElement>('.composer-actions')!, document.querySelector<HTMLElement>('.composer')!, barDeps);
+let attachmentCount = 0;
+function barStats(): BarStats {
+  const subs = [...stats.subagents.values()];
+  return { lastCacheRead: stats.lastCacheRead, lastCacheCreate: stats.lastCacheCreate, lastInput: stats.lastInput, calls: stats.calls, subagentsSpawned: subs.length, subagentsRunning: subs.filter((s) => !s.done).length };
 }
 function configure(change: { model?: string; effort?: string; permissionMode?: string }) {
-  controlsEl.classList.add('busy');
+  bar.setBusy(true);
   vscode.postMessage({ type: 'configure', ...change });
 }
-selModel.onchange = () => configure({ model: selModel.value });
-selEffort.onchange = () => configure({ effort: selEffort.value });
-selMode.onchange = () => configure({ permissionMode: selMode.value });
+/** Actions from the toolbar and the "/" menu (ids from core/composer.ts buildActions). */
+function runAction(id: string, arg?: string) {
+  switch (id) {
+    case 'attach':
+      vscode.postMessage({ type: 'attach' });
+      break;
+    case 'removeAttachment':
+      vscode.postMessage({ type: 'removeAttachment', id: arg });
+      break;
+    case 'compact':
+      vscode.postMessage({ type: 'slash', text: '/compact' });
+      break;
+    case 'clear':
+      vscode.postMessage({ type: 'slash', text: '/clear', confirm: `Clear the conversation of ${agent?.title || agent?.name || 'this session'}? Its history is dropped from the context; the transcript on disk stays.` });
+      break;
+    case 'slash':
+      if (arg) vscode.postMessage({ type: 'slash', text: arg });
+      break;
+    case 'reload':
+      resetLog();
+      vscode.postMessage({ type: 'reload' });
+      break;
+    case 'info':
+      infoEl.hidden = !infoEl.hidden;
+      renderInfo();
+      break;
+    case 'rename':
+      beginRename();
+      break;
+    case 'interrupt':
+    case 'stop':
+    case 'login':
+    case 'openWorkspace':
+    case 'openTerminal':
+      vscode.postMessage({ type: id });
+      break;
+    default:
+      // settings, help, report, copySessionId, resumeTerminal, rawTranscript: the extension does these.
+      vscode.postMessage({ type: 'action', id });
+  }
+}
 
 // Click the title to rename the session, like the Claude Code pane.
 const titleEl = document.getElementById('title')!;
@@ -253,12 +263,16 @@ jump.onclick = () => {
   scrollToBottom();
 };
 input.addEventListener('keydown', (e) => {
+  if (bar.isOpen() && bar.onKey(e)) return; // the "/" menu or a picker took the key
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     send();
   }
 });
-input.addEventListener('input', autoGrow);
+input.addEventListener('input', () => {
+  autoGrow();
+  bar.onInput(input.value); // "/" at the start opens the actions menu and filters it as you type
+});
 logEl.addEventListener('scroll', () => {
   pinned = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
   if (pinned) jump.hidden = true;
@@ -281,9 +295,10 @@ function autoGrow() {
 
 function send() {
   const text = input.value.trim();
-  if (!text || sending) return;
+  if ((!text && !attachmentCount) || sending) return;
+  bar.close();
   vscode.postMessage({ type: 'send', text });
-  appendLocalEcho(text);
+  appendLocalEcho(text || `(${attachmentCount} file${attachmentCount === 1 ? '' : 's'})`);
   input.value = '';
   autoGrow();
 }
@@ -616,13 +631,9 @@ function renderHeader() {
   icon.innerHTML = `<i class="codicon codicon-${STATE_ICON[st] ?? 'circle-outline'}"></i>`;
   const bits = [STATE_LABEL[st] ?? st];
   if (agent.stateDetail && st !== 'idle') bits.push(agent.stateDetail);
-  const model = shortModel(agent.model || agent.managed?.model);
-  const meta: string[] = [];
-  if (model) meta.push(model + (agent.effort ? ` · ${agent.effort}` : ''));
-  const mode = agent.permissionMode || agent.managed?.permissionMode;
-  if (mode) meta.push(mode);
-  if (agent.contextTokens) meta.push(`${fmtTokens(agent.contextTokens)} ctx`);
-  meta.push(`${machine.name} · ${agent.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? ''}`);
+  // Model, effort, mode and context size live in the toolbar under the message box.
+  const meta: string[] = [`${machine.name} · ${agent.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? ''}`];
+  if (agent.gitBranch) meta.push(agent.gitBranch);
   if (agent.managed) meta.push(agent.managed.exited ? 'managed · ended' : `managed${agent.managed.costUsd ? ` · $${agent.managed.costUsd.toFixed(2)}` : ''}`);
   document.getElementById('sub')!.textContent = `${bits.join(' — ')}   ·   ${meta.join(' · ')}`;
 
@@ -637,8 +648,7 @@ function renderHeader() {
   input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
   document.getElementById('hint')!.textContent = subagent ? 'subagent · read-only' : managedLive ? '' : agent.alive ? 'observed session' : '';
 
-  controlsEl.classList.remove('busy');
-  renderControls();
+  bar.render(agent, machine, barStats());
   renderTicker();
   renderCards();
   if (!infoEl.hidden) renderInfo();
@@ -868,6 +878,7 @@ window.addEventListener('message', (ev) => {
   switch (m.type) {
     case 'init':
     case 'agent':
+      if (m.type === 'init') barDeps.extVersion = m.extVersion;
       agent = m.agent;
       machine = m.machine;
       renderHeader();
@@ -876,14 +887,19 @@ window.addEventListener('message', (ev) => {
       if (m.reset) resetLog();
       for (const e of m.entries) renderEntry(e);
       if (!infoEl.hidden) renderInfo();
+      bar.render(agent, machine, barStats()); // cache and subagent pills follow the transcript
       afterAppend();
       break;
     case 'status':
       banner.textContent = m.text;
       banner.className = `banner ${m.kind}`;
       banner.hidden = false;
-      controlsEl.classList.remove('busy');
+      bar.setBusy(false);
       if (m.kind !== 'error') setTimeout(() => (banner.hidden = true), 4000);
+      break;
+    case 'attachments':
+      attachmentCount = m.items.length;
+      bar.setAttachments(m.items);
       break;
     case 'sending':
       sending = m.busy;
