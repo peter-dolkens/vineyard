@@ -4,6 +4,8 @@
  */
 
 import { marked } from 'marked';
+import { modelOptions, selectedModel, effortOptions, type PickerOption } from '../core/models.ts';
+import type { ModelInfo } from '../core/model.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -36,7 +38,7 @@ interface Agent {
   gitBranch?: string;
   version?: string;
   pendingTools: { id: string; name: string; summary?: string }[];
-  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string };
+  managed?: { exited: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[] };
 }
 interface MachineInfo {
   id: string;
@@ -155,37 +157,25 @@ const selModel = document.getElementById('selModel') as HTMLSelectElement;
 const selEffort = document.getElementById('selEffort') as HTMLSelectElement;
 const selMode = document.getElementById('selMode') as HTMLSelectElement;
 
-// Live session controls (managed sessions only), mirroring the pickers in the Claude Code pane.
-const MODELS: [string, string][] = [
-  ['', 'Default model'],
-  ['claude-fable-5-1', 'Fable 5.1'],
-  ['claude-opus-5', 'Opus 5'],
-  ['claude-sonnet-5', 'Sonnet 5'],
-  ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
-];
-const EFFORTS: [string, string][] = [
-  ['', 'Default effort'],
-  ['low', 'Low effort'],
-  ['medium', 'Medium effort'],
-  ['high', 'High effort'],
-  ['xhigh', 'Extra-high effort'],
-  ['max', 'Max effort'],
-];
-const MODES: [string, string][] = [
+// Live session controls (managed sessions only), mirroring the pickers in the Claude Code pane. The
+// model rows and each model's effort range are whatever this session's Claude Code reported when it
+// started (agent.managed.models), so they match the harness and account actually in use.
+const MODES: PickerOption[] = [
   ['default', 'Ask before acting'],
   ['acceptEdits', 'Accept edits'],
   ['plan', 'Plan mode'],
   ['auto', 'Auto mode'],
   ['bypassPermissions', 'Bypass permissions'],
 ];
-function fillSelect(sel: HTMLSelectElement, options: [string, string][], current: string, labelFor: (v: string) => string) {
-  const opts = current && !options.some(([v]) => v === current) ? [...options, [current, labelFor(current)] as [string, string]] : options;
+function fillSelect(sel: HTMLSelectElement, options: PickerOption[], current: string, labelFor: (v: string) => string) {
+  const opts = current && !options.some(([v]) => v === current) ? [...options, [current, labelFor(current)] as PickerOption] : options;
   if (sel.dataset.sig !== JSON.stringify(opts)) {
     sel.innerHTML = '';
-    for (const [v, label] of opts) {
+    for (const [v, label, title] of opts) {
       const o = document.createElement('option');
       o.value = v;
       o.textContent = label;
+      if (title) o.title = title;
       sel.appendChild(o);
     }
     sel.dataset.sig = JSON.stringify(opts);
@@ -196,8 +186,12 @@ function renderControls() {
   const live = !!agent?.managed && !agent.managed.exited && !!machine?.online;
   controlsEl.hidden = !live;
   if (!live || !agent) return;
-  fillSelect(selModel, MODELS, agent.managed?.model || agent.model || '', (v) => shortModel(v) || v);
-  fillSelect(selEffort, EFFORTS, agent.managed?.effort || agent.effort || '', (v) => v);
+  const models = agent.managed?.models;
+  const model = selectedModel(models, agent.managed?.model || agent.model || '');
+  fillSelect(selModel, modelOptions(models), model, (v) => shortModel(v) || v);
+  const efforts = effortOptions(models, model);
+  fillSelect(selEffort, efforts, agent.managed?.effort || agent.effort || '', (v) => v);
+  selEffort.disabled = efforts.length === 1; // the model takes no effort setting
   fillSelect(selMode, MODES, agent.managed?.permissionMode || agent.permissionMode || 'default', (v) => v);
 }
 function configure(change: { model?: string; effort?: string; permissionMode?: string }) {

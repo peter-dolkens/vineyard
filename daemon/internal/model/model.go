@@ -80,6 +80,17 @@ type PendingRequest struct {
 	At                      int64           `json:"at"`
 }
 
+// ModelInfo is one row of the model picker Claude Code offers this account, as the harness reports
+// it over the control protocol when a managed session starts. Value is what set_model / --model
+// accept ("default" means Claude Code's own default); ResolvedModel is the wire id it maps to.
+type ModelInfo struct {
+	Value                 string   `json:"value"`
+	ResolvedModel         string   `json:"resolvedModel,omitempty"`
+	DisplayName           string   `json:"displayName"`
+	Description           string   `json:"description,omitempty"`
+	SupportedEffortLevels []string `json:"supportedEffortLevels,omitempty"` // empty: the model takes no effort setting
+}
+
 type ManagedInfo struct {
 	SessionID      string          `json:"sessionId"`
 	PID            int             `json:"pid"`
@@ -97,6 +108,9 @@ type ManagedInfo struct {
 	Exited         bool            `json:"exited"`
 	ExitedAt       int64           `json:"exitedAt,omitempty"`
 	LastError      string          `json:"lastError,omitempty"`
+	// Models is what this session's Claude Code offers in its model picker; empty until the harness
+	// has answered the initialize request sent at spawn.
+	Models []ModelInfo `json:"models,omitempty"`
 }
 
 type Workspace struct {

@@ -82,6 +82,20 @@ export interface PendingRequest {
   at: number;
 }
 
+/**
+ * One row of the model picker Claude Code offers this account, as the harness reported it when the
+ * managed session started. `value` is what set_model / --model accept ('default' = Claude Code's own
+ * default); `resolvedModel` is the wire id it maps to.
+ */
+export interface ModelInfo {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description?: string;
+  /** Empty or missing when the model takes no effort setting. */
+  supportedEffortLevels?: string[];
+}
+
 export interface ManagedInfo {
   sessionId: string;
   pid: number;
@@ -99,6 +113,8 @@ export interface ManagedInfo {
   exited: boolean;
   exitedAt?: number;
   lastError?: string;
+  /** What this session's Claude Code offers in its model picker; absent until it has answered initialize. */
+  models?: ModelInfo[];
 }
 
 export interface Workspace {

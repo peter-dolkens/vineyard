@@ -46,7 +46,14 @@ type proc struct {
 	stderr []string
 	done   chan struct{}
 	// ctl holds the reply channel for each control_request we sent and are waiting on.
-	ctl map[string]chan error
+	ctl map[string]chan ctlReply
+}
+
+// ctlReply is Claude Code's answer to one of our control_requests: the response body on success,
+// or why it was refused.
+type ctlReply struct {
+	body json.RawMessage
+	err  error
 }
 
 // controlTimeout bounds how long a live setting change waits for Claude Code to acknowledge it.
@@ -192,7 +199,7 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 		return "", fmt.Errorf("start claude: %w", err)
 	}
 	p := &proc{
-		cmd: cmd, stdin: stdin, done: make(chan struct{}), ctl: map[string]chan error{},
+		cmd: cmd, stdin: stdin, done: make(chan struct{}), ctl: map[string]chan ctlReply{},
 		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
 	}
 	m.mu.Lock()
@@ -203,6 +210,7 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 	go m.readStdout(p, stdout)
 	go m.readStderr(p, stderr)
 	go m.wait(p)
+	go m.initialize(p)
 
 	if strings.TrimSpace(o.Prompt) != "" {
 		if err := m.Send(sid, o.Prompt); err != nil {
@@ -295,10 +303,11 @@ func (m *Manager) Interrupt(sid string) error {
 }
 
 // control sends a control_request and waits for Claude Code's control_response, so callers learn
-// whether a live change was accepted (e.g. bypassPermissions can be refused).
-func (m *Manager) control(p *proc, req map[string]any) error {
+// whether a live change was accepted (e.g. bypassPermissions can be refused). The response body is
+// returned for requests that answer with data (initialize).
+func (m *Manager) control(p *proc, req map[string]any) (json.RawMessage, error) {
 	rid := newUUID()
-	ch := make(chan error, 1)
+	ch := make(chan ctlReply, 1)
 	m.mu.Lock()
 	p.ctl[rid] = ch
 	m.mu.Unlock()
@@ -309,18 +318,59 @@ func (m *Manager) control(p *proc, req map[string]any) error {
 	}
 	if err := m.write(p, map[string]any{"type": "control_request", "request_id": rid, "request": req}); err != nil {
 		forget()
-		return err
+		return nil, err
 	}
 	select {
-	case err := <-ch:
-		return err
+	case r := <-ch:
+		return r.body, r.err
 	case <-p.done:
 		forget()
-		return errors.New("the session exited before it answered")
+		return nil, errors.New("the session exited before it answered")
 	case <-time.After(controlTimeout):
 		forget()
-		return errors.New("the session did not acknowledge the change in time")
+		return nil, errors.New("the session did not acknowledge the change in time")
 	}
+}
+
+// initialize asks the freshly spawned session what it offers, the same handshake the Agent SDK
+// performs, and records the model picker so viewers list exactly the models this harness and
+// account can use rather than a list baked into the extension.
+func (m *Manager) initialize(p *proc) {
+	body, err := m.control(p, map[string]any{"subtype": "initialize"})
+	if err != nil {
+		m.log.Printf("managed: %s initialize: %v", p.info.SessionID, err)
+		return
+	}
+	models := parseModels(body)
+	if len(models) == 0 {
+		return
+	}
+	m.mu.Lock()
+	p.info.Models = models
+	m.mu.Unlock()
+	m.changed()
+}
+
+// parseModels extracts the picker rows from an initialize response. Rows Claude Code marks disabled
+// (not usable on this account) are dropped; order is Claude Code's own.
+func parseModels(body json.RawMessage) []model.ModelInfo {
+	var v struct {
+		Models []struct {
+			model.ModelInfo
+			Disabled bool `json:"disabled"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return nil
+	}
+	out := make([]model.ModelInfo, 0, len(v.Models))
+	for _, r := range v.Models {
+		if r.Disabled || r.Value == "" {
+			continue
+		}
+		out = append(out, r.ModelInfo)
+	}
+	return out
 }
 
 // SetModel switches the model for the rest of the session; "" returns to Claude Code's default.
@@ -333,7 +383,7 @@ func (m *Manager) SetModel(sid, modelID string) error {
 	if modelID != "" {
 		req["model"] = modelID
 	}
-	if err := m.control(p, req); err != nil {
+	if _, err := m.control(p, req); err != nil {
 		return fmt.Errorf("set model: %w", err)
 	}
 	m.mu.Lock()
@@ -353,7 +403,7 @@ func (m *Manager) SetEffort(sid, effort string) error {
 	if effort != "" {
 		level = effort
 	}
-	if err := m.control(p, map[string]any{"subtype": "apply_flag_settings", "settings": map[string]any{"effortLevel": level}}); err != nil {
+	if _, err := m.control(p, map[string]any{"subtype": "apply_flag_settings", "settings": map[string]any{"effortLevel": level}}); err != nil {
 		return fmt.Errorf("set effort: %w", err)
 	}
 	m.mu.Lock()
@@ -369,7 +419,7 @@ func (m *Manager) Rename(sid, title string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.control(p, map[string]any{"subtype": "rename_session", "title": title}); err != nil {
+	if _, err := m.control(p, map[string]any{"subtype": "rename_session", "title": title}); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}
 	m.changed()
@@ -385,7 +435,7 @@ func (m *Manager) SetPermissionMode(sid, mode string) error {
 	if mode == "" {
 		mode = "default"
 	}
-	if err := m.control(p, map[string]any{"subtype": "set_permission_mode", "mode": mode}); err != nil {
+	if _, err := m.control(p, map[string]any{"subtype": "set_permission_mode", "mode": mode}); err != nil {
 		return fmt.Errorf("set permission mode: %w", err)
 	}
 	m.mu.Lock()
@@ -434,9 +484,10 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				Description             string          `json:"description"`
 			} `json:"request"`
 			Response struct {
-				Subtype   string `json:"subtype"`
-				RequestID string `json:"request_id"`
-				Error     string `json:"error"`
+				Subtype   string          `json:"subtype"`
+				RequestID string          `json:"request_id"`
+				Error     string          `json:"error"`
+				Response  json.RawMessage `json:"response"`
 			} `json:"response"`
 			SessionID      string  `json:"session_id"`
 			Model          string  `json:"model"`
@@ -460,9 +511,9 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 					if msg == "" {
 						msg = "rejected by the session"
 					}
-					ch <- errors.New(msg)
+					ch <- ctlReply{err: errors.New(msg)}
 				} else {
-					ch <- nil
+					ch <- ctlReply{body: env.Response.Response}
 				}
 			}
 		case "control_request":
