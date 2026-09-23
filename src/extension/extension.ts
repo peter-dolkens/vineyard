@@ -25,11 +25,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const tree = new FleetTree(fleet);
   const view = vscode.window.createTreeView<Node>('vineyard.fleet', { treeDataProvider: tree, showCollapseAll: true });
   const statusBar = new FleetStatusBar(fleet);
-  const notifier = new Notifier(fleet);
   const transcripts = new TranscriptProvider(fleet);
   const setup = new Setup(context, client, fleet, log);
   const sessionPrefs = new SessionPrefStore(context.globalState);
   const chats = new ChatPanels(context, fleet, log, sessionPrefs);
+  const notifier = new Notifier(fleet, (id) => chats.isActive(id));
   const updater = new Updater(context, client, fleet, setup, log);
 
   context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));

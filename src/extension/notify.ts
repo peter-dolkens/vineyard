@@ -11,7 +11,10 @@ export class Notifier implements vscode.Disposable {
   private readonly sub: vscode.Disposable;
   private lastShown = new Map<string, number>();
 
-  constructor(private readonly fleet: FleetService) {
+  constructor(
+    private readonly fleet: FleetService,
+    private readonly paneActive: (agentId: string) => boolean,
+  ) {
     this.sub = fleet.onAgentTransition((t) => this.handle(t));
   }
 
@@ -22,6 +25,9 @@ export class Notifier implements vscode.Disposable {
     // A local session Vineyard did not start (the Claude Code pane, a terminal) is already prompting
     // through its own UI; a second notification from us would only duplicate it.
     if (!notifiesHere(current, machine.local)) return;
+    // The agent's pane is open and active in this window, so the user already sees the change. Other
+    // windows and machines decide for themselves and still notify.
+    if (this.paneActive(current.id)) return;
 
     const wantsAttention = cfg.get<boolean>('notify.attention', true) && needsAttention(current.state) && !(previous && needsAttention(previous.state));
     const finished = cfg.get<boolean>('notify.finished', false) && current.state === 'idle' && previous !== undefined && isBusy(previous.state);

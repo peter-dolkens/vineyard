@@ -531,12 +531,12 @@
         "vineyard.notify.attention": {
           "type": "boolean",
           "default": true,
-          "description": "Pop a notification when an agent starts waiting on you (question or permission). Sessions on this machine that Vineyard did not start (the Claude Code pane, a terminal) are skipped: they already prompt through their own UI."
+          "description": "Pop a notification when an agent starts waiting on you (question or permission). Sessions on this machine that Vineyard did not start (the Claude Code pane, a terminal) are skipped: they already prompt through their own UI. No notification is shown in a window where that agent's chat pane is the active tab; other windows and machines still get one."
         },
         "vineyard.notify.finished": {
           "type": "boolean",
           "default": false,
-          "description": "Pop a notification when a working agent goes idle. Sessions on this machine that Vineyard did not start are skipped, as for vineyard.notify.attention."
+          "description": "Pop a notification when a working agent goes idle. Sessions on this machine that Vineyard did not start, and agents whose chat pane is the active tab, are skipped, as for vineyard.notify.attention."
         },
         "vineyard.statusBar.enabled": {
           "type": "boolean",

@@ -404,6 +404,11 @@ export class ChatPanels implements vscode.Disposable {
     this.panels.set(agent.id, chat);
   }
 
+  /** Whether this agent's chat panel is the active editor in this window, where the user is already looking at it. */
+  isActive(agentId: string): boolean {
+    return this.panels.get(agentId)?.panel.active ?? false;
+  }
+
   dispose(): void {
     for (const p of this.panels.values()) p.panel.dispose();
     this.panels.clear();
