@@ -81,8 +81,18 @@ use it.
   unreachable machines show their last-known snapshot from `~/.vineyard/cache.json`.
 * **Security.** All traffic is TLS 1.3 with mutual authentication using one shared fleet certificate
   (ECDSA P-256, self-signed, 100 years) generated on the first machine and copied to the others over
-  SSH during setup. Possession of `fleet.key` *is* membership, exactly like a pre-shared key; rotate by
-  regenerating and re-running setup. Transcript reads are sandboxed to `~/.claude/projects`.
+  SSH during setup. Possession of `fleet.key` *is* membership, exactly like a pre-shared key. Transcript reads are
+  sandboxed to `~/.claude/projects`.
+* **Key rotation.** `rotatekey` (*Rotate Fleet Key…*, `vineyardd rotate-key`) makes a new key with two
+  certificates: a self-signed one (the new `fleet.crt`) and a cross certificate for the same key signed
+  by the old one (`fleet-cross.crt`); the old certificate is kept as `fleet-prev.crt`. Until `prevUntil`
+  (default 14 days) rotated machines present the cross certificate, which machines still on the old key
+  accept, and trust both old and new, so those machines are accepted too. Excluded machines are removed
+  (fleet-wide, as above) first. The key set goes out in `rekey` over every live peer link, every hello
+  states `keyAt`, and whichever side of a connection has the newer key pushes it, so a machine offline
+  at rotation catches up the next time it meets any rotated member. When the grace period ends the
+  previous and cross certificates are deleted and only the new key is trusted. Invites hand out the
+  whole key set, grace files included.
 * **Joining without SSH: invite codes.** Any member can mint a single-use code valid for 15 minutes
   (`vineyardd invite`, or *Vineyard: Create Invite Code*). The code is `vineyard:` + base64url JSON
   carrying the inviter's addresses (advertised name plus its LAN IPs), a 128-bit fingerprint of the
@@ -222,6 +232,8 @@ tail -f ~/.vineyard/vineyardd.log
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `sync {entries}` | accepting peer→dialer | once per connection: last-known state of other machines |
 | `removed {removals}` | peer→peer | a machine was just removed from the fleet |
+| `rekey {keys}` | peer→peer | a newer fleet key set, pushed to a machine that has an older one |
+| `req rotatekey {exclude, graceHours}` | viewer→local daemon | rotate the fleet key |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
 | `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |

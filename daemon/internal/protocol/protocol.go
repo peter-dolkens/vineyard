@@ -65,6 +65,32 @@ type Hello struct {
 	// Added is when the sender itself was last deliberately added (joined with an invite), so a
 	// member still holding an older removal of it lets it back in.
 	Added int64 `json:"added,omitempty"`
+	// KeyAt is when the sender's fleet key was made (Unix ms, 0 = original); the side with the newer
+	// key pushes it to the other in a rekey.
+	KeyAt int64 `json:"keyAt,omitempty"`
+}
+
+// KeySet is a fleet key and, during a rotation grace period, the certificates that bridge it to
+// the previous key (see config/keys.go). PEM throughout.
+type KeySet struct {
+	Cert      string `json:"cert"`
+	Key       string `json:"key"`
+	Cross     string `json:"cross,omitempty"`
+	Prev      string `json:"prev,omitempty"`
+	KeyAt     int64  `json:"keyAt"`
+	PrevUntil int64  `json:"prevUntil,omitempty"`
+}
+
+// Rekey passes a newer fleet key to a peer.
+type Rekey struct {
+	T    string `json:"t"` // "rekey"
+	Keys KeySet `json:"keys"`
+}
+
+// RotateArgs asks the local daemon to rotate the fleet key (op "rotatekey", viewers only).
+type RotateArgs struct {
+	Exclude    []string `json:"exclude,omitempty"`
+	GraceHours int      `json:"graceHours,omitempty"`
 }
 
 // DialbackArgs asks a member to try connecting to the sender at these addresses (op "dialback").
@@ -209,6 +235,11 @@ type Joined struct {
 	Peers []PeerAddr `json:"peers,omitempty"`
 	// Added is when the inviter admitted the joiner (Unix ms); the joiner puts it in its hellos.
 	Added int64 `json:"added,omitempty"`
+	// During a rotation grace period, the bridge certificates and the key's timing (see KeySet).
+	Cross     string `json:"cross,omitempty"`
+	Prev      string `json:"prev,omitempty"`
+	KeyAt     int64  `json:"keyAt,omitempty"`
+	PrevUntil int64  `json:"prevUntil,omitempty"`
 }
 
 // Invite is what gets encoded into the shareable code.

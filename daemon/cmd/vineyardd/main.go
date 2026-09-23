@@ -48,6 +48,9 @@ Usage:
   vineyardd invite       Ask the local daemon for a single-use invite code (valid 15 minutes).
   vineyardd join CODE [--name N] [--port P] [--machine-id ID] [--advertise HOST:PORT]
         Join a fleet using an invite code: fetches the certificate and peer list, writes config.
+  vineyardd rotate-key [--exclude ID ...] [--grace 336h]
+        Replace the fleet key everywhere: the new key reaches connected members now and others when
+        they next connect within the grace period. Excluded machines are removed and never get it.
   vineyardd version
 
 Environment: VINEYARD_DIR overrides ~/.vineyard.
@@ -81,6 +84,8 @@ func main() {
 		err = cmdPeer(os.Args[2:])
 	case "invite":
 		err = cmdInvite()
+	case "rotate-key":
+		err = cmdRotateKey(os.Args[2:])
 	case "join":
 		err = cmdJoin(os.Args[2:])
 	case "version", "--version", "-v":
@@ -432,6 +437,44 @@ func cmdInvite() error {
 	}
 }
 
+func cmdRotateKey(args []string) error {
+	fs := flag.NewFlagSet("rotate-key", flag.ContinueOnError)
+	var exclude peerFlags
+	fs.Var(&exclude, "exclude", "machine id to remove from the fleet and leave out of the new key (repeatable)")
+	grace := fs.Duration("grace", mesh.DefaultRotationGrace, "how long machines still on the old key may reconnect and catch up")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	conn, err := dialLocalViewer(cfg, "cli")
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	a, _ := json.Marshal(protocol.RotateArgs{Exclude: exclude, GraceHours: int(grace.Hours())})
+	if err := conn.Send(protocol.Request{T: "req", ID: "rot", Op: "rotatekey", Args: a}); err != nil {
+		return err
+	}
+	for {
+		b, err := conn.Recv(30 * time.Second)
+		if err != nil {
+			return err
+		}
+		var res protocol.Response
+		if json.Unmarshal(b, &res) != nil || res.T != "res" || res.ID != "rot" {
+			continue
+		}
+		if !res.OK {
+			return fmt.Errorf("%s", res.Error)
+		}
+		fmt.Printf("fleet key rotated; machines on the old key can catch up until %s\n", time.Now().Add(*grace).Format(time.DateTime))
+		return nil
+	}
+}
+
 func cmdJoin(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	name := fs.String("name", "", "display name (default: short hostname)")
@@ -467,16 +510,12 @@ func cmdJoin(args []string) error {
 	if err != nil {
 		return fmt.Errorf("join via %s failed: %w", inv.Name, err)
 	}
-	if err := os.MkdirAll(config.Dir(), 0o700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(config.Path(config.CertFile), []byte(joined.Cert), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(config.Path(config.KeyFile), []byte(joined.Key), 0o600); err != nil {
+	// The key set includes the rotation bridge certificates while a grace period runs.
+	if err := config.InstallKeys("", []byte(joined.Cert), []byte(joined.Key), []byte(joined.Cross), []byte(joined.Prev)); err != nil {
 		return err
 	}
 	c.Added = joined.Added
+	c.KeyAt, c.PrevUntil = joined.KeyAt, joined.PrevUntil
 	for _, p := range joined.Peers {
 		c.AddPeer(p)
 	}

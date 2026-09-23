@@ -91,6 +91,12 @@
         "icon": "$(link)"
       },
       {
+        "command": "vineyard.rotateFleetKey",
+        "title": "Rotate Fleet Key…",
+        "category": "Vineyard",
+        "icon": "$(key)"
+      },
+      {
         "command": "vineyard.joinWithCode",
         "title": "Join Fleet with Invite Code",
         "category": "Vineyard",

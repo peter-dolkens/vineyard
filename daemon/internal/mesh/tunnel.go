@@ -76,9 +76,9 @@ func (n *Node) innerTLS(raw net.Conn, rd *bufio.Reader, client bool) (net.Conn, 
 	under := bufConn{Conn: raw, rd: rd}
 	var tc *tls.Conn
 	if client {
-		tc = tls.Client(under, n.clientTLS)
+		tc = tls.Client(under, n.client())
 	} else {
-		tc = tls.Server(under, n.strictTLS)
+		tc = tls.Server(under, n.strict())
 	}
 	_ = tc.SetDeadline(time.Now().Add(helloTimeout))
 	if err := tc.Handshake(); err != nil {

@@ -192,6 +192,37 @@ export class Setup {
     if (choice === 'Show code') await vscode.window.showInputBox({ title: 'Vineyard invite code', value: res.code, prompt: 'Paste this on the joining machine. It also works as a vscode:// link.' });
   }
 
+  /**
+   * Replace the fleet key everywhere, optionally leaving out (and removing) machines that must lose
+   * access, such as a lost laptop. Machines offline now catch up when they next connect within the
+   * grace period.
+   */
+  async rotateFleetKey(): Promise<void> {
+    if (this.client.state !== 'connected') throw new Error('Not connected to the local daemon.');
+    const others = this.fleet.machines().filter((m) => !m.local);
+    const picks = await vscode.window.showQuickPick(
+      others.map((m) => ({ label: m.name, description: m.online ? 'online' : 'offline', id: m.id })),
+      { title: 'Rotate fleet key: machines to remove and leave out (optional)', canPickMany: true, placeHolder: 'Pick a lost or retired machine, or press Enter to leave everyone in' },
+    );
+    if (!picks) return;
+    const days = await vscode.window.showInputBox({
+      title: 'Rotate fleet key: grace period',
+      prompt: 'Days that machines still on the old key (offline now) can reconnect and catch up. After that they must join again with an invite.',
+      value: '14',
+      validateInput: (v) => (/^\d+$/.test(v.trim()) && Number(v) > 0 ? undefined : 'A whole number of days'),
+    });
+    if (!days) return;
+    const excluded = picks.map((p) => p.label).join(', ');
+    const ok = await vscode.window.showWarningMessage(
+      `Replace the fleet key on every machine?${excluded ? ` ${excluded} will be removed and will not get the new key.` : ''} Machines offline now have ${days} days to reconnect.`,
+      { modal: true },
+      'Rotate Key',
+    );
+    if (!ok) return;
+    await this.client.request('rotatekey', undefined, { exclude: picks.map((p) => p.id), graceHours: Number(days) * 24 }, 30_000);
+    void vscode.window.showInformationMessage(`Fleet key rotated. Connected machines have it now; the rest get it when they next connect within ${days} days.`);
+  }
+
   /** Join an existing fleet from this machine using an invite code; then install the service. */
   async joinWithCode(code?: string): Promise<void> {
     code = code?.trim() || (await vscode.window.showInputBox({ title: 'Join fleet', prompt: 'Paste the invite code from another machine (starts with vineyard: or vscode://)', ignoreFocusOut: true }))?.trim();

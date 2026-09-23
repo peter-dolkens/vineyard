@@ -11,11 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
 
@@ -68,7 +66,9 @@ func localAddrs(port string) []string {
 
 // CreateInvite mints a single-use code valid for inviteTTL and opens the unauthenticated join path.
 func (n *Node) CreateInvite() (string, error) {
-	leaf := n.serverTLS.Certificates[0]
+	n.mu.Lock()
+	leaf := n.tlsStrict.Certificates[0] // what we present, so the joiner's pin matches the handshake
+	n.mu.Unlock()
 	cert, err := x509.ParseCertificate(leaf.Certificate[0])
 	if err != nil {
 		return "", err
@@ -164,9 +164,8 @@ func (n *Node) handleJoin(l *link) {
 		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "invalid or expired invite"})
 		return
 	}
-	certPEM, err1 := os.ReadFile(config.Path(config.CertFile))
-	keyPEM, err2 := os.ReadFile(config.Path(config.KeyFile))
-	if err1 != nil || err2 != nil {
+	ks, err := n.keySet()
+	if err != nil {
 		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "fleet certificate unavailable"})
 		return
 	}
@@ -199,7 +198,7 @@ func (n *Node) handleJoin(l *link) {
 			n.logf("save config: %v", err)
 		}
 	}
-	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: string(certPEM), Key: string(keyPEM), Peers: peers, Added: added})
+	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: ks.Cert, Key: ks.Key, Cross: ks.Cross, Prev: ks.Prev, KeyAt: ks.KeyAt, PrevUntil: ks.PrevUntil, Peers: peers, Added: added})
 	n.logf("machine %s (%s) joined via invite from %s", j.MachineID, j.Name, l.conn.RemoteAddr())
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()

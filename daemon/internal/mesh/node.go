@@ -58,6 +58,8 @@ type Options struct {
 	Managed *managed.Manager
 	// Auth relays `claude auth login` for viewers on other machines (optional).
 	Auth *auth.Manager
+	// Dir holds the fleet key files; empty means config.Dir(). Tests give each daemon its own.
+	Dir string
 }
 
 type link struct {
@@ -122,11 +124,16 @@ func (pr pendingReq) fail(msg string) {
 }
 
 type Node struct {
-	opts      Options
-	cfg       *config.Config
-	serverTLS *tls.Config
-	clientTLS *tls.Config
-	strictTLS *tls.Config // serverTLS without the invite exception: for the end-to-end handshake in a relay
+	opts Options
+	cfg  *config.Config
+	// serverTLS is the listener's configuration; it hands each handshake the current strict or
+	// lenient one. The three below change when a key rotation lands or its grace period ends, so
+	// they are read under mu (see client, strict, rebuildTLS in rotate.go).
+	serverTLS  *tls.Config
+	tlsStrict  *tls.Config
+	tlsLenient *tls.Config // strict, but tolerating no client certificate: only while an invite is open
+	tlsClient  *tls.Config
+	tlsGrace   bool // the configurations above include the previous key
 
 	mu          sync.Mutex
 	peers       map[string]*peerState
@@ -154,7 +161,7 @@ type Node struct {
 }
 
 func New(opts Options) (*Node, error) {
-	srv, cli, err := FleetTLS()
+	srv, cli, err := fleetTLS(opts.Dir, opts.Config.PrevUntil)
 	if err != nil {
 		return nil, fmt.Errorf("load fleet certificate: %w", err)
 	}
@@ -164,8 +171,6 @@ func New(opts Options) (*Node, error) {
 	n := &Node{
 		opts:      opts,
 		cfg:       opts.Config,
-		serverTLS: srv,
-		clientTLS: cli,
 		peers:     map[string]*peerState{},
 		links:     map[*link]struct{}{},
 		viewers:   map[*link]struct{}{},
@@ -175,19 +180,19 @@ func New(opts Options) (*Node, error) {
 		callbacks: map[string]chan legConn{},
 		wake:      make(chan struct{}, 1),
 	}
+	n.setTLSLocked(srv, cli)
 	// Closed by default: only while an invite is outstanding may a client connect without a certificate.
-	strict := srv
-	lenient := lenientFor(srv)
 	n.serverTLS = &tls.Config{
 		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
-			if n.hasActiveInvites() {
-				return lenient, nil
+			lenient := n.hasActiveInvites()
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			if lenient {
+				return n.tlsLenient, nil
 			}
-			return strict, nil
+			return n.tlsStrict, nil
 		},
 	}
-	n.serverTLS.Certificates = srv.Certificates
-	n.strictTLS = strict
 	n.awake.Disabled = !opts.Config.KeepAwake()
 	for _, p := range opts.Config.Peers {
 		n.peers[p.MachineID] = &peerState{id: p.MachineID, addr: p.Addr, addrs: config.MergeAddrs(p.Addr, p.Addrs, nil)}
@@ -352,7 +357,7 @@ func (n *Node) dialAddrs(addrs []string) (*tls.Conn, string, error) {
 	if n.dialFilter != nil {
 		addrs = n.dialFilter(addrs)
 	}
-	return dialPeer(addrs, n.clientTLS)
+	return dialPeer(addrs, n.client())
 }
 
 func (n *Node) dial(p *peerState) {
@@ -452,7 +457,14 @@ func (n *Node) hello(role string) protocol.Hello {
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
 		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: n.selfAddrs(),
 		Peers: n.knownPeers(), Uplinks: n.uplinks(), Removed: n.removals(), Added: n.cfg.Added,
+		KeyAt: n.keyAt(),
 	}
+}
+
+func (n *Node) keyAt() int64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.cfg.KeyAt
 }
 
 func (n *Node) removals() []protocol.Removal {
@@ -740,6 +752,9 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	}
 	if removedAny {
 		n.refreshViewers()
+	}
+	if n.keyAt() > h.KeyAt {
+		go n.sendRekey(l) // it missed a rotation (offline at the time); this is its catch-up
 	}
 	for _, q := range probe {
 		go n.probeDirect(q)
@@ -1052,6 +1067,7 @@ func (n *Node) maintenanceLoop(ctx context.Context) {
 		tick++
 		n.reconcileSubscriptions()
 		n.uplinkTick()
+		n.graceTick()
 		if tick%int(pingEvery/time.Second) == 0 {
 			n.pingAndReap()
 		}
@@ -1198,6 +1214,11 @@ func (n *Node) dispatch(l *link, b []byte) {
 		return
 	}
 	switch env.T {
+	case "rekey":
+		var m protocol.Rekey
+		if json.Unmarshal(b, &m) == nil {
+			go n.handleRekey(l, m.Keys)
+		}
 	case "removed":
 		var m protocol.Removed
 		if json.Unmarshal(b, &m) != nil || l.role != "peer" {
@@ -1312,6 +1333,24 @@ func (n *Node) dispatch(l *link, b []byte) {
 }
 
 func (n *Node) handleRequest(l *link, r protocol.Request) {
+	if r.Op == "rotatekey" && (r.Target == "" || r.Target == n.cfg.MachineID) {
+		if l.role != "viewer" {
+			_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: false, Error: "only a viewer on this machine may rotate the fleet key"})
+			return
+		}
+		go func() {
+			var a protocol.RotateArgs
+			_ = json.Unmarshal(r.Args, &a)
+			at, err := n.rotateKey(a.Exclude, time.Duration(a.GraceHours)*time.Hour)
+			if err != nil {
+				_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: false, Error: err.Error()})
+				return
+			}
+			data, _ := json.Marshal(map[string]int64{"keyAt": at})
+			_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: true, Data: data})
+		}()
+		return
+	}
 	if r.Op == "dialback" && l.role == "peer" && (r.Target == "" || r.Target == n.cfg.MachineID) {
 		go n.answerDialback(l, r) // dials out; keep this link's read loop free meanwhile
 		return

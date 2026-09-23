@@ -241,8 +241,13 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
 * **Rejoin or move to another fleet:** *Join Fleet with Invite Code* with a code from that fleet. You
   are asked to confirm replacing the current certificate.
 * **Revoke a lost machine:** anyone holding `fleet.key` is a member, so a stolen laptop means
-  rotating the certificate. Remove `~/.vineyard` everywhere, set up the first machine again, and
-  bring the others back in with new invite codes.
+  replacing the key. Run **Vineyard: Rotate Fleet Key…** (or `vineyardd rotate-key --exclude
+  <machine id>`) on any member and pick the lost machine: it is removed from the fleet and never
+  gets the new key. Connected machines switch at once; machines that are offline switch the next
+  time they connect to any member, as long as that is within the grace period (14 days by default).
+  After the grace period the old key stops working, and a machine that missed it has to join again
+  with an invite code. Until then, someone holding the old key could still pretend to be one of the
+  machines that has not switched yet, so keep the grace period as short as your fleet allows.
 
 ## Troubleshooting
 

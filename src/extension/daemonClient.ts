@@ -30,6 +30,8 @@ export interface LocalDaemonConfig {
   port: number;
   certPem: string;
   keyPem: string;
+  /** The certificate before the last key rotation, present only during its grace period. */
+  prevPem?: string;
 }
 
 export function vineyardDir(): string {
@@ -42,6 +44,14 @@ export function readLocalConfig(): LocalDaemonConfig | undefined {
     const raw = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) as Partial<LocalDaemonConfig>;
     const certPem = fs.readFileSync(path.join(dir, 'fleet.crt'), 'utf8');
     const keyPem = fs.readFileSync(path.join(dir, 'fleet.key'), 'utf8');
+    // During a key rotation's grace period the daemon presents a certificate signed by the previous
+    // key, so that one is trusted too until the daemon deletes it.
+    let prevPem: string | undefined;
+    try {
+      prevPem = fs.readFileSync(path.join(dir, 'fleet-prev.crt'), 'utf8');
+    } catch {
+      prevPem = undefined;
+    }
     const listen = raw.listen || `:${DEFAULT_PORT}`;
     const port = Number(listen.split(':').pop()) || DEFAULT_PORT;
     return {
@@ -54,6 +64,7 @@ export function readLocalConfig(): LocalDaemonConfig | undefined {
       port,
       certPem,
       keyPem,
+      prevPem,
     };
   } catch {
     return undefined;
@@ -129,7 +140,7 @@ export class DaemonClient implements vscode.Disposable {
       port: cfg.port,
       cert: cfg.certPem,
       key: cfg.keyPem,
-      ca: [cfg.certPem],
+      ca: cfg.prevPem ? [cfg.certPem, cfg.prevPem] : [cfg.certPem],
       servername: FLEET_SERVER_NAME,
       minVersion: 'TLSv1.3',
     });

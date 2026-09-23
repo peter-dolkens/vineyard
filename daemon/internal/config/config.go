@@ -41,6 +41,12 @@ type Config struct {
 	Removed Removals `json:"removed,omitempty"`
 	// Added is when this machine was last deliberately admitted (the inviter's clock, from an invite).
 	Added int64 `json:"added,omitempty"`
+	// KeyAt is when the fleet key in fleet.key was made by a rotation (Unix ms); 0 is the original.
+	// A member with a newer key pushes it to one with an older key when they connect.
+	KeyAt int64 `json:"keyAt,omitempty"`
+	// PrevUntil is when the grace period after the last rotation ends (Unix ms): until then the
+	// previous key is still accepted, so machines offline at rotation time can catch up.
+	PrevUntil int64 `json:"prevUntil,omitempty"`
 	// Uplink: "auto" (default) holds one idle link to a member when no member can connect to this
 	// machine, so it stays reachable through that member while unwatched; "off" never does; any
 	// other value is the machine id to prefer for it.

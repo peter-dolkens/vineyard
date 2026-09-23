@@ -119,6 +119,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   cmd('vineyard.showOutput', () => log.show());
   cmd('vineyard.createInvite', () => setup.createInvite());
+  cmd('vineyard.rotateFleetKey', () => setup.rotateFleetKey());
   cmd('vineyard.joinWithCode', (code?: unknown) => setup.joinWithCode(typeof code === 'string' ? code : undefined));
   context.subscriptions.push(
     vscode.window.registerUriHandler({
