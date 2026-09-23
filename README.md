@@ -62,7 +62,9 @@ be added.
 * **Start agents from Vineyard** in any workspace on any machine (*New Agent Here…*), or **resume** an
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear
-  as cards in the chat and are answered there. They still write the normal registry and transcript.
+  as cards in the chat and are answered there. A plan review (`ExitPlanMode`) is a card too, with the
+  plan rendered as Markdown and the pane's three choices: yes, yes and switch to accept-edits, or no
+  with feedback so Claude keeps planning. They still write the normal registry and transcript.
   New agents start with no questions asked (the model and effort last chosen in that workspace, or
   Claude Code's defaults the first time; the configured permission mode; no first prompt); the
   composer carries pickers for **model, reasoning effort and permission mode** that change the
