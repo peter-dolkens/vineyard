@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('vineyard.showFinishedSubagents')) tree.showFinishedSubagents = vscode.workspace.getConfiguration('vineyard').get('showFinishedSubagents', true);
-      if (e.affectsConfiguration('vineyard.sort') || e.affectsConfiguration('vineyard.showHistoricalWorkspaces') || e.affectsConfiguration('vineyard.showExitedAgents') || e.affectsConfiguration('vineyard.showFinishedSubagents')) tree.refresh();
+      if (e.affectsConfiguration('vineyard.sort') || e.affectsConfiguration('vineyard.showHistoricalWorkspaces') || e.affectsConfiguration('vineyard.showExitedAgents') || e.affectsConfiguration('vineyard.showFinishedSubagents') || e.affectsConfiguration('vineyard.hideMachinesUnseenForDays')) tree.refresh();
     }),
   );
 

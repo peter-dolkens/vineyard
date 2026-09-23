@@ -513,6 +513,12 @@
           "minimum": 20,
           "description": "How many trailing transcript lines to fetch when opening a transcript."
         },
+        "vineyard.hideMachinesUnseenForDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Hide a machine from the tree once it has been offline and unseen for this many days. It stays in the fleet and reappears as soon as it comes back. 0 never hides."
+        },
         "vineyard.showHistoricalWorkspaces": {
           "type": "boolean",
           "default": true,

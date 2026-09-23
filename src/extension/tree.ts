@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Agent, AgentState, BackgroundTask, Subagent, Workspace } from '../core/model.ts';
-import { STATE_PRIORITY, isBusy, needsAttention } from '../core/model.ts';
+import { STATE_PRIORITY, isBusy, isLongUnseen, needsAttention } from '../core/model.ts';
 import { subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
@@ -168,7 +168,10 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
         }
         return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
       });
-      return machines.map((machine) => ({ kind: 'machine', machine }));
+      const hideAfter = vscode.workspace.getConfiguration('vineyard').get<number>('hideMachinesUnseenForDays', 30);
+      return machines
+        .filter((m) => !isLongUnseen({ local: m.local, online: m.online, lastSeen: m.entry.lastSeen || m.entry.snapshot.at }, hideAfter))
+        .map((machine) => ({ kind: 'machine', machine }));
     }
     if (element.kind === 'machine') {
       const { machine } = element;

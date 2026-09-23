@@ -233,6 +233,9 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
   (to lock it out for good, rotate the key as well). *Remove and uninstall daemon* also runs
   `vineyardd uninstall` on it over SSH. To bring it back, add it again deliberately: *Add Machine*,
   a new invite code, or `vineyardd peer add`. A later add beats an earlier removal everywhere.
+* **Retired machines fade out:** a machine offline and unseen for 30 days leaves the tree without
+  being removed, and comes back the moment it reappears. Change the period, or turn it off with 0,
+  in `vineyard.hideMachinesUnseenForDays`.
 * **Uninstall on a machine itself:** `~/.vineyard/bin/vineyardd uninstall` stops and removes the
   service. Delete `~/.vineyard` as well to remove its config and its copy of the fleet key.
 * **Rejoin or move to another fleet:** *Join Fleet with Invite Code* with a code from that fleet. You

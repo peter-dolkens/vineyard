@@ -42,6 +42,15 @@ export function isBusy(state: AgentState): boolean {
  * Vineyard notification would be a duplicate. Remote sessions and locally managed ones have no other
  * surface here and do notify.
  */
+/**
+ * Whether a machine has been gone long enough to leave the tree (vineyard.hideMachinesUnseenForDays).
+ * Only offline machines with a known last sighting are hidden; this machine and ones never seen stay.
+ */
+export function isLongUnseen(m: { local: boolean; online: boolean; lastSeen?: number }, days: number, now = Date.now()): boolean {
+  if (m.local || m.online || !m.lastSeen || days <= 0) return false;
+  return now - m.lastSeen > days * 86_400_000;
+}
+
 export function notifiesHere(agent: Pick<Agent, 'managed'>, machineLocal: boolean): boolean {
   return !machineLocal || agent.managed !== undefined;
 }
