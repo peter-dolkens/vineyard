@@ -372,7 +372,9 @@ export class ChatPanels implements vscode.Disposable {
       existing.reveal();
       return;
     }
-    const panel = vscode.window.createWebviewPanel('vineyard.chat', agentLabel(agent), { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false }, {
+    const openIn = vscode.workspace.getConfiguration('vineyard').get<string>('chat.openIn', 'activeGroup');
+    const viewColumn = openIn === 'beside' ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+    const panel = vscode.window.createWebviewPanel('vineyard.chat', agentLabel(agent), { viewColumn, preserveFocus: false }, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist'), vscode.Uri.joinPath(this.context.extensionUri, 'media')],
