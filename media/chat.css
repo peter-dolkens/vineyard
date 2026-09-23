@@ -104,6 +104,19 @@ details.thinking .md { padding: 4px 12px 10px; opacity: 0.8; font-size: 12px; }
 .opt-desc { font-size: 11px; opacity: 0.75; }
 input.other, input.deny-reason { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; padding: 5px 8px; }
 input:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+/* elicitation: an MCP server's question, as a form built from its JSON Schema or a link to open */
+.card.elicitation { border-color: var(--vscode-charts-purple, #b180d7); }
+.elicit-heading { font-weight: 600; }
+.elicit-link { word-break: break-all; }
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field-label { font-size: 11px; font-weight: 600; opacity: 0.85; }
+.field-req { color: var(--vscode-errorForeground); }
+.field-desc { font-size: 11px; opacity: 0.7; }
+.field-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.field .field-input { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; padding: 5px 8px; }
+.field textarea.field-input { resize: vertical; line-height: 1.4; }
+.field select.field-input { color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground)); background: var(--vscode-dropdown-background, var(--vscode-input-background)); }
+.field.invalid .field-input { border-color: var(--vscode-inputValidation-errorBorder, #c33); }
 
 /* composer */
 .composer { padding: 8px 12px 12px; }

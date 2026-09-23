@@ -62,7 +62,9 @@ be added.
 * **Start agents from Vineyard** in any workspace on any machine (*New Agent Here…*), or **resume** an
   existing session under Vineyard's control. These *managed* sessions run as children of that
   machine's daemon over the stream-json control protocol, so permission prompts and questions appear
-  as cards in the chat and are answered there. They still write the normal registry and transcript.
+  as cards in the chat and are answered there. An MCP server's question (an elicitation) appears the
+  same way, as a form built from its schema or a link to open, with Decline and Cancel beside the
+  answer. They still write the normal registry and transcript.
   New agents start with no questions asked (the model and effort last chosen in that workspace, or
   Claude Code's defaults the first time; the configured permission mode; no first prompt); the
   composer carries pickers for **model, reasoning effort and permission mode** that change the
@@ -276,6 +278,7 @@ tail -f ~/.vineyard/vineyardd.log
 | Send a prompt | cross-session messaging socket | stdin (stream-json) |
 | Permission prompts | shown; answer in the originating UI | Allow / Allow-and-remember / Deny cards |
 | AskUserQuestion | shown; answer in the originating UI | option buttons + free text |
+| MCP elicitations | answer in the originating UI | form from the server's schema, or a link to open; Decline / Cancel |
 | Interrupt / stop | no | yes |
 | Lifetime | independent | child of the daemon; ends if the daemon restarts |
 

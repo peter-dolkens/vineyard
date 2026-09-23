@@ -122,6 +122,31 @@ type PendingRequest struct {
 	Suggestions             json.RawMessage `json:"suggestions,omitempty"`
 	Description             string          `json:"description,omitempty"`
 	At                      int64           `json:"at"`
+	// Kind says what is being asked: "" or PendingPermission for a can_use_tool prompt (including
+	// AskUserQuestion), PendingElicitation for an MCP server's question, carried in Elicitation.
+	Kind        string              `json:"kind,omitempty"`
+	Elicitation *ElicitationRequest `json:"elicitation,omitempty"`
+}
+
+const (
+	PendingPermission  = "permission"
+	PendingElicitation = "elicitation"
+)
+
+// ElicitationRequest is an MCP server's question to the user, relayed by Claude Code as a
+// control_request of subtype "elicitation". Mode is "form" (answer the fields RequestedSchema
+// describes, a JSON Schema object with properties and required) or "url" (open URL, then confirm).
+// The answer is {"action":"accept","content":{...}}, {"action":"decline"} or {"action":"cancel"}.
+type ElicitationRequest struct {
+	ServerName      string          `json:"serverName"`
+	DisplayName     string          `json:"displayName,omitempty"`
+	Message         string          `json:"message,omitempty"`
+	Mode            string          `json:"mode,omitempty"`
+	URL             string          `json:"url,omitempty"`
+	ElicitationID   string          `json:"elicitationId,omitempty"`
+	RequestedSchema json.RawMessage `json:"requestedSchema,omitempty"`
+	Title           string          `json:"title,omitempty"`
+	Description     string          `json:"description,omitempty"`
 }
 
 // ModelInfo is one row of the model picker Claude Code offers this account, as the harness reports

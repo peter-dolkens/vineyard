@@ -20,6 +20,9 @@ interface Pending {
   suggestions?: any[];
   requiresUserInteraction?: boolean;
   description?: string;
+  /** 'elicitation' for an MCP server's question (see elicitationCard); missing for a permission prompt. */
+  kind?: string;
+  elicitation?: { serverName?: string; displayName?: string; message?: string; mode?: string; url?: string; elicitationId?: string; requestedSchema?: any; title?: string; description?: string };
 }
 interface Agent {
   id: string;
@@ -801,6 +804,10 @@ function renderCards() {
     cardsEl.appendChild(c);
   }
   const pending = agent.managed && !agent.managed.exited ? agent.managed.pending : undefined;
+  if (pending?.kind === 'elicitation') {
+    cardsEl.appendChild(elicitationCard(pending));
+    return;
+  }
   if (pending) {
     cardsEl.appendChild(pending.toolName === 'AskUserQuestion' ? questionCard(pending) : permissionCard(pending));
     return;
@@ -916,6 +923,166 @@ function permissionCard(p: Pending): HTMLElement {
   const reason = el('input', 'deny-reason') as HTMLInputElement;
   reason.placeholder = 'Optional: tell Claude what to do instead';
   card.appendChild(reason);
+  function respond(response: unknown) {
+    card.classList.add('busy');
+    vscode.postMessage({ type: 'respond', requestId: p.requestId, response });
+  }
+  return card;
+}
+
+// ---- elicitation: an MCP server's question, relayed by Claude Code ------------------------------
+
+/** HTML input types for the JSON Schema string formats MCP elicitation allows. */
+const FORMAT_INPUT: Record<string, string> = { email: 'email', uri: 'url', date: 'date', 'date-time': 'datetime-local' };
+
+/** The JSON Schema type of a property: the first non-null entry when `type` is a list. */
+function schemaType(prop: any): string {
+  const t = prop?.type;
+  if (Array.isArray(t)) return String(t.find((x) => x !== 'null') ?? 'string');
+  return typeof t === 'string' ? t : prop?.enum || prop?.oneOf ? 'string' : 'string';
+}
+
+/** Choices of an enum property: `enum` (+ `enumNames`) or `oneOf: [{const, title}]`; null when free-form. */
+function schemaChoices(prop: any): { value: string; label: string }[] | null {
+  if (Array.isArray(prop?.enum)) {
+    const names: unknown[] = Array.isArray(prop.enumNames) ? prop.enumNames : [];
+    return prop.enum.map((v: unknown, i: number) => ({ value: String(v), label: String(names[i] ?? v) }));
+  }
+  if (Array.isArray(prop?.oneOf) && prop.oneOf.every((o: any) => o && 'const' in o)) {
+    return prop.oneOf.map((o: any) => ({ value: String(o.const), label: String(o.title ?? o.const) }));
+  }
+  return null;
+}
+
+/**
+ * The card for an MCP server's question. Mode 'form' builds inputs from `requestedSchema.properties`
+ * (string → text/textarea/select, number/integer → number, boolean → checkbox); mode 'url' shows the
+ * link to open. Submit / Done sends {action:'accept', content}, the other buttons decline or cancel.
+ */
+function elicitationCard(p: Pending): HTMLElement {
+  const e = p.elicitation ?? {};
+  const who = e.displayName || e.serverName || p.displayName || 'An MCP server';
+  const card = el('div', 'card elicitation');
+  card.appendChild(el('div', 'card-title', `${who} is asking`));
+  if (e.title) card.appendChild(el('div', 'elicit-heading', e.title));
+  const texts = [e.description, e.message].filter((t, i, arr): t is string => !!t && t !== e.title && arr.indexOf(t) === i);
+  for (const t of texts) card.appendChild(el('div', 'card-text', t));
+  const row = el('div', 'btn-row');
+  const isURL = e.mode === 'url' || (!!e.url && !e.requestedSchema);
+  if (isURL) {
+    if (e.url) {
+      const a = el('a', 'elicit-link', e.url);
+      a.href = e.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      card.appendChild(a);
+    }
+    card.appendChild(el('div', 'card-hint', 'The link opens in your browser. Press Done once you have finished there.'));
+    const done = el('button', 'primary', 'Done');
+    done.onclick = () => respond({ action: 'accept', content: {} });
+    row.appendChild(done);
+  } else {
+    const schema: any = e.requestedSchema && typeof e.requestedSchema === 'object' ? e.requestedSchema : {};
+    const props: Record<string, any> = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+    const required = new Set<string>(Array.isArray(schema.required) ? schema.required.map(String) : []);
+    const fields: { name: string; wrap: HTMLElement; read: () => unknown }[] = [];
+    for (const [name, raw] of Object.entries(props)) {
+      const prop: any = raw && typeof raw === 'object' ? raw : {};
+      const type = schemaType(prop);
+      const wrap = el('div', 'field');
+      const labelText = String(prop.title ?? name);
+      let read: () => unknown;
+      if (type === 'boolean') {
+        const check = el('input');
+        check.type = 'checkbox';
+        check.checked = prop.default === true;
+        const line = el('label', 'field-check');
+        line.appendChild(check);
+        line.appendChild(el('span', undefined, labelText));
+        if (required.has(name)) line.appendChild(el('span', 'field-req', ' *'));
+        wrap.appendChild(line);
+        read = () => check.checked;
+      } else {
+        const label = el('label', 'field-label', labelText);
+        if (required.has(name)) label.appendChild(el('span', 'field-req', ' *'));
+        wrap.appendChild(label);
+        const choices = schemaChoices(prop);
+        const numeric = type === 'number' || type === 'integer';
+        let ctl: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+        if (choices) {
+          const sel = el('select', 'field-input');
+          const blank = el('option', undefined, required.has(name) ? 'Choose…' : '—');
+          blank.value = '';
+          sel.appendChild(blank);
+          for (const c of choices) {
+            const opt = el('option', undefined, c.label);
+            opt.value = c.value;
+            sel.appendChild(opt);
+          }
+          if (prop.default !== undefined) sel.value = String(prop.default);
+          ctl = sel;
+        } else if (numeric) {
+          const inp = el('input', 'field-input');
+          inp.type = 'number';
+          if (type === 'integer') inp.step = '1';
+          if (typeof prop.minimum === 'number') inp.min = String(prop.minimum);
+          if (typeof prop.maximum === 'number') inp.max = String(prop.maximum);
+          if (prop.default !== undefined) inp.value = String(prop.default);
+          ctl = inp;
+        } else if (prop.format === 'multiline' || (typeof prop.maxLength === 'number' && prop.maxLength > 200)) {
+          const ta = el('textarea', 'field-input');
+          ta.rows = 3;
+          if (typeof prop.maxLength === 'number') ta.maxLength = prop.maxLength;
+          if (prop.default !== undefined) ta.value = String(prop.default);
+          ctl = ta;
+        } else {
+          const inp = el('input', 'field-input');
+          inp.type = FORMAT_INPUT[String(prop.format)] ?? 'text';
+          if (typeof prop.maxLength === 'number') inp.maxLength = prop.maxLength;
+          if (prop.default !== undefined) inp.value = String(prop.default);
+          ctl = inp;
+        }
+        wrap.appendChild(ctl);
+        read = () => {
+          const v = ctl.value.trim();
+          if (v === '') return undefined;
+          if (numeric) {
+            const n = Number(v);
+            return Number.isFinite(n) ? (type === 'integer' ? Math.trunc(n) : n) : undefined;
+          }
+          // datetime-local gives a local time without seconds or zone; the schema asks for RFC 3339.
+          if (prop.format === 'date-time' && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
+          return v;
+        };
+      }
+      if (prop.description) wrap.appendChild(el('div', 'field-desc', String(prop.description)));
+      card.appendChild(wrap);
+      fields.push({ name, wrap, read });
+    }
+    const submit = el('button', 'primary', 'Submit');
+    submit.onclick = () => {
+      const content: Record<string, unknown> = {};
+      let ok = true;
+      for (const f of fields) {
+        const v = f.read();
+        const missing = v === undefined && required.has(f.name);
+        f.wrap.classList.toggle('invalid', missing);
+        if (missing) ok = false;
+        else if (v !== undefined) content[f.name] = v;
+      }
+      if (ok) respond({ action: 'accept', content });
+    };
+    row.appendChild(submit);
+  }
+  const decline = el('button', undefined, 'Decline');
+  decline.title = 'Tell the server you will not answer this';
+  decline.onclick = () => respond({ action: 'decline' });
+  row.appendChild(decline);
+  const cancel = el('button', 'danger', 'Cancel');
+  cancel.title = 'Dismiss the question without answering';
+  cancel.onclick = () => respond({ action: 'cancel' });
+  row.appendChild(cancel);
+  card.appendChild(row);
   function respond(response: unknown) {
     card.classList.add('busy');
     vscode.postMessage({ type: 'respond', requestId: p.requestId, response });
