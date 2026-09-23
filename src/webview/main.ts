@@ -3,7 +3,7 @@
  * entries, and hosts the composer plus permission / question cards. Talks to chatPanel.ts via postMessage.
  */
 
-import { marked } from 'marked';
+import { md } from './sanitize.ts';
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
 import { contextFor, contextGauge } from '../core/composer.ts';
@@ -52,8 +52,6 @@ interface MachineInfo {
   online: boolean;
   usage?: Usage;
 }
-
-marked.setOptions({ gfm: true, breaks: false });
 
 const STATE_LABEL: Record<string, string> = {
   question: 'Asking you a question',
@@ -370,14 +368,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
-}
-
-/** Markdown → element. breaks=true keeps single newlines (user prompts are plain text, not Markdown). */
-function md(text: string, breaks = false): HTMLElement {
-  const d = el('div', 'md');
-  d.innerHTML = marked.parse(text, { breaks }) as string;
-  for (const a of d.querySelectorAll('a')) a.setAttribute('target', '_blank');
-  return d;
 }
 
 function fmtTime(ts: unknown): string {
