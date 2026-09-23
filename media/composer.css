@@ -24,8 +24,10 @@
 .pill.cache { cursor: default; }
 .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-descriptionForeground); }
 .pill .dot.live { background: var(--vscode-charts-blue, #3794ff); animation: pulse 1.2s ease-in-out infinite; }
-.pill .dot.cache-warm { background: var(--vscode-charts-orange, #d18616); box-shadow: 0 0 6px var(--vscode-charts-orange, #d18616); }
-.pill .dot.cache-cold { background: var(--vscode-descriptionForeground); opacity: 0.6; }
+/* prompt-cache clock: minutes left beside the icon while warm; red and bare once expired or compacted */
+.pill.cache .codicon { font-size: 13px; }
+.pill.cache .cache-left { font-variant-numeric: tabular-nums; }
+.pill.cache.cache-expired, .pill.cache.cache-compacted { color: var(--vscode-errorForeground); }
 
 /* context donut: no label, the tooltip has the figure; a spinning quarter arc while compacting */
 .ring { width: 16px; height: 16px; transform: rotate(-90deg); display: block; }

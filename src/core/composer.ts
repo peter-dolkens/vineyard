@@ -1,6 +1,6 @@
 /**
  * The DOM-free half of the chat composer's toolbar and "/" actions menu: what the context ring and
- * cache dot mean, the permission-mode and effort catalogues, and which actions apply to a session in
+ * cache clock mean, the permission-mode and effort catalogues, and which actions apply to a session in
  * its current state. src/webview/composer.ts renders these; test/composer.test.ts checks them.
  */
 
@@ -64,25 +64,86 @@ export function contextFor(a: ContextSource | undefined, wireModel: string | und
 
 // ---- prompt cache --------------------------------------------------------------------------------
 
-/** Anthropic's default prompt-cache lifetime; the cached prefix is gone this long after the last call. */
-export const CACHE_TTL_MS = 5 * 60 * 1000;
+/**
+ * Anthropic's prompt-cache lifetimes. Every API call that reads or writes the cache restarts the
+ * clock; usage.cache_creation's breakdown says which lifetime the call bought.
+ */
+export const CACHE_TTL_5M_MS = 5 * 60 * 1000;
+export const CACHE_TTL_1H_MS = 60 * 60 * 1000;
 
-export interface CacheState {
-  state: 'none' | 'warm' | 'cold';
-  /** Share of the last call's input that was read from cache, whole percent. */
-  hitPercent: number;
+/** The cache-relevant part of an assistant message's usage, as the transcript records it. */
+export interface CacheUsage {
+  input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+}
+
+export interface CacheClockInput {
+  /** Usage of the last main-thread assistant message; none when the loaded window holds no call. */
+  usage?: CacheUsage;
+  /** When the request behind that message went out (its user or tool-result line), epoch ms. */
+  requestAt?: number;
+  /** That assistant line's timestamp, epoch ms. */
+  respondedAt?: number;
+  /** The last compact_boundary (or compact summary) timestamp, epoch ms. */
+  compactedAt?: number;
+  /** The lifetime carried over from earlier calls, for a call whose breakdown created nothing. */
+  ttlMs?: number;
+}
+
+export interface CacheClock {
+  /**
+   * warm: the countdown runs; expired: it ran out, the next call re-caches; compacted: a compaction
+   * came after the last call, so the cache does not cover the conversation yet; unknown: no call that
+   * touched the cache has been seen.
+   */
+  state: 'warm' | 'expired' | 'compacted' | 'unknown';
+  ttlMs: number;
+  /** When the countdown started: the request time (the pane's anchor), else the response time. */
+  anchorAt?: number;
+  expiresAt?: number;
+  remainingMs: number;
+  /** Share of the last call's input read from cache, whole percent; none when it saw no tokens. */
+  hitRate?: number;
+  /** Minutes left, rounded up, as the pane prints it ("12m"); empty unless warm. */
+  label: string;
 }
 
 /**
- * How warm the session's prompt cache is: the last call's hit rate, and whether the cached prefix is
- * still likely to be there (another call within the TTL). No calls seen yet is 'none'.
+ * Which lifetime a call bought: 1 h when the 1h breakdown carries tokens, 5 min when the 5m one does,
+ * nothing when the call created no cache (the caller then keeps the previous lifetime).
  */
-export function cacheState(last: { cacheRead: number; cacheCreate: number; input: number; calls: number }, lastActivityAt: number | undefined, now = Date.now()): CacheState {
-  if (!last.calls) return { state: 'none', hitPercent: 0 };
-  const total = last.cacheRead + last.cacheCreate + last.input;
-  const hitPercent = total ? Math.round((last.cacheRead / total) * 100) : 0;
-  const expired = !lastActivityAt || now - lastActivityAt > CACHE_TTL_MS;
-  return { state: expired ? 'cold' : 'warm', hitPercent };
+export function cacheTtlMs(usage: CacheUsage | undefined): number | undefined {
+  const c = usage?.cache_creation;
+  if (!c) return undefined;
+  if ((c.ephemeral_1h_input_tokens ?? 0) > 0) return CACHE_TTL_1H_MS;
+  if ((c.ephemeral_5m_input_tokens ?? 0) > 0) return CACHE_TTL_5M_MS;
+  return undefined;
+}
+
+/**
+ * The prompt-cache clock as the Claude Code pane computes it: a call whose usage read or wrote the
+ * cache restarts a countdown of the cache's lifetime from the moment the request went out; when it
+ * runs out the cache has likely expired; a compaction after the last call leaves the cache useless
+ * until the next response. Pure, so the webview can repaint it every second.
+ */
+export function cacheClock(input: CacheClockInput, now = Date.now()): CacheClock {
+  const { usage, compactedAt, requestAt, respondedAt } = input;
+  const ttlMs = cacheTtlMs(usage) ?? input.ttlMs ?? CACHE_TTL_5M_MS;
+  const read = usage?.cache_read_input_tokens ?? 0;
+  const create = usage?.cache_creation_input_tokens ?? 0;
+  const total = (usage?.input_tokens ?? 0) + read + create;
+  const hitRate = total > 0 ? Math.round((read / total) * 100) : undefined;
+  if (compactedAt !== undefined && (respondedAt === undefined || respondedAt <= compactedAt)) {
+    return { state: 'compacted', ttlMs, remainingMs: 0, hitRate, label: '' };
+  }
+  const anchorAt = requestAt !== undefined && (respondedAt === undefined || requestAt <= respondedAt) ? requestAt : respondedAt;
+  if (!usage || read + create <= 0 || anchorAt === undefined) return { state: 'unknown', ttlMs, remainingMs: 0, hitRate, label: '' };
+  const expiresAt = anchorAt + ttlMs;
+  const remainingMs = Math.min(ttlMs, expiresAt - now);
+  if (remainingMs > 0) return { state: 'warm', ttlMs, anchorAt, expiresAt, remainingMs, hitRate, label: `${Math.ceil(remainingMs / 60_000)}m` };
+  return { state: 'expired', ttlMs, anchorAt, expiresAt, remainingMs: 0, hitRate, label: '' };
 }
 
 // ---- permission modes and effort -----------------------------------------------------------------

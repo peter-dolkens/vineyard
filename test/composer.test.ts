@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CACHE_TTL_MS, buildActions, cacheState, contextFor, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type ActionContext } from '../src/core/composer.ts';
+import { CACHE_TTL_1H_MS, CACHE_TTL_5M_MS, buildActions, cacheClock, cacheTtlMs, contextFor, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type ActionContext } from '../src/core/composer.ts';
 
 test('context window follows the [1m] suffix', () => {
   assert.equal(contextWindow('claude-opus-5-5[1m]'), 1_000_000);
@@ -27,12 +27,75 @@ test('the ring takes the measured window when Claude Code gave one, else infers 
   assert.equal(contextFor({ contextTokens: 1, managed: { exited: true, compacting: true } }, 'x').compacting, false, 'an exited session is not compacting');
 });
 
-test('cache state: none before any call, warm within the TTL, cold after', () => {
+const MIN = 60_000;
+const usage1h = { input_tokens: 2, cache_read_input_tokens: 27_704, cache_creation_input_tokens: 20_563, cache_creation: { ephemeral_1h_input_tokens: 20_563, ephemeral_5m_input_tokens: 0 } };
+const usage5m = { input_tokens: 5, cache_read_input_tokens: 90, cache_creation_input_tokens: 5, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 5 } };
+
+test('cache lifetime follows the cache_creation breakdown', () => {
+  assert.equal(cacheTtlMs(usage1h), CACHE_TTL_1H_MS);
+  assert.equal(cacheTtlMs(usage5m), CACHE_TTL_5M_MS);
+  assert.equal(cacheTtlMs({ cache_read_input_tokens: 100, cache_creation_input_tokens: 0, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } }), undefined, 'a read-only call bought nothing');
+  assert.equal(cacheTtlMs({ cache_read_input_tokens: 100 }), undefined, 'older transcripts have no breakdown');
+  assert.equal(cacheTtlMs(undefined), undefined);
+});
+
+test('cache clock: unknown until a call touches the cache', () => {
   const now = 1_000_000_000;
-  assert.deepEqual(cacheState({ cacheRead: 0, cacheCreate: 0, input: 0, calls: 0 }, now, now), { state: 'none', hitPercent: 0 });
-  assert.deepEqual(cacheState({ cacheRead: 90, cacheCreate: 5, input: 5, calls: 3 }, now - 1000, now), { state: 'warm', hitPercent: 90 });
-  assert.deepEqual(cacheState({ cacheRead: 90, cacheCreate: 5, input: 5, calls: 3 }, now - CACHE_TTL_MS - 1, now), { state: 'cold', hitPercent: 90 });
-  assert.equal(cacheState({ cacheRead: 0, cacheCreate: 0, input: 0, calls: 1 }, now, now).hitPercent, 0);
+  assert.equal(cacheClock({}, now).state, 'unknown');
+  assert.equal(cacheClock({ usage: { input_tokens: 1000 }, requestAt: now - 1000, respondedAt: now }, now).state, 'unknown', 'no cache read or write');
+  assert.equal(cacheClock({ usage: usage5m }, now).state, 'unknown', 'no timestamp to count from');
+  assert.equal(cacheClock({ usage: usage5m }, now).label, '');
+});
+
+test('cache clock counts down from the request time and rounds the minutes up', () => {
+  const now = 1_000_000_000;
+  const warm = cacheClock({ usage: usage1h, requestAt: now - 12 * MIN, respondedAt: now - 11 * MIN }, now);
+  assert.equal(warm.state, 'warm');
+  assert.equal(warm.ttlMs, CACHE_TTL_1H_MS);
+  assert.equal(warm.anchorAt, now - 12 * MIN, 'anchored at the request, not the response');
+  assert.equal(warm.expiresAt, now - 12 * MIN + CACHE_TTL_1H_MS);
+  assert.equal(warm.remainingMs, 48 * MIN);
+  assert.equal(warm.label, '48m');
+  assert.equal(warm.hitRate, 57);
+  assert.equal(cacheClock({ usage: usage1h, requestAt: now - 12 * MIN + 1, respondedAt: now - 11 * MIN }, now).label, '49m', 'a millisecond over 48 minutes rounds up');
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now - 30_000, respondedAt: now }, now).label, '5m');
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now - 4 * MIN - 30_000, respondedAt: now - 4 * MIN }, now).label, '1m');
+  const noRequest = cacheClock({ usage: usage5m, respondedAt: now - MIN }, now);
+  assert.equal(noRequest.anchorAt, now - MIN, 'no request line: the response time anchors');
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now + MIN, respondedAt: now - MIN }, now).anchorAt, now - MIN, 'a request after the response is ignored');
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now + MIN, respondedAt: now + MIN }, now).remainingMs, CACHE_TTL_5M_MS, 'a clock ahead of now is clamped to the lifetime');
+});
+
+test('cache clock expires after the lifetime and keeps the hit rate', () => {
+  const now = 1_000_000_000;
+  const gone = cacheClock({ usage: usage5m, requestAt: now - CACHE_TTL_5M_MS, respondedAt: now - CACHE_TTL_5M_MS + 1000 }, now);
+  assert.equal(gone.state, 'expired');
+  assert.equal(gone.label, '');
+  assert.equal(gone.remainingMs, 0);
+  assert.equal(gone.hitRate, 90);
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now - CACHE_TTL_5M_MS + 1, respondedAt: now }, now).state, 'warm', 'one millisecond left is still warm');
+  assert.equal(cacheClock({ usage: usage1h, requestAt: now - CACHE_TTL_5M_MS, respondedAt: now }, now).state, 'warm', 'a 1h cache outlives the 5m lifetime');
+});
+
+test('cache clock carries the lifetime over a call that created nothing', () => {
+  const now = 1_000_000_000;
+  const readOnly = { input_tokens: 0, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 0, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } };
+  assert.equal(cacheClock({ usage: readOnly, requestAt: now - 10 * MIN, respondedAt: now - 10 * MIN, ttlMs: CACHE_TTL_1H_MS }, now).label, '50m');
+  assert.equal(cacheClock({ usage: readOnly, requestAt: now - 10 * MIN, respondedAt: now - 10 * MIN }, now).state, 'expired', 'without a carried lifetime the 5 min default applies');
+  assert.equal(cacheClock({ usage: usage5m, requestAt: now - 10 * MIN, respondedAt: now - 10 * MIN, ttlMs: CACHE_TTL_1H_MS }, now).state, 'expired', 'the call\'s own breakdown wins over the carried lifetime');
+});
+
+test('cache clock: a compaction after the last call is compacted until the next response', () => {
+  const now = 1_000_000_000;
+  const after = cacheClock({ usage: usage1h, requestAt: now - 2 * MIN, respondedAt: now - MIN, compactedAt: now - 30_000 }, now);
+  assert.equal(after.state, 'compacted');
+  assert.equal(after.label, '');
+  assert.equal(after.remainingMs, 0);
+  assert.equal(after.hitRate, 57, 'the last hit rate is still worth showing');
+  assert.equal(cacheClock({ compactedAt: now - 30_000 }, now).state, 'compacted', 'compacted with no call in the window at all');
+  const next = cacheClock({ usage: usage1h, requestAt: now - 20_000, respondedAt: now - 10_000, compactedAt: now - 30_000 }, now);
+  assert.equal(next.state, 'warm', 'a response after the compaction restarts the clock');
+  assert.equal(next.label, '60m');
 });
 
 test('mode and effort labels', () => {
