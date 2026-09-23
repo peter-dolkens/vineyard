@@ -151,7 +151,8 @@ func cmdRun() error {
 		}
 	}
 	logger := log.New(logOut, "", log.LstdFlags)
-	service.CleanStaged() // leftovers from a previous self-upgrade
+	service.CleanStaged()      // leftovers from a previous self-upgrade
+	service.CleanDist(Version) // stored builds of versions we no longer distribute
 	collector := claude.NewCollector(cfg.ClaudeDir, cfg.TailLines)
 	var node *mesh.Node
 	var mgr *managed.Manager

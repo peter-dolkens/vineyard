@@ -556,7 +556,7 @@
         "vineyard.autoUpdateDaemons": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically bring every online daemon up to the version bundled with this extension. The binary travels over the existing mesh connection; nothing happens unless a machine is outdated while a Vineyard view is open."
+          "description": "Automatically update the daemon on this machine to the version bundled with this extension. The binary travels over the local connection; the updated daemon then brings its peers up to its version over the mesh. Nothing happens unless a daemon is outdated while a Vineyard view is open."
         },
         "vineyard.checkForUpdates": {
           "type": "boolean",

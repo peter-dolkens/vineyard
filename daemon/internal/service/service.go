@@ -48,6 +48,38 @@ func StagedBinary(tag string) string {
 	return filepath.Join(BinDir(), name)
 }
 
+// DistDir holds binaries of this daemon's own version for the other platforms in the fleet, seeded by
+// the extension, so the daemon can bring peers up to its version without any viewer relaying bytes.
+func DistDir() string { return filepath.Join(config.Dir(), "dist") }
+
+// PlatformFile is the bundled file name for a platform: vineyardd-<os>-<arch>[.exe].
+func PlatformFile(goos, goarch string) string {
+	name := binName + "-" + goos + "-" + goarch
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+// DistBinary is where the stored build of version for goos/goarch lives.
+func DistBinary(version, goos, goarch string) string {
+	return filepath.Join(DistDir(), version, PlatformFile(goos, goarch))
+}
+
+// CleanDist drops stored builds of every version but keep: a daemon only ever distributes the version
+// it is running, so anything else is dead weight left over from before an upgrade.
+func CleanDist(keep string) {
+	entries, err := os.ReadDir(DistDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.Name() != keep {
+			_ = os.RemoveAll(filepath.Join(DistDir(), e.Name()))
+		}
+	}
+}
+
 // CleanStaged removes leftovers from earlier upgrades. Never touches the running executable (which,
 // during the install step, is itself a staged file).
 func CleanStaged() {

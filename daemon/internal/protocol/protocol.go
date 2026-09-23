@@ -162,22 +162,38 @@ type SendArgs struct {
 // UpgradeArgs streams a new vineyardd binary to the target machine in base64 chunks. The first chunk
 // (Offset 0) opens a staging file for SHA256; every chunk must continue exactly where the last one
 // ended; Done on the final chunk verifies the hash and hands over to the new binary, which installs
-// itself and restarts the service. The viewer relays these through its local daemon like any request,
-// so no SSH is involved.
+// itself and restarts the service. A daemon accepts "upgrade" from a viewer (relayed by the viewer's
+// local daemon) and from a peer: after a daemon is upgraded it pushes its own version to every peer
+// that reports an older one, so the extension only ever has to update the daemon next to it.
+//
+// The same chunk stream under the "stage" op stores a binary for another platform (Platform set to
+// "<os>-<arch>", Version equal to the receiving daemon's own) in that daemon's distribution store
+// instead of installing it. A second sender starting at Offset 0 while an upload of the same digest is
+// active is answered with an "already in progress" error; an upload idle for a minute is abandoned.
 type UpgradeArgs struct {
-	Version string `json:"version"`         // version of the binary being sent (informational)
-	SHA256  string `json:"sha256"`          // hex digest of the whole file
-	Size    int64  `json:"size"`            // total bytes
-	Offset  int64  `json:"offset"`          // byte offset of this chunk
-	Data    string `json:"data,omitempty"`  // base64 chunk
-	Done    bool   `json:"done,omitempty"`  // last chunk: verify and install
-	Force   bool   `json:"force,omitempty"` // install even if the version matches the running one
+	Version  string `json:"version"`            // version of the binary being sent
+	SHA256   string `json:"sha256"`             // hex digest of the whole file
+	Size     int64  `json:"size"`               // total bytes
+	Offset   int64  `json:"offset"`             // byte offset of this chunk
+	Data     string `json:"data,omitempty"`     // base64 chunk
+	Done     bool   `json:"done,omitempty"`     // last chunk: verify and install (or store)
+	Force    bool   `json:"force,omitempty"`    // install even if the version matches or is older than the running one
+	Platform string `json:"platform,omitempty"` // "stage" only: "<os>-<arch>" of the binary
 }
 
 type UpgradeResult struct {
 	Received  int64  `json:"received"`            // bytes staged so far
 	Installed bool   `json:"installed,omitempty"` // the new binary was verified and is taking over
+	Stored    bool   `json:"stored,omitempty"`    // "stage": the binary is in the distribution store
 	Version   string `json:"version,omitempty"`   // version reported by the staged binary
+}
+
+// DistResult answers "dist": which platforms this daemon can already upgrade (its own build plus the
+// store), and which its known peers run that it has no binary for. The extension seeds Want.
+type DistResult struct {
+	Version string   `json:"version"`        // the daemon's own version, the only one it distributes
+	Have    []string `json:"have"`           // "<os>-<arch>" available now
+	Want    []string `json:"want,omitempty"` // "<os>-<arch>" of peers that Have does not cover
 }
 
 // ConfigureArgs changes a running managed session's model, effort or permission mode. A nil field is

@@ -87,6 +87,22 @@ type pendingReq struct {
 	origin  *link
 	origID  string
 	expires time.Time
+	// ch is set for requests this daemon itself originated (see request in distribute.go); the answer
+	// goes there instead of being relayed back to origin.
+	ch chan protocol.Response
+}
+
+// fail answers a pending request with an error, whichever side is waiting for it.
+func (pr pendingReq) fail(msg string) {
+	res := protocol.Response{T: "res", ID: pr.origID, OK: false, Error: msg}
+	if pr.ch != nil {
+		select {
+		case pr.ch <- res:
+		default:
+		}
+		return
+	}
+	_ = pr.origin.conn.Send(res)
 }
 
 type Node struct {
@@ -110,6 +126,7 @@ type Node struct {
 	subscribers int // links that want our self snapshot
 	invites     map[string]invite
 	upgrade     upgrader
+	dist        distributor
 	awake       service.Awake
 
 	wake chan struct{}
@@ -455,6 +472,7 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	n.logf("peer %s connected (%s, outbound=%v)", l.peerID, l.conn.RemoteAddr(), l.outbound)
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()
+	n.considerPeer(l.peerID, h.Version, "", "")
 }
 
 func (n *Node) unregister(l *link) {
@@ -487,13 +505,20 @@ func (n *Node) unregister(l *link) {
 			n.markCacheDirty()
 		}
 	}
+	var orphaned []pendingReq
 	for id, pr := range n.pending {
 		if pr.origin == l {
 			delete(n.pending, id)
+			if pr.ch != nil {
+				orphaned = append(orphaned, pr)
+			}
 		}
 	}
 	remaining := len(n.viewers)
 	n.mu.Unlock()
+	for _, pr := range orphaned {
+		pr.fail(fmt.Sprintf("%s disconnected", l.peerID))
+	}
 
 	if wasViewer {
 		n.logf("viewer detached (%d viewers)", remaining)
@@ -633,13 +658,17 @@ func (n *Node) maintenanceLoop(ctx context.Context) {
 		}
 		n.mu.Lock()
 		now := time.Now()
+		var expired []pendingReq
 		for id, pr := range n.pending {
 			if now.After(pr.expires) {
 				delete(n.pending, id)
-				_ = pr.origin.conn.Send(protocol.Response{T: "res", ID: pr.origID, OK: false, Error: "request timed out"})
+				expired = append(expired, pr)
 			}
 		}
 		n.mu.Unlock()
+		for _, pr := range expired {
+			pr.fail("request timed out")
+		}
 	}
 }
 
@@ -808,6 +837,7 @@ func (n *Node) dispatch(l *link, b []byte) {
 		n.markCacheDirty()
 		n.mu.Unlock()
 		n.broadcastUpdate(entry)
+		n.considerPeer(l.peerID, m.Snapshot.DaemonVersion, m.Snapshot.Host.OS, m.Snapshot.Host.Arch)
 	case "req":
 		var r protocol.Request
 		if json.Unmarshal(b, &r) != nil {
@@ -823,10 +853,18 @@ func (n *Node) dispatch(l *link, b []byte) {
 		pr, ok := n.pending[r.ID]
 		delete(n.pending, r.ID)
 		n.mu.Unlock()
-		if ok {
-			r.ID = pr.origID
-			_ = pr.origin.conn.Send(r)
+		if !ok {
+			return
 		}
+		if pr.ch != nil {
+			select {
+			case pr.ch <- r:
+			default:
+			}
+			return
+		}
+		r.ID = pr.origID
+		_ = pr.origin.conn.Send(r)
 	}
 }
 
@@ -1023,6 +1061,14 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return n.handleUpgrade(a)
+	case "stage":
+		var a protocol.UpgradeArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.handleStage(a)
+	case "dist":
+		return n.handleDist()
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
 	case "wake":
