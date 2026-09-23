@@ -339,6 +339,10 @@ class ChatPanel {
         // The header's clock: past sessions of this workspace on this machine, to resume one here.
         await vscode.commands.executeCommand('vineyard.resumeFromHistory', node);
         break;
+      case 'history':
+        // The header's clock: past sessions of this workspace on this machine, to resume one here.
+        await vscode.commands.executeCommand('vineyard.resumeFromHistory', node);
+        break;
       case 'rawTranscript':
         await vscode.commands.executeCommand('vineyard.showRawTranscript', node);
         break;
