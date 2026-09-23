@@ -133,6 +133,7 @@ app.innerHTML = `
     </div>
   </div>
   <div class="hdr-actions">
+    <button class="icon" id="btnHistory" title="Past sessions in this workspace: resume one under Vineyard's control"><i class="codicon codicon-history"></i></button>
     <button class="icon" id="btnInfo" title="Session info"><i class="codicon codicon-info"></i></button>
     <button class="icon" id="btnTerminal" title="Open terminal here"><i class="codicon codicon-terminal"></i></button>
     <button class="icon" id="btnWorkspace" title="Open workspace in VS Code"><i class="codicon codicon-folder-opened"></i></button>
@@ -271,6 +272,8 @@ titleEdit.onkeydown = (e) => {
   else if (e.key === 'Escape') endRename(false);
 };
 titleEdit.onblur = () => endRename(true);
+// The clock, like the Claude Code pane's: the workspace's past sessions, newest first, to resume one.
+document.getElementById('btnHistory')!.onclick = () => vscode.postMessage({ type: 'action', id: 'history' });
 document.getElementById('btnTerminal')!.onclick = () => vscode.postMessage({ type: 'openTerminal' });
 document.getElementById('btnWorkspace')!.onclick = () => vscode.postMessage({ type: 'openWorkspace' });
 document.getElementById('btnInfo')!.onclick = () => {

@@ -59,7 +59,7 @@ type FromWebview =
   | { type: 'removeAttachment'; id: string }
   /** A slash command for a managed session; `confirm` asks first with that text. */
   | { type: 'slash'; text: string; confirm?: string }
-  /** An entry of the "/" menu the extension performs: settings, help, report, copySessionId, resumeTerminal, rawTranscript. */
+  /** An entry of the "/" menu (or the header) the extension performs: settings, help, report, copySessionId, resumeTerminal, rawTranscript, history. */
   | { type: 'action'; id: string }
   /** From the Agent map: open that subagent's transcript in its own chat panel. */
   | { type: 'openSubagent'; agentId: string }
@@ -334,6 +334,10 @@ class ChatPanel {
         break;
       case 'resumeTerminal':
         await vscode.commands.executeCommand('vineyard.resumeSession', node);
+        break;
+      case 'history':
+        // The header's clock: past sessions of this workspace on this machine, to resume one here.
+        await vscode.commands.executeCommand('vineyard.resumeFromHistory', node);
         break;
       case 'rawTranscript':
         await vscode.commands.executeCommand('vineyard.showRawTranscript', node);
