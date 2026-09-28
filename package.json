@@ -716,7 +716,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build:all",
+    "vscode:prepublish": "node esbuild.mjs --production",
     "build": "node esbuild.mjs",
     "build:web": "node esbuild.mjs --web",
     "build:daemon": "sh scripts/build-daemon.sh",
@@ -724,7 +724,7 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --test 'test/**/*.test.ts' && cd daemon && go test ./...",
-    "package": "vsce package --no-dependencies",
+    "package": "npm run build:daemon && vsce package --no-dependencies",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

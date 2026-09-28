@@ -50,7 +50,8 @@ jobs:
         run: npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Cross-compile vineyardd for all platforms
-        run: VERSION="${{ steps.ver.outputs.version }}" sh scripts/build-daemon.sh
+        # Stamped v<version>, as every daemon so far reports it.
+        run: VERSION="v${{ steps.ver.outputs.version }}" sh scripts/build-daemon.sh
 
       # Daemons install a build only with a signature from a release key compiled into them
       # (daemon/internal/release). Every build is signed with both keys; a missing secret fails the
@@ -75,6 +76,11 @@ jobs:
 
       - name: Package .vsix (binaries included)
         run: npx vsce package --no-dependencies -o "vineyard-${{ steps.ver.outputs.version }}.vsix"
+
+      # Packaging must not have replaced a build after it was signed: every binary shipped, in the
+      # release and inside the .vsix, has to match its signature.
+      - name: Check every build against its signature
+        run: cd daemon && go run ./cmd/vineyard-sign -verify ../bin/vineyardd-*
 
       - name: Checksums
         run: |
