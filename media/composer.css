@@ -51,6 +51,8 @@
 .chip-x { background: transparent; border: none; padding: 0 3px; height: 18px; border-radius: 9px; color: inherit; opacity: 0.7; display: inline-grid; place-items: center; }
 .chip-x:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
 .chip-x .codicon { font-size: 12px; }
+.chip.has-thumb { padding-left: 2px; }
+.chip-thumb { width: 18px; height: 18px; border-radius: 9px; object-fit: cover; }
 
 /* popover */
 .pop { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px); z-index: 5; max-height: min(70vh, 520px); overflow: auto; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border, rgba(128,128,128,.35))); border-radius: 8px; background: var(--vscode-editorWidget-background, var(--vscode-menu-background)); color: var(--vscode-editorWidget-foreground, var(--vscode-foreground)); box-shadow: 0 -2px 16px rgba(0,0,0,.35); padding: 6px 0; font-size: 13px; }

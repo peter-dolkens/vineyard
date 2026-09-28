@@ -42,3 +42,18 @@ export function attachmentProblem(name: string, bytes: Uint8Array, managed: bool
   if (looksBinary(bytes)) return 'binary files cannot be attached';
   return undefined;
 }
+
+const EXT_FOR_TYPE: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+
+/**
+ * A name for a file pasted or dropped into the chat. Clipboard images arrive nameless or as a generic
+ * "image.png"; those get a timestamped name (with the extension the media type says, which is how
+ * attachmentMediaType tells an image) so several pastes stay apart. Real file names are kept.
+ */
+export function pastedFileName(name: string, type: string, now: Date, n = 0): string {
+  if (name && !/^image\.\w+$/i.test(name)) return name;
+  const ext = EXT_FOR_TYPE[type] ?? (name.split('.').pop() || 'png');
+  const p = (x: number) => String(x).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}.${p(now.getMinutes())}.${p(now.getSeconds())}`;
+  return `Pasted image ${stamp}${n ? ` (${n + 1})` : ''}.${ext}`;
+}

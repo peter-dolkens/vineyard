@@ -31,8 +31,10 @@ interface PendingAttachment extends Attachment {
   size: number;
 }
 
-/** A file the frame picked (and, for photos, already scaled down), as raw bytes. */
+/** A file the frame picked, pasted or had dropped on it (images already scaled down), as raw bytes. */
 export interface PickedFile {
+  /** The frame's id for it, so its thumbnail finds the chip. */
+  id?: string;
   name: string;
   buffer: ArrayBuffer;
 }
@@ -360,7 +362,7 @@ export class ChatHost {
         skipped.push(`${f.name}: ${problem}`);
         continue;
       }
-      this.attachments.push({ id: localId(), name: f.name, mediaType: attachmentMediaType(f.name), size: bytes.byteLength, data: base64(bytes) });
+      this.attachments.push({ id: f.id ?? localId(), name: f.name, mediaType: attachmentMediaType(f.name), size: bytes.byteLength, data: base64(bytes) });
     }
     this.postAttachments();
     if (skipped.length) this.status(`Not attached. ${skipped.join('; ')}.`, 'error');

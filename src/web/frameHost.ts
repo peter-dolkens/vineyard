@@ -5,7 +5,7 @@
  * copying the session id, opening help links.
  */
 
-import { MAX_IMAGE_BYTES } from '../core/attachments.ts';
+import { queueFiles } from '../webview/files.ts';
 
 const HELP_URL = 'https://github.com/peter-dolkens/vineyard#readme';
 const ISSUES_URL = 'https://github.com/peter-dolkens/vineyard/issues/new';
@@ -72,6 +72,7 @@ function copy(text: string): boolean {
 
 let picker: HTMLInputElement | undefined;
 
+/** The "+" button. Picked files take the same road as pasted ones (webview/files.ts). */
 function pickFiles(): void {
   if (!picker) {
     picker = document.createElement('input');
@@ -79,48 +80,11 @@ function pickFiles(): void {
     picker.multiple = true;
     picker.hidden = true;
     document.body.append(picker);
-    picker.onchange = async () => {
+    picker.onchange = () => {
       const files = [...(picker!.files ?? [])];
       picker!.value = '';
-      if (!files.length) return;
-      const out: { name: string; buffer: ArrayBuffer }[] = [];
-      for (const f of files) {
-        try {
-          out.push(await prepare(f));
-        } catch (err) {
-          localStatus(`${f.name}: ${(err as Error).message}`, 'error');
-        }
-      }
-      if (out.length) toParent({ type: 'attachFiles', files: out });
+      if (files.length) void queueFiles(files, toParent, (text) => localStatus(text, 'error'));
     };
   }
   picker.click();
-}
-
-const SENDABLE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-const MAX_SIDE = 2048;
-
-/**
- * Photos from a phone are often HEIC, or JPEGs larger than the 5 MB the API takes: redraw those as a
- * JPEG no larger than 2048 px on a side. Everything else goes as picked.
- */
-async function prepare(f: File): Promise<{ name: string; buffer: ArrayBuffer }> {
-  const isImage = f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name);
-  if (!isImage || (SENDABLE.has(f.type) && f.size <= MAX_IMAGE_BYTES * 0.9)) return { name: f.name, buffer: await f.arrayBuffer() };
-  const url = URL.createObjectURL(f);
-  try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
-    if (!blob) throw new Error('could not convert the image');
-    return { name: f.name.replace(/\.[^.]+$/, '') + '.jpg', buffer: await blob.arrayBuffer() };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }

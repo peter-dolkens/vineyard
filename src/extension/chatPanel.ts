@@ -56,6 +56,8 @@ type FromWebview =
   | { type: 'openTerminal' }
   | { type: 'reload' }
   | { type: 'attach' }
+  /** Files pasted or dropped into the chat, readied by webview/files.ts. */
+  | { type: 'attachFiles'; files: { id?: string; name: string; buffer: ArrayBuffer | ArrayBufferView }[] }
   | { type: 'removeAttachment'; id: string }
   /** A slash command for a managed session; `confirm` asks first with that text. */
   | { type: 'slash'; text: string; confirm?: string }
@@ -195,6 +197,9 @@ class ChatPanel {
         case 'attach':
           await this.pickAttachments();
           break;
+        case 'attachFiles':
+          this.addAttachments(m.files.map((f) => ({ id: f.id, name: f.name, bytes: asBytes(f.buffer) })));
+          break;
         case 'removeAttachment':
           this.attachments = this.attachments.filter((a) => a.id !== m.id);
           this.postAttachments();
@@ -309,17 +314,20 @@ class ChatPanel {
   private async pickAttachments(): Promise<void> {
     const uris = await vscode.window.showOpenDialog({ canSelectMany: true, openLabel: 'Attach', title: `Attach to ${agentLabel(this.agent)}` });
     if (!uris?.length) return;
+    this.addAttachments(await Promise.all(uris.map(async (uri) => ({ name: basename(uri.fsPath), bytes: await vscode.workspace.fs.readFile(uri) }))));
+  }
+
+  /** Queue files that pass the checks; say which did not and why. */
+  private addAttachments(files: { id?: string; name: string; bytes: Uint8Array }[]): void {
     const isManaged = !!this.agent.managed && !this.agent.managed.exited;
     const skipped: string[] = [];
-    for (const uri of uris) {
-      const name = basename(uri.fsPath);
-      const bytes = await vscode.workspace.fs.readFile(uri);
+    for (const { id, name, bytes } of files) {
       const problem = attachmentProblem(name, bytes, isManaged);
       if (problem) {
         skipped.push(`${name}: ${problem}`);
         continue;
       }
-      this.attachments.push({ id: crypto.randomUUID(), name, mediaType: attachmentMediaType(name), size: bytes.byteLength, data: Buffer.from(bytes).toString('base64') });
+      this.attachments.push({ id: id ?? crypto.randomUUID(), name, mediaType: attachmentMediaType(name), size: bytes.byteLength, data: Buffer.from(bytes).toString('base64') });
     }
     this.postAttachments();
     if (skipped.length) this.post({ type: 'status', text: `Not attached. ${skipped.join('; ')}.`, kind: 'error' });
@@ -422,4 +430,11 @@ export class ChatPanels implements vscode.Disposable {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+/** Bytes a webview posted: VS Code hands an ArrayBuffer over as one, a typed array as a view. */
+function asBytes(b: ArrayBuffer | ArrayBufferView): Uint8Array {
+  if (b instanceof ArrayBuffer) return new Uint8Array(b);
+  if (ArrayBuffer.isView(b)) return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  throw new Error('The pasted file did not arrive as bytes.');
 }

@@ -57,6 +57,8 @@ export interface AttachmentChip {
   name: string;
   mediaType: string;
   size: number;
+  /** A data URL of the image, when this page read the file itself (pasted, dropped). */
+  thumb?: string;
 }
 
 export interface BarDeps {
@@ -856,7 +858,15 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     chips.hidden = !items.length;
     for (const it of items) {
       const chip = el('span', 'chip');
-      chip.append(icon(it.mediaType.startsWith('image/') ? 'file-media' : 'file'), el('span', 'chip-name', it.name), el('span', 'dim', fmtSize(it.size)));
+      if (it.thumb) {
+        const img = el('img', 'chip-thumb');
+        img.src = it.thumb;
+        img.alt = '';
+        chip.classList.add('has-thumb');
+        chip.title = it.name;
+        chip.append(img);
+      } else chip.append(icon(it.mediaType.startsWith('image/') ? 'file-media' : 'file'));
+      chip.append(el('span', 'chip-name', it.name), el('span', 'dim', fmtSize(it.size)));
       const x = el('button', 'chip-x');
       x.type = 'button';
       x.title = 'Remove';

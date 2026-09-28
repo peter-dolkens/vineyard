@@ -5,7 +5,8 @@
 
 import { md } from './sanitize.ts';
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
-import { createComposerBar, type BarDeps, type BarStats } from './composer.ts';
+import { createComposerBar, type AttachmentChip, type BarDeps, type BarStats } from './composer.ts';
+import { thumbnails, wireFileInputs } from './files.ts';
 import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/composer.ts';
 import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
 
@@ -182,7 +183,7 @@ const barDeps: BarDeps = {
   },
 };
 const bar = createComposerBar(document.querySelector<HTMLElement>('.composer-actions')!, document.querySelector<HTMLElement>('.composer')!, barDeps);
-let attachmentCount = 0;
+let attachments: AttachmentChip[] = [];
 function barStats(): BarStats {
   return {
     lastCacheRead: stats.lastCacheRead,
@@ -349,6 +350,8 @@ input.addEventListener('input', () => {
   autoGrow();
   bar.onInput(input.value); // "/" at the start opens the actions menu and filters it as you type
 });
+// Screenshots and files pasted into the box or dropped on the composer queue as attachments.
+wireFileInputs(input, document.querySelector<HTMLElement>('.composer-box')!, () => !input.disabled, (m) => vscode.postMessage(m), (text) => showBanner(text, 'error'));
 logEl.addEventListener('scroll', () => {
   pinned = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
   if (pinned) jump.hidden = true;
@@ -372,10 +375,10 @@ function autoGrow() {
 
 function send() {
   const text = input.value.trim();
-  if ((!text && !attachmentCount) || sending) return;
+  if ((!text && !attachments.length) || sending) return;
   bar.close();
   vscode.postMessage({ type: 'send', text });
-  appendLocalEcho(text || `(${attachmentCount} file${attachmentCount === 1 ? '' : 's'})`);
+  appendLocalEcho(text, attachments);
   input.value = '';
   autoGrow();
   bar.onInput(''); // a cleared box ends any "/" menu dismissal
@@ -516,8 +519,11 @@ function turnFor(): HTMLElement {
  * the agent picking it up: a busy agent only reads messages between tool calls or at the end of its
  * turn, which can be minutes later.
  */
-function appendLocalEcho(text: string) {
-  const bubble = el('div', 'bubble', text);
+function appendLocalEcho(text: string, files: AttachmentChip[] = []) {
+  const images = files.flatMap((f) => (f.thumb ? [f.thumb] : []));
+  const others = files.length - images.length;
+  const bubble = el('div', 'bubble', text || (others ? `(${others} file${others === 1 ? '' : 's'})` : undefined));
+  if (images.length) bubble.appendChild(promptImages(images));
   const row = rail('user', bubble);
   row.classList.add('echo');
   row.dataset.echo = text.replace(/\s+/g, ' ').trim();
@@ -528,20 +534,38 @@ function appendLocalEcho(text: string) {
   afterAppend();
 }
 
-/** Drop echoes the transcript has now caught up with (or all of them when asked). */
+/** Drop echoes the transcript has now caught up with (or all of them when asked). An echo of files
+ * alone has no text to match: the next prompt in the transcript takes it. */
 function clearEchoes(matching?: string) {
   const norm = matching?.replace(/\s+/g, ' ').trim();
   for (const e of turnsEl.querySelectorAll<HTMLElement>('[data-echo]')) {
-    if (norm === undefined || (e.dataset.echo && norm.includes(e.dataset.echo))) e.remove();
+    if (norm === undefined || !e.dataset.echo || norm.includes(e.dataset.echo)) e.remove();
   }
 }
 
-function startTurn(promptText: string, time: string, cross: boolean) {
+/** Images sent with a prompt, as thumbnails; a click opens one full size. */
+function promptImages(srcs: string[]): HTMLElement {
+  const row = el('div', 'prompt-images');
+  for (const src of srcs) {
+    const img = el('img', 'prompt-image');
+    img.src = src;
+    img.alt = 'Attached image';
+    img.onclick = (ev) => {
+      ev.stopPropagation(); // not the sticky prompt's expand toggle
+      img.classList.toggle('full');
+    };
+    row.appendChild(img);
+  }
+  return row;
+}
+
+function startTurn(promptText: string, time: string, cross: boolean, images: string[] = []) {
   clearEchoes(promptText);
   const turn = el('section', 'turn');
   const sticky = el('div', 'turn-prompt');
   const bubble = el('div', 'bubble' + (cross ? ' cross' : ''));
-  bubble.appendChild(md(promptText, true));
+  if (promptText) bubble.appendChild(md(promptText, true));
+  if (images.length) bubble.appendChild(promptImages(images));
   const marker = el('span', 'marker');
   sticky.appendChild(marker);
   sticky.appendChild(bubble);
@@ -602,6 +626,16 @@ function renderEntry(e: Entry) {
     if (e.isCompactSummary === true) stats.compactedAt = epoch(e.timestamp) ?? Date.now();
   }
   const blocks: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
+  // Images the user sent (vineyard puts them ahead of the prompt's text): shown with the prompt, or
+  // as a prompt of their own when there is no text.
+  let images: string[] = [];
+  if (type === 'user' && e.isMeta !== true && !side) {
+    images = blocks.flatMap((b) => (b.type === 'image' && b.source?.type === 'base64' && /^image\/(png|jpeg|gif|webp)$/.test(b.source.media_type) ? [`data:${b.source.media_type};base64,${b.source.data}`] : []));
+    if (images.length && !blocks.some((b) => b.type === 'text' && String(b.text ?? '').trim())) {
+      startTurn('', time, false, images);
+      images = [];
+    }
+  }
 
   for (const b of blocks) {
     switch (b.type) {
@@ -613,7 +647,8 @@ function renderEntry(e: Entry) {
           const t = text.trim();
           const cross = /^<cross-session-message\b/.test(t);
           const clean = cross ? t.replace(/<\/?cross-session-message[^>]*>/g, '').trim() : t;
-          startTurn(clean, time, cross);
+          startTurn(clean, time, cross, images);
+          images = [];
         } else {
           const body = el('div', 'assistant');
           body.appendChild(md(text));
@@ -1198,6 +1233,14 @@ function elicitationCard(p: Pending): HTMLElement {
   return card;
 }
 
+function showBanner(text: string, kind: string) {
+  banner.textContent = text;
+  banner.className = `banner ${kind}`;
+  banner.hidden = false;
+  bar.setBusy(false);
+  if (kind !== 'error') setTimeout(() => (banner.hidden = true), 4000);
+}
+
 // ---- messages from the extension -----------------------------------------------------------------
 
 window.addEventListener('message', (ev) => {
@@ -1218,16 +1261,16 @@ window.addEventListener('message', (ev) => {
       afterAppend();
       break;
     case 'status':
-      banner.textContent = m.text;
-      banner.className = `banner ${m.kind}`;
-      banner.hidden = false;
-      bar.setBusy(false);
-      if (m.kind !== 'error') setTimeout(() => (banner.hidden = true), 4000);
+      showBanner(m.text, m.kind);
       break;
-    case 'attachments':
-      attachmentCount = m.items.length;
-      bar.setAttachments(m.items);
+    case 'attachments': {
+      const items: AttachmentChip[] = m.items;
+      const ids = new Set(items.map((it) => it.id));
+      for (const id of thumbnails.keys()) if (!ids.has(id)) thumbnails.delete(id);
+      attachments = items.map((it) => ({ ...it, thumb: thumbnails.get(it.id) }));
+      bar.setAttachments(attachments);
       break;
+    }
     case 'sending':
       sending = m.busy;
       renderButton();

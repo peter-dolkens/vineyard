@@ -176,6 +176,13 @@ body.subagent-view #input, body.subagent-view #btnSend, body.subagent-view #btnA
 .turn-prompt .bubble .md { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .turn-prompt.expanded .bubble .md { display: block; }
 .turn-prompt .bubble.cross { border-style: dashed; }
+/* images sent with a prompt: small in the sticky prompt, full width on a click */
+.prompt-images { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.prompt-images:first-child { margin-top: 0; }
+.prompt-image { max-height: 56px; max-width: 120px; object-fit: cover; border-radius: 4px; border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.3)); cursor: zoom-in; }
+.prompt-image.full { max-height: 60vh; max-width: 100%; object-fit: contain; cursor: zoom-out; }
+/* a file dragged over the composer */
+.composer-box.drop-target { border-color: var(--vscode-focusBorder); border-style: dashed; background: var(--vscode-list-dropBackground, var(--vscode-input-background)); }
 .turn-prompt .meta { font-size: 10px; opacity: 0.5; margin-top: 3px; }
 .ev-assistant .assistant .md { line-height: 1.55; }
 .side-tag { position: absolute; right: 0; top: -6px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--vscode-charts-purple, #b180d7); }
