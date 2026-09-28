@@ -1,9 +1,9 @@
 # Vineyard
 
-**Every Claude Code agent, on every machine you own, in one VS Code window.**
+**Every Claude Code and Codex agent, on every machine you own, in one VS Code window.**
 
-Vineyard shows every Claude Code session on every machine you own in one tree: what each agent is
-doing right now, which ones are waiting on you, and what they are working on. Open any agent's
+Vineyard shows every Claude Code session and every Codex thread on every machine you own in one
+tree: what each agent is doing right now, which ones are waiting on you, and what they are working on. Open any agent's
 conversation, answer its permission prompt or question from wherever you happen to be sitting, start
 new agents on other machines, and stop the ones that have wandered off. A tiny daemon on each machine
 makes it work; the daemons talk only to each other, and only while you are looking.
@@ -159,8 +159,37 @@ step, with screenshots, network requirements and troubleshooting. In short:
 4. Repeat for each machine, from any machine. Every daemon learns the others, so whichever machine you
    open VS Code on becomes the one that watches.
 
-Each machine needs Claude Code installed. Only Claude Code is detected today; the daemon, model and
-tree are provider-agnostic so others can be added.
+Each machine needs Claude Code or Codex installed (or both). The daemon, model and tree are
+provider-agnostic; those are the two it reads today.
+
+## Codex
+
+The same daemon reads the [Codex CLI](https://github.com/openai/codex)'s own on-disk state
+(`~/.codex`, or `$CODEX_HOME`) and shows Codex threads beside Claude Code sessions, tagged *Codex*
+in the tree. A thread counts as live while a Codex process holds its writer lock, whether that is
+the Codex VS Code extension, the terminal app, `codex exec` or the app-server daemon.
+
+* **Observed threads** show their state from the rollout transcript (working, reasoning, running a
+  tool, idle, interrupted), model, reasoning effort, sandbox and approval level, branch, context size
+  against the model's window, first and last prompt. The chat renders the rollout like a Claude Code
+  transcript: prompts, replies, reasoning summaries, shell commands with IN/OUT blocks, MCP and other
+  tool calls with their results, compactions. Messages you send are queued to the running thread with
+  `codex queue`, and it picks them up as its next turn. Codex does not write approval prompts to the
+  rollout, so a thread waiting for approval in its own app shows as running that tool here.
+* **New Agent Here… › Codex** starts a thread under Vineyard's control (`codex app-server` as a child
+  of the daemon): prompts go straight in, or steer the turn in progress; command and file-change
+  approvals, questions and MCP elicitations arrive as the same cards Claude Code's do (*Allow*,
+  *Allow and remember* for the rest of the session, *Deny* with an optional reason the model is told);
+  Pause interrupts the turn; the model and effort pickers list what the account offers; the mode
+  picker switches between *Workspace write*, *Read only*, *Ask for everything* and *Full access*
+  (changes apply from the next turn); `/compact` compacts the thread; rename sets the thread name
+  Codex's own apps show; the account, plan and rate-limit windows appear in the / menu and status bar.
+* **Resume a Past Session…** lists Codex threads with Claude Code sessions, tagged *Codex*, and
+  resumes one under Vineyard's control.
+* **Not there yet.** Take Over Session: a Codex thread stays with the app that runs it (there is no
+  process id on disk and no way to attach a second controller). Terminating an observed thread, for
+  the same reason. Sign-in relay (`codex login` has to be run on the machine). Codex sub-agents are
+  not shown under their parent. Titles are the first prompt, or the name given from Vineyard.
 
 ## Claude Code feature coverage
 
@@ -303,6 +332,8 @@ Blocked by Claude Code itself or by the agent living on another machine.
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
 * Relays are one hop: a machine that no member you reach can reach either shows last-known state only.
+* Codex threads: no take-over, no terminating a thread started elsewhere, no sign-in relay, no
+  sub-agent tree, and approvals a thread waits on in its own app are invisible (see *Codex*).
 
 ## Learn more
 

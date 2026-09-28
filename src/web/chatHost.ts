@@ -267,6 +267,7 @@ export class ChatHost {
           break;
         case 'stop': {
           const managed = this.managedLive;
+          if (!managed && agent.provider === 'codex') throw new Error('A Codex thread started elsewhere has no process Vineyard can end; stop it in the app that runs it.');
           const ok = await confirm(
             `${managed ? 'Stop' : 'Terminate'} ${agentLabel(agent)} on ${machine.name}?`,
             managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is terminated. Its transcript stays on disk and can be resumed.',

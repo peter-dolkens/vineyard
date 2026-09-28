@@ -4,7 +4,7 @@
  * its current state. src/webview/composer.ts renders these; test/composer.test.ts checks them.
  */
 
-import type { CommandInfo } from './model.ts';
+import type { CommandInfo, ModeInfo as WireModeInfo } from './model.ts';
 
 // ---- context window ------------------------------------------------------------------------------
 
@@ -164,9 +164,27 @@ export const MODES: ModeInfo[] = [
   { value: 'bypassPermissions', label: 'Bypass permissions', description: 'Nothing is asked. Every tool runs.', icon: 'unlock' },
 ];
 
-export function modeInfo(value: string | undefined): ModeInfo {
-  return MODES.find((m) => m.value === value) ?? { value: value || 'default', label: value || 'Manual', description: '', icon: 'shield' };
+export function modeInfo(value: string | undefined, modes: ModeInfo[] = MODES): ModeInfo {
+  return modes.find((m) => m.value === value) ?? { value: value || 'default', label: value || 'Manual', description: '', icon: 'shield' };
 }
+
+/**
+ * The modes a session's picker offers: the ones the daemon reported for it (a managed Codex thread's
+ * sandbox and approval levels) or, for Claude Code, the pane's own list.
+ */
+export function modesFor(managed?: { modes?: WireModeInfo[] } | null, provider?: string): ModeInfo[] {
+  if (managed?.modes?.length) return managed.modes.map((m) => ({ value: m.value, label: m.label, description: m.description ?? '', icon: m.icon || 'shield' }));
+  if (provider === 'codex') return CODEX_MODES;
+  return MODES;
+}
+
+/** Codex's sandbox and approval levels as the daemon reports them, for observed threads' pills. */
+export const CODEX_MODES: ModeInfo[] = [
+  { value: 'workspace-write', label: 'Workspace write', description: 'Codex edits files and runs commands inside the workspace; anything outside it asks.', icon: 'edit' },
+  { value: 'read-only', label: 'Read only', description: 'Codex can read the workspace; every edit and command asks.', icon: 'eye' },
+  { value: 'untrusted', label: 'Ask for everything', description: 'Every command asks before it runs.', icon: 'hand' },
+  { value: 'danger-full-access', label: 'Full access', description: 'No sandbox and nothing is asked. Every command runs.', icon: 'unlock' },
+];
 
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export const EFFORT_LABEL: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };

@@ -1,7 +1,7 @@
 {
   "name": "vineyard",
   "displayName": "Vineyard",
-  "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
+  "description": "Tend your AI agents across machines: see every Claude Code session and Codex thread on every box, what it is doing, and when it needs you.",
   "version": "0.3.25",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
@@ -24,6 +24,7 @@
   ],
   "keywords": [
     "claude",
+    "codex",
     "agents",
     "ssh",
     "fleet",
@@ -416,7 +417,7 @@
         },
         {
           "command": "vineyard.takeOver",
-          "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!exited)(?!.*managed)/",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent-(?!exited)(?!.*managed)(?!.*codex)/",
           "group": "1_act@0"
         },
         {

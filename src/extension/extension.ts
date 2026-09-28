@@ -233,23 +233,40 @@ export function activate(context: vscode.ExtensionContext): void {
    * chosen; otherwise no flag, so Claude Code's own settings decide. No first prompt. Everything is
    * adjustable afterwards from the chat. A resumed session keeps its own settings.
    */
-  const spawnFlow = async (machine: MachineView, cwd: string, resume?: string) => {
+  const spawnFlow = async (machine: MachineView, cwd: string, resume?: string, provider?: string) => {
     if (!machine.online) throw new Error(`${machine.name} is offline`);
     const cfg = vscode.workspace.getConfiguration('vineyard');
+    const codex = provider === 'codex';
     // A resumed session keeps its own model, effort and mode (Claude Code restores them); only new
     // ones get the remembered choices. The basis lets the daemon drop a choice whose settings default
-    // has changed since it was made.
+    // has changed since it was made. The remembered choices are Claude Code's; a Codex thread starts
+    // with Codex's own configuration.
     let remembered = {};
-    if (!resume) {
+    if (!resume && !codex) {
       const prefs = sessionPrefs.get(machine.id, cwd);
       remembered = { ...prefs, permissionMode: prefs.permissionMode || cfg.get<string>('spawn.defaultPermissionMode', '') || undefined };
     }
     // No --name: a named session is treated by Claude Code as titled by the user, so it never
     // generates the AI title the pane shows after the first prompt. Left unnamed, Claude Code writes
     // an ai-title line a few seconds in (and again every turn), which the daemon already reads.
-    const res = await fleet.client.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', machine.id, { cwd, ...remembered, resume }, 30_000);
-    if (!resume && res.defaults) await sessionPrefs.reconcile(machine.id, cwd, res.stale ?? [], res.defaults);
+    const res = await fleet.client.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', machine.id, { cwd, ...remembered, resume, provider: codex ? 'codex' : undefined }, 30_000);
+    if (!resume && !codex && res.defaults) await sessionPrefs.reconcile(machine.id, cwd, res.stale ?? [], res.defaults);
     openWhenManaged(machine, res.sessionId);
+  };
+
+  /** Which agent to start on a machine: the one it has, or a choice when it has both Claude Code and Codex. */
+  const providerOf = async (machine: MachineView): Promise<string | undefined> => {
+    const snap = machine.entry.snapshot;
+    if (!snap.hasCodex) return 'claude';
+    if (!snap.hasClaude) return 'codex';
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: '$(sparkle) Claude Code', description: 'Anthropic', value: 'claude' },
+        { label: '$(terminal) Codex', description: 'OpenAI', value: 'codex' },
+      ],
+      { title: `New agent on ${machine.name}`, placeHolder: 'Which agent?', ignoreFocusOut: true },
+    );
+    return pick?.value;
   };
 
   /** Wait briefly for a just-spawned session to report as managed, then open its chat. */
@@ -269,8 +286,9 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   /** A live session on an online machine that Vineyard does not drive: the Claude pane, a terminal. */
+  // A Codex thread stays with the app that runs it: there is no process to end and resume here.
   const canTakeOver = (a: AgentNode): boolean =>
-    a.machine.online && a.agent.alive && a.agent.kind !== 'subagent' && !(a.agent.managed && !a.agent.managed.exited);
+    a.machine.online && a.agent.alive && a.agent.kind !== 'subagent' && a.agent.provider !== 'codex' && !(a.agent.managed && !a.agent.managed.exited);
 
   /**
    * Bring an observed session under Vineyard's control: the daemon on that machine ends its process,
@@ -308,6 +326,7 @@ export function activate(context: vscode.ExtensionContext): void {
     sessionOnly(a, 'take over');
     if (a.agent.managed && !a.agent.managed.exited) throw new Error("That session is already under Vineyard's control.");
     if (!a.agent.alive) throw new Error('That session has exited; use Resume Under Vineyard Control instead.');
+    if (a.agent.provider === 'codex') throw new Error('A Codex thread stays with the app that runs it. Start a new Codex agent here instead, or message this one.');
     await takeOverFlow(a, false);
   });
 
@@ -335,10 +354,13 @@ export function activate(context: vscode.ExtensionContext): void {
       cwd = await workspaceOf(machine, false);
     }
     if (!machine || !cwd) return;
-    await spawnFlow(machine, cwd);
+    const provider = await providerOf(machine);
+    if (!provider) return;
+    await spawnFlow(machine, cwd, undefined, provider);
   });
 
   interface SessionSummary {
+    provider?: string;
     sessionId: string;
     cwd: string;
     mtime: number;
@@ -366,7 +388,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const live = new Set(machine.entry.snapshot.agents.filter((a) => a.alive).map((a) => a.sessionId));
     const items = sessions.map((s) => ({
       label: `${live.has(s.sessionId) ? '$(circle-large-filled) ' : ''}${s.title || s.firstPrompt || s.sessionId.slice(0, 8)}`,
-      description: [relativeTime(s.mtime), s.model ? shortModel(s.model) : '', s.gitBranch, s.turns ? `${s.turns} turn${s.turns === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '),
+      description: [relativeTime(s.mtime), s.provider === 'codex' ? 'Codex' : '', s.model ? shortModel(s.model) : '', s.gitBranch, s.turns ? `${s.turns} turn${s.turns === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '),
       detail: `${scope ? '' : tildify(s.cwd, machine.entry.snapshot.host.home) + '  ·  '}${s.lastPrompt && s.lastPrompt !== s.firstPrompt ? s.lastPrompt : s.sessionId}`,
       s,
     }));
@@ -381,7 +403,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
     }
-    await spawnFlow(machine, pick.s.cwd, pick.s.sessionId);
+    await spawnFlow(machine, pick.s.cwd, pick.s.sessionId, pick.s.provider);
   });
 
   cmd('vineyard.resumeManaged', async (node?: Node) => {
@@ -392,7 +414,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const ok = await vscode.window.showWarningMessage(`${agentLabel(a.agent)} is still running on ${a.machine.name}. Resuming it in a second process would have two writers on one transcript. Stop it there first, or continue anyway?`, { modal: true }, 'Continue anyway');
       if (!ok) return;
     }
-    await spawnFlow(a.machine, a.agent.workspacePath, a.agent.sessionId);
+    await spawnFlow(a.machine, a.agent.workspacePath, a.agent.sessionId, a.agent.provider);
   });
 
   // Ends any live session: managed ones through their control channel, others by terminating the
@@ -402,6 +424,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!a || !a.agent.alive) return;
     sessionOnly(a, 'stop');
     const managed = !!a.agent.managed && !a.agent.managed.exited;
+    if (!managed && a.agent.provider === 'codex') throw new Error('A Codex thread started elsewhere has no process Vineyard can end; stop it in the app that runs it.');
     const ok = await vscode.window.showWarningMessage(
       `${managed ? 'Stop' : 'Terminate'} ${agentLabel(a.agent)} on ${a.machine.name}?`,
       { modal: true, detail: managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is sent SIGTERM (killed after 5 s if it ignores it). Its transcript stays on disk and can be resumed.' },

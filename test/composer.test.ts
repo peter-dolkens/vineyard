@@ -190,3 +190,15 @@ test('grouping keeps first-seen order', () => {
   );
   assert.equal(groups[3]!.actions.length, 2);
 });
+
+test('modesFor: Codex threads get their own mode list, Claude Code the pane list; modeInfo reads either', async () => {
+  const { modesFor, CODEX_MODES, MODES } = await import('../src/core/composer.ts');
+  assert.equal(modesFor(undefined, 'claude'), MODES);
+  assert.equal(modesFor(undefined, 'codex'), CODEX_MODES);
+  const reported = modesFor({ modes: [{ value: 'read-only', label: 'Read only' }] }, 'codex');
+  assert.deepEqual(reported, [{ value: 'read-only', label: 'Read only', description: '', icon: 'shield' }]);
+  assert.equal(modeInfo('read-only', reported).label, 'Read only');
+  assert.equal(modeInfo('workspace-write', CODEX_MODES).label, 'Workspace write');
+  assert.equal(modeInfo('workspace-write').label, 'workspace-write'); // unknown to Claude Code's list: shown as is
+  assert.equal(modeInfo('acceptEdits').label, 'Edit automatically');
+});

@@ -172,7 +172,7 @@ function machineSub(m: MachineView): string {
     return seen ? `Offline · last seen ${relativeTime(seen)}` : m.peer?.lastError ? 'Unreachable' : 'Never seen';
   }
   const live = snap.agents.filter((a) => a.alive);
-  let s = !snap.hasClaude ? 'No Claude Code' : live.length ? countByState(live) : 'No agents';
+  let s = !snap.hasClaude && !snap.hasCodex ? 'No Claude Code or Codex' : live.length ? countByState(live) : 'No agents';
   if (m.local) s = `Serving this app · ${s}`;
   const limit = usageWarning(snap.usage);
   if (limit) s += ` · ${limit.rejected ? 'limit hit' : `${limit.row.percent}% of ${limit.row.label.toLowerCase()}`}`;
@@ -182,6 +182,7 @@ function machineSub(m: MachineView): string {
 function agentSub(a: Agent): string {
   const bits: string[] = [shownStateLabel(a)];
   if (a.managed && !a.managed.exited) bits.push('managed');
+  if (a.provider === 'codex') bits.push('Codex');
   const model = shortModel(a.model);
   if (model) bits.push(a.effort ? `${model} · ${a.effort}` : model);
   const subs = (a.subagents ?? []).filter(subagentActive).length;

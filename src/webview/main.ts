@@ -4,12 +4,13 @@
  */
 
 import { md } from './sanitize.ts';
-import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
+import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage, ModeInfo } from '../core/model.ts';
 import { createComposerBar, type AttachmentChip, type BarDeps, type BarStats } from './composer.ts';
 import { thumbnails, wireFileInputs } from './files.ts';
 import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/composer.ts';
 import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
 import { isDelegating, shownState, shownStateLabel } from '../core/subagents.ts';
+import { providerLabel, providerName } from '../core/format.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -33,6 +34,7 @@ interface Pending {
   elicitation?: { serverName?: string; displayName?: string; message?: string; mode?: string; url?: string; elicitationId?: string; requestedSchema?: any; title?: string; description?: string };
 }
 interface Agent {
+  provider?: string;
   id: string;
   sessionId: string;
   alive: boolean;
@@ -55,7 +57,7 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; modes?: ModeInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 interface MachineInfo {
   id: string;
@@ -833,7 +835,7 @@ function renderInfo() {
   }
   if (agent.gitBranch) rows.push(['Branch', agent.gitBranch]);
   rows.push(['Session', `${agent.name ? agent.name + ' · ' : ''}${agent.sessionId}`]);
-  if (agent.version) rows.push(['Claude Code', agent.version]);
+  if (agent.version) rows.push([providerLabel(agent.provider), agent.version]);
   if (agent.startedAt) rows.push(['Uptime', fmtDuration(Date.now() - agent.startedAt)]);
   rows.push(['Machine', `${machine.name} · ${agent.workspacePath}`]);
 
@@ -922,7 +924,8 @@ function questionCard(p: Pending): HTMLElement {
   const card = el('div', 'card question');
   const qs: any[] = Array.isArray(p.input?.questions) ? p.input.questions : [];
   const answers: Record<string, string> = {};
-  card.appendChild(el('div', 'card-title', qs.length > 1 ? `Claude has ${qs.length} questions` : 'Claude has a question'));
+  const who = providerName(agent?.provider);
+  card.appendChild(el('div', 'card-title', qs.length > 1 ? `${who} has ${qs.length} questions` : `${who} has a question`));
   if (p.kind === 'recovered') card.appendChild(el('div', 'card-hint', 'Asked before Vineyard took this session over. Your answer goes to Claude as a message; it still has the question in mind.'));
   for (const q of qs) {
     const wrap = el('div', 'q');
@@ -1020,7 +1023,7 @@ function permissionCard(p: Pending): HTMLElement {
   row.appendChild(deny);
   card.appendChild(row);
   const reason = el('input', 'deny-reason') as HTMLInputElement;
-  reason.placeholder = 'Optional: tell Claude what to do instead';
+  reason.placeholder = `Optional: tell ${providerName(agent?.provider)} what to do instead`;
   card.appendChild(reason);
   function respond(response: unknown) {
     card.classList.add('busy');

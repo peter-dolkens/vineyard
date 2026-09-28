@@ -5,7 +5,7 @@ import { isDelegating, shownState, shownStateLabel, subagentActive, subagentChil
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
 import type { FleetService, MachineView } from './fleet.ts';
-import { STATE_LABEL, agentLabel, basename, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
+import { STATE_LABEL, agentLabel, basename, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens, providerLabel } from '../core/format.ts';
 
 export type Node = MachineNode | WorkspaceNode | AgentNode | SubagentNode | TaskNode;
 
@@ -265,7 +265,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const live = snap.agents.filter((a) => a.alive);
     const limit = usageWarning(snap.usage);
     if (m.online) {
-      item.description = !snap.hasClaude ? 'no Claude Code' : live.length ? countByState(live) : 'no agents';
+      item.description = !snap.hasClaude && !snap.hasCodex ? 'no Claude Code or Codex' : live.length ? countByState(live) : 'no agents';
       if (limit) item.description += ` · ${limit.rejected ? 'limit hit' : `${limit.row.percent}% of ${limit.row.label.toLowerCase()}`}`;
     } else {
       const seen = m.entry.lastSeen || snap.at;
@@ -328,11 +328,12 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const item = new vscode.TreeItem(agentLabel(agent), !children ? vscode.TreeItemCollapsibleState.None : activeSubs || activeTasks ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     item.id = `agent:${agent.id}`;
     const managedLive = !!agent.managed && !agent.managed.exited;
-    item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '');
+    item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '') + (agent.provider === 'codex' ? '-codex' : '');
     item.iconPath = agentIcon(agent);
 
     const bits: string[] = [shownStateLabel(agent)];
     if (managedLive) bits.push('managed');
+    if (agent.provider === 'codex') bits.push('Codex');
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
     if (activeSubs && !isDelegating(agent)) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
@@ -355,7 +356,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
       ['Branch', agent.gitBranch],
       ['Session', agent.name ? `${agent.name} · ${agent.sessionId}` : agent.sessionId],
       ['PID', agent.pid ? String(agent.pid) : undefined],
-      ['Client', [agent.entrypoint, agent.version].filter(Boolean).join(' ')],
+      ['Client', [providerLabel(agent.provider), agent.entrypoint, agent.version].filter(Boolean).join(' ')],
       ['Uptime', agent.startedAt ? duration(Date.now() - agent.startedAt) : undefined],
       ['Last activity', agent.lastActivityAt ? relativeTime(agent.lastActivityAt) : undefined],
       ['Registry', agent.registryStatus],

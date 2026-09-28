@@ -32,3 +32,12 @@ test('describeVia names relays and reporters', () => {
   assert.equal(describeVia('direct'), 'direct');
   assert.equal(describeVia(undefined), '');
 });
+
+test('providerLabel and providerName name the product and the agent', async () => {
+  const { providerLabel, providerName } = await import('../src/core/format.ts');
+  assert.equal(providerLabel('codex'), 'Codex');
+  assert.equal(providerLabel('claude'), 'Claude Code');
+  assert.equal(providerLabel(undefined), 'Claude Code');
+  assert.equal(providerName('codex'), 'Codex');
+  assert.equal(providerName('claude'), 'Claude');
+});
