@@ -241,6 +241,7 @@ class ChatPanel {
           break;
         case 'stop': {
           const managed = !!this.agent.managed && !this.agent.managed.exited;
+          if (!managed && this.agent.provider === 'codex') throw new Error('A Codex thread started elsewhere has no process Vineyard can end; stop it in the app that runs it.');
           const ok = await vscode.window.showWarningMessage(
             `${managed ? 'Stop' : 'Terminate'} ${agentLabel(this.agent)} on ${this.machine.name}?`,
             { modal: true, detail: managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is terminated. Its transcript stays on disk and can be resumed.' },
@@ -251,8 +252,8 @@ class ChatPanel {
         }
         case 'configure': {
           if (!this.agent.managed || this.agent.managed.exited) throw new Error('Only sessions started by Vineyard can be changed from here.');
-          if (m.permissionMode === 'bypassPermissions') {
-            const ok = await vscode.window.showWarningMessage(`Let ${agentLabel(this.agent)} on ${this.machine.name} run every tool without asking?`, { modal: true, detail: 'The session will no longer stop for permission prompts until you switch the mode back.' }, 'Bypass permissions');
+          if (m.permissionMode === 'bypassPermissions' || m.permissionMode === 'danger-full-access') {
+            const ok = await vscode.window.showWarningMessage(`Let ${agentLabel(this.agent)} on ${this.machine.name} run every tool without asking?`, { modal: true, detail: 'The session will no longer stop for permission prompts until you switch the mode back.' }, m.permissionMode === 'danger-full-access' ? 'Full access' : 'Bypass permissions');
             if (!ok) {
               this.post({ type: 'agent', agent: this.agent, machine: this.machineInfo() }); // snap the control back
               break;
@@ -267,7 +268,8 @@ class ChatPanel {
             const what = m.model !== undefined ? `Model set to ${m.model || 'the default'}` : m.effort !== undefined ? `Effort set to ${m.effort || 'the default'}` : `Permission mode set to ${m.permissionMode}`;
             this.post({ type: 'status', text: `${what}. Takes effect from the next request.`, kind: 'ok' });
             // The next session in this workspace starts with the same choice, until the settings default it was made against changes.
-            if (!m.transient) await this.prefs.remember(this.machine.id, this.agent.workspacePath, { model: m.model, effort: m.effort, permissionMode: m.permissionMode }, res?.defaults);
+            // Codex's models and modes are its own; they are not what a new Claude Code session should start with.
+            if (!m.transient && this.agent.provider !== 'codex') await this.prefs.remember(this.machine.id, this.agent.workspacePath, { model: m.model, effort: m.effort, permissionMode: m.permissionMode }, res?.defaults);
           } finally {
             // Whether it worked or not, re-send the agent so the controls show the daemon's truth.
             this.lastAgentJson = '';

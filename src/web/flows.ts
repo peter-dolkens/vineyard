@@ -18,6 +18,7 @@ const STATE_WORDS: Record<string, string> = {
 };
 
 export interface SessionSummary {
+  provider?: string;
   sessionId: string;
   cwd: string;
   mtime: number;
@@ -46,7 +47,8 @@ export class Flows {
 
   /** A live session on an online machine that Vineyard does not drive: the Claude pane, a terminal. */
   canTakeOver(m: MachineView, a: Agent): boolean {
-    return m.online && a.alive && a.kind !== 'subagent' && !(a.managed && !a.managed.exited);
+    // A Codex thread stays with the app that runs it: there is no process to end and resume here.
+    return m.online && a.alive && a.kind !== 'subagent' && a.provider !== 'codex' && !(a.managed && !a.managed.exited);
   }
 
   /** Open a chat, taking an observed session over first when the setting says so. */
@@ -111,26 +113,39 @@ export class Flows {
    * permission mode from Settings when none was, and no first prompt; everything is adjustable in
    * the chat. A resumed session keeps its own settings.
    */
-  async spawn(m: MachineView, cwd: string, resume?: string): Promise<void> {
+  async spawn(m: MachineView, cwd: string, resume?: string, provider?: string): Promise<void> {
     if (!m.online) throw new Error(`${m.name} is offline`);
+    const codex = provider === 'codex';
     let remembered = {};
-    if (!resume) {
+    if (!resume && !codex) {
       // The basis rides along so the daemon can drop a choice whose settings default has changed.
+      // The remembered choices are Claude Code's; a Codex thread starts with Codex's own configuration.
       const prefs = sessionPrefs.get(m.id, cwd);
       remembered = { ...prefs, permissionMode: prefs.permissionMode || settings().defaultPermissionMode || undefined };
     }
-    toast(resume ? 'Resuming the session…' : `Starting an agent in ${basename(cwd)}…`);
-    const res = await this.api.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', m.id, { cwd, ...remembered, resume }, 30_000);
-    if (!resume && res.defaults) await sessionPrefs.reconcile(m.id, cwd, res.stale ?? [], res.defaults);
+    toast(resume ? 'Resuming the session…' : `Starting ${codex ? 'Codex' : 'an agent'} in ${basename(cwd)}…`);
+    const res = await this.api.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', m.id, { cwd, ...remembered, resume, provider: codex ? 'codex' : undefined }, 30_000);
+    if (!resume && !codex && res.defaults) await sessionPrefs.reconcile(m.id, cwd, res.stale ?? [], res.defaults);
     await this.openWhenManaged(m, res.sessionId);
+  }
+
+  /** Start a new agent in a folder: the one product the machine has, or a choice when it has both. */
+  spawnNew(m: MachineView, cwd: string): void {
+    const snap = m.entry.snapshot;
+    if (!snap.hasCodex) return this.run(this.spawn(m, cwd, undefined, 'claude'));
+    if (!snap.hasClaude) return this.run(this.spawn(m, cwd, undefined, 'codex'));
+    actionSheet(`New agent in ${basename(cwd)}`, [
+      { label: 'Claude Code', detail: 'Anthropic', run: () => this.run(this.spawn(m, cwd, undefined, 'claude')) },
+      { label: 'Codex', detail: 'OpenAI', run: () => this.run(this.spawn(m, cwd, undefined, 'codex')) },
+    ]);
   }
 
   /** New agent on a machine: in `cwd`, or pick one of its workspaces or type a path. */
   newAgent(m: MachineView, cwd?: string): void {
-    if (cwd) return this.run(this.spawn(m, cwd));
+    if (cwd) return this.spawnNew(m, cwd);
     const known = [...m.entry.snapshot.workspaces].sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0)).slice(0, 12);
     actionSheet(`New agent on ${m.name}`, [
-      ...known.map((w) => ({ label: basename(w.path), detail: tildify(w.path, m.entry.snapshot.host.home), run: () => this.run(this.spawn(m, w.path)) })),
+      ...known.map((w) => ({ label: basename(w.path), detail: tildify(w.path, m.entry.snapshot.host.home), run: () => this.spawnNew(m, w.path) })),
       {
         label: 'Other folder…',
         run: () =>
@@ -138,7 +153,7 @@ export class Flows {
             (async () => {
               const home = m.entry.snapshot.host.home;
               const path = await prompt('Workspace folder', { message: `Absolute path on ${m.name}`, value: home ? home + '/' : '', placeholder: '/path/to/project', label: 'Start' });
-              if (path?.trim()) await this.spawn(m, path.trim());
+              if (path?.trim()) this.spawnNew(m, path.trim());
             })(),
           ),
       },
@@ -158,17 +173,18 @@ export class Flows {
       if (r.button === 'open') return this.openChat(m, live);
       if (r.button !== 'resume') return;
     } else if (!(await confirm(`Resume “${title.slice(0, 80)}”?`, `It continues on ${m.name} under Vineyard's control, in ${basename(s.cwd)}.`, 'Resume'))) return;
-    await this.spawn(m, s.cwd, s.sessionId);
+    await this.spawn(m, s.cwd, s.sessionId, s.provider);
   }
 
   /** Resume an agent's session as a managed child (Resume Under Vineyard Control). */
   async resumeManaged(m: MachineView, a: Agent): Promise<void> {
     if (a.alive && !(await confirm(`${agentLabel(a)} is still running on ${m.name}`, 'Resuming it in a second process would have two writers on one transcript. Stop it there first, or continue anyway?', 'Continue anyway', true))) return;
-    await this.spawn(m, a.workspacePath, a.sessionId);
+    await this.spawn(m, a.workspacePath, a.sessionId, a.provider);
   }
 
   async stop(m: MachineView, a: Agent): Promise<void> {
     const managed = !!a.managed && !a.managed.exited;
+    if (!managed && a.provider === 'codex') throw new Error('A Codex thread started elsewhere has no process Vineyard can end; stop it in the app that runs it.');
     const ok = await confirm(
       `${managed ? 'Stop' : 'Terminate'} ${agentLabel(a)} on ${m.name}?`,
       managed ? 'The session ends cleanly; you can resume it later.' : 'The Claude Code process is sent SIGTERM (killed after 5 s if it ignores it). Its transcript stays on disk and can be resumed.',

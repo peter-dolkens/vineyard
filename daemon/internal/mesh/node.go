@@ -16,12 +16,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
+	"github.com/peter-dolkens/vineyard/daemon/internal/codex"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
@@ -56,6 +58,9 @@ type Options struct {
 	ClaudeDir string
 	// Managed runs daemon-controlled sessions (optional).
 	Managed *managed.Manager
+	// Codex runs daemon-controlled Codex threads (optional); CodexDir sandboxes their transcript reads.
+	Codex    *codex.Manager
+	CodexDir string
 	// Auth relays `claude auth login` for viewers on other machines (optional).
 	Auth *auth.Manager
 	// Dir holds the fleet key files; empty means config.Dir(). Tests give each daemon its own.
@@ -1669,6 +1674,29 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
 		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			input, err := codexInput(a.Text, a.Attachments)
+			if err != nil {
+				return nil, err
+			}
+			if err := n.opts.Codex.SendInput(a.SessionID, input); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"managed":true}`), nil
+		}
+		if ag := n.localAgent(a.SessionID); ag != nil && ag.Provider == codex.Provider {
+			// A Codex thread another app owns: `codex queue` hands the message to that process.
+			text, err := managed.InlineAttachments(a.Text, a.Attachments)
+			if err != nil {
+				return nil, err
+			}
+			if err := codex.SendToThread(n.codexBin(), n.opts.CodexDir, a.SessionID, text); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"queued":true}`), nil
+		}
 		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
 			if err := n.opts.Managed.SendWithAttachments(a.SessionID, a.Text, a.Attachments); err != nil {
 				return nil, err
@@ -1687,6 +1715,25 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.kickCollector()
 		return json.Marshal(map[string]any{"msgId": id})
 	case "spawn":
+		var which struct {
+			Provider string `json:"provider"`
+		}
+		_ = json.Unmarshal(r.Args, &which)
+		if which.Provider == codex.Provider {
+			if n.opts.Codex == nil {
+				return nil, errors.New("codex threads are disabled on this daemon")
+			}
+			var o codex.SpawnOptions
+			if err := json.Unmarshal(r.Args, &o); err != nil {
+				return nil, err
+			}
+			sid, err := n.opts.Codex.Spawn(o)
+			if err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.Marshal(map[string]any{"sessionId": sid, "provider": codex.Provider})
+		}
 		if n.opts.Managed == nil {
 			return nil, errors.New("managed sessions are disabled on this daemon")
 		}
@@ -1709,12 +1756,19 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.kickCollector()
 		return json.Marshal(map[string]any{"sessionId": sid, "defaults": defaults, "stale": stale})
 	case "respond":
-		if n.opts.Managed == nil {
+		if n.opts.Managed == nil && n.opts.Codex == nil {
 			return nil, errors.New("managed sessions are disabled on this daemon")
 		}
 		var a protocol.RespondArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
+		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			if err := n.opts.Codex.Respond(a.SessionID, a.RequestID, a.Response); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"ok":true}`), nil
 		}
 		if err := n.opts.Managed.Respond(a.SessionID, a.RequestID, a.Response); err != nil {
 			return nil, err
@@ -1722,12 +1776,25 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.kickCollector()
 		return json.RawMessage(`{"ok":true}`), nil
 	case "interrupt", "stop":
-		if n.opts.Managed == nil {
-			return nil, errors.New("managed sessions are disabled on this daemon")
-		}
 		var a protocol.SendArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
+		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			var err error
+			if r.Op == "interrupt" {
+				err = n.opts.Codex.Interrupt(a.SessionID)
+			} else {
+				err = n.opts.Codex.Stop(a.SessionID)
+			}
+			if err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
 		}
 		var err error
 		if r.Op == "interrupt" {
@@ -1749,6 +1816,9 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if strings.TrimSpace(a.TaskID) == "" {
 			return nil, errors.New("taskId is required")
 		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			return nil, errors.New("Codex has no background tasks to stop")
+		}
 		if n.opts.Managed == nil || !n.opts.Managed.Has(a.SessionID) {
 			return nil, errors.New("only sessions started by Vineyard can stop their tasks")
 		}
@@ -1758,12 +1828,31 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.kickCollector()
 		return json.RawMessage(`{"ok":true}`), nil
 	case "configure":
-		if n.opts.Managed == nil {
-			return nil, errors.New("managed sessions are disabled on this daemon")
-		}
 		var a protocol.ConfigureArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
+		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			if a.Model != nil {
+				if err := n.opts.Codex.SetModel(a.SessionID, *a.Model); err != nil {
+					return nil, err
+				}
+			}
+			if a.Effort != nil {
+				if err := n.opts.Codex.SetEffort(a.SessionID, *a.Effort); err != nil {
+					return nil, err
+				}
+			}
+			if a.PermissionMode != nil {
+				if err := n.opts.Codex.SetPermissionMode(a.SessionID, *a.PermissionMode); err != nil {
+					return nil, err
+				}
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
 		}
 		if a.Model != nil {
 			if err := n.opts.Managed.SetModel(a.SessionID, *a.Model); err != nil {
@@ -1833,6 +1922,16 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if strings.TrimSpace(a.Title) == "" {
 			return nil, errors.New("title is empty")
 		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			if err := n.opts.Codex.Rename(a.SessionID, strings.TrimSpace(a.Title)); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"managed":true}`), nil
+		}
+		if ag := n.localAgent(a.SessionID); ag != nil && ag.Provider == codex.Provider {
+			return nil, errors.New("a Codex thread started elsewhere can only be renamed by the app that runs it")
+		}
 		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
 			if err := n.opts.Managed.Rename(a.SessionID, strings.TrimSpace(a.Title)); err == nil {
 				n.kickCollector()
@@ -1891,6 +1990,17 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
+		if n.opts.CodexDir != "" {
+			limit := a.Limit
+			if limit <= 0 {
+				limit = 60
+			}
+			list = append(list, codex.ListSessions(n.opts.CodexDir, a.Cwd, limit)...)
+			sort.SliceStable(list, func(i, j int) bool { return list[i].Mtime > list[j].Mtime })
+			if len(list) > limit {
+				list = list[:limit]
+			}
+		}
 		return json.Marshal(map[string]any{"sessions": list})
 	case "takeover":
 		// Bring an observed session under this daemon: end its process, wait for it to be gone
@@ -1904,8 +2014,11 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
 		}
-		if n.opts.Managed.Has(a.SessionID) {
+		if n.opts.Managed.Has(a.SessionID) || (n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID)) {
 			return nil, fmt.Errorf("session %s is already managed by this daemon", a.SessionID)
+		}
+		if ag := n.localAgent(a.SessionID); ag != nil && ag.Provider == codex.Provider {
+			return nil, errors.New("a Codex thread stays with the app that runs it; start a new Codex agent here instead")
 		}
 		var target *model.Agent
 		n.mu.Lock()
@@ -1956,12 +2069,22 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
 		}
+		if n.opts.Codex != nil && n.opts.Codex.Has(a.SessionID) {
+			if err := n.opts.Codex.Stop(a.SessionID); err != nil {
+				return nil, err
+			}
+			n.kickCollector()
+			return json.RawMessage(`{"managed":true}`), nil
+		}
 		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
 			if err := n.opts.Managed.Stop(a.SessionID); err != nil {
 				return nil, err
 			}
 			n.kickCollector()
 			return json.RawMessage(`{"managed":true}`), nil
+		}
+		if ag := n.localAgent(a.SessionID); ag != nil && ag.Provider == codex.Provider {
+			return nil, errors.New("a Codex thread started elsewhere has no process Vineyard can end; stop it in the app that runs it")
 		}
 		n.mu.Lock()
 		pid := 0
@@ -2007,6 +2130,11 @@ func (n *Node) readTranscript(a protocol.TranscriptArgs) (json.RawMessage, error
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
+	}
+	if n.opts.CodexDir != "" {
+		if rel, err := filepath.Rel(filepath.Join(n.opts.CodexDir, "sessions"), abs); err == nil && !strings.HasPrefix(rel, "..") && codex.ThreadID(abs) != "" {
+			return codexTranscript(abs, a)
+		}
 	}
 	rel, err := filepath.Rel(projects, abs)
 	if err != nil || strings.HasPrefix(rel, "..") {
@@ -2246,4 +2374,83 @@ func (n *Node) handleWebApp(r protocol.Request) (json.RawMessage, error) {
 		n.kickCollector()
 		return json.RawMessage(`{"ok":true}`), nil
 	}
+}
+
+// localAgent is this machine's agent for a session id as the last snapshot showed it, or nil.
+func (n *Node) localAgent(sid string) *model.Agent {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if e, ok := n.store[n.cfg.MachineID]; ok {
+		for i := range e.Snapshot.Agents {
+			if e.Snapshot.Agents[i].SessionID == sid {
+				cp := e.Snapshot.Agents[i]
+				return &cp
+			}
+		}
+	}
+	return nil
+}
+
+func (n *Node) codexBin() string {
+	if n.opts.Codex != nil {
+		return n.opts.Codex.CodexBin
+	}
+	return ""
+}
+
+// codexInput builds a turn's input for a managed Codex thread: images as data-URL image parts,
+// other files inlined into the text as for Claude Code.
+func codexInput(text string, attachments []model.Attachment) ([]map[string]any, error) {
+	var input []map[string]any
+	var rest []model.Attachment
+	for _, at := range attachments {
+		if strings.HasPrefix(at.MediaType, "image/") {
+			input = append(input, map[string]any{"type": "image", "url": "data:" + at.MediaType + ";base64," + at.Data})
+		} else {
+			rest = append(rest, at)
+		}
+	}
+	text, err := managed.InlineAttachments(text, rest)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(text) != "" || len(input) == 0 {
+		input = append(input, map[string]any{"type": "text", "text": text})
+	}
+	return input, nil
+}
+
+// codexTranscript reads a Codex rollout as the Claude-shaped entries the chat renders (see
+// codex.Convert), with the same offset streaming as a Claude transcript.
+func codexTranscript(abs string, a protocol.TranscriptArgs) (json.RawMessage, error) {
+	lines := a.Lines
+	if lines <= 0 {
+		lines = 400
+	}
+	var raw []codex.Line
+	var offset, size int64
+	var err error
+	truncated := false
+	if a.Offset > 0 {
+		raw, offset, size, err = codex.ReadFrom(abs, a.Offset, 8<<20)
+		if err == nil && size < a.Offset {
+			truncated = true
+			raw, size, err = codex.ReadTail(abs, lines, 8<<20)
+			offset = size
+		}
+	} else {
+		raw, size, err = codex.ReadTail(abs, lines, 8<<20)
+		offset = size
+	}
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("no transcript at %s", abs)
+		}
+		return nil, err
+	}
+	out := protocol.TranscriptData{Path: abs, Entries: codex.Convert(raw), Offset: offset, Size: size, Truncated: truncated}
+	if out.Entries == nil {
+		out.Entries = []json.RawMessage{}
+	}
+	return json.Marshal(out)
 }

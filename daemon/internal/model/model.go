@@ -170,6 +170,15 @@ type ModelInfo struct {
 	SupportedEffortLevels []string `json:"supportedEffortLevels,omitempty"` // empty: the model takes no effort setting
 }
 
+// ModeInfo is one row of the permission-mode picker. Claude Code sessions use the list built into
+// the views; a managed Codex thread reports its own (sandbox and approval levels) here.
+type ModeInfo struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"` // codicon name
+}
+
 // CommandInfo is one slash command the session's Claude Code offers (built-in, project, plugin or
 // skill), as the initialize handshake lists them. Name has no leading slash.
 type CommandInfo struct {
@@ -210,6 +219,9 @@ type ManagedInfo struct {
 	// Models is what this session's Claude Code offers in its model picker; empty until the harness
 	// has answered the initialize request sent at spawn.
 	Models []ModelInfo `json:"models,omitempty"`
+	// Modes is the permission-mode picker for this session when it differs from Claude Code's
+	// (a Codex thread's sandbox and approval levels); empty means the views' own list applies.
+	Modes []ModeInfo `json:"modes,omitempty"`
 	// Commands are the slash commands the session offers, from the same handshake; Account is the
 	// e-mail it is signed in as.
 	Commands    []CommandInfo `json:"commands,omitempty"`
@@ -292,6 +304,8 @@ type Snapshot struct {
 	Uplink    string `json:"uplink,omitempty"`
 	Listen    string `json:"listen,omitempty"` // advertised host:port
 	HasClaude bool   `json:"hasClaude"`
+	// HasCodex says a Codex CLI directory exists on the machine (daemons from 0.3.26).
+	HasCodex bool `json:"hasCodex,omitempty"`
 	// Usage is the newest account-limit report from any session this daemon manages. Limits are
 	// per account, so it applies to every session on the machine signed in as that account.
 	Usage *Usage `json:"usage,omitempty"`

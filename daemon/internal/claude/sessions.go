@@ -11,6 +11,8 @@ import (
 
 // SessionSummary describes one transcript on disk, for "resume a past session" pickers.
 type SessionSummary struct {
+	// Provider is "" or "claude" for a Claude Code transcript, "codex" for a Codex thread.
+	Provider    string `json:"provider,omitempty"`
 	SessionID   string `json:"sessionId"`
 	Cwd         string `json:"cwd"`
 	Path        string `json:"path"`

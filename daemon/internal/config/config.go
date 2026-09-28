@@ -55,6 +55,11 @@ type Config struct {
 	Uplink    string `json:"uplink,omitempty"`
 	ClaudeDir string `json:"claudeDir,omitempty"`
 	ClaudeBin string `json:"claudeBin,omitempty"` // path to the claude CLI for managed sessions
+	// CodexDir is the Codex CLI's home ($CODEX_HOME, ~/.codex by default); CodexBin the codex CLI
+	// for managed threads and queued messages. DisableCodex hides Codex threads on this machine.
+	CodexDir     string `json:"codexDir,omitempty"`
+	CodexBin     string `json:"codexBin,omitempty"`
+	DisableCodex bool   `json:"disableCodex,omitempty"`
 	// DisableManaged turns off spawning sessions from Vineyard on this machine.
 	DisableManaged bool   `json:"disableManaged,omitempty"`
 	TailLines      int    `json:"tailLines,omitempty"`

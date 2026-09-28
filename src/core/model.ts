@@ -188,6 +188,18 @@ export interface ModelInfo {
   supportedEffortLevels?: string[];
 }
 
+/**
+ * One row of the permission-mode picker. Claude Code sessions use the list built into the views
+ * (MODES in composer.ts); a managed Codex thread reports its own sandbox and approval levels here.
+ */
+export interface ModeInfo {
+  value: string;
+  label: string;
+  description?: string;
+  /** codicon name */
+  icon?: string;
+}
+
 export interface ManagedInfo {
   sessionId: string;
   pid: number;
@@ -209,6 +221,8 @@ export interface ManagedInfo {
   lastError?: string;
   /** What this session's Claude Code offers in its model picker; absent until it has answered initialize. */
   models?: ModelInfo[];
+  /** The permission modes this session takes when they differ from Claude Code's (a Codex thread's); absent means MODES. */
+  modes?: ModeInfo[];
   /** Slash commands it offers (no leading slash) and the account it is signed in as, from the same handshake. */
   commands?: CommandInfo[];
   account?: string;
@@ -299,6 +313,8 @@ export interface Snapshot {
   uplink?: string;
   listen?: string;
   hasClaude: boolean;
+  /** A Codex CLI directory exists on the machine (daemons from 0.3.26). */
+  hasCodex?: boolean;
   /** Newest account-limit report from any managed session on the machine; limits are per account. */
   usage?: Usage;
   /** The machine's web app; sent even while off by daemons that have one (older ones leave it out). */

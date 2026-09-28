@@ -25,6 +25,7 @@ import (
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
+	"github.com/peter-dolkens/vineyard/daemon/internal/codex"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/mesh"
@@ -187,6 +188,20 @@ func cmdRun() error {
 	}
 	authMgr := auth.New(logger)
 	authMgr.ClaudeBin = cfg.ClaudeBin
+	var codexCollector *codex.Collector
+	var codexMgr *codex.Manager
+	if !cfg.DisableCodex {
+		codexCollector = codex.NewCollector(cfg.CodexDir, cfg.TailLines)
+		if !cfg.DisableManaged {
+			codexMgr = codex.New(logger, func() {
+				if node != nil {
+					node.Kick()
+				}
+			})
+			codexMgr.CodexBin = cfg.CodexBin
+			codexMgr.CodexDir = cfg.CodexDir
+		}
+	}
 	// The web app is off unless the fleet's vineyard.webApp setting turned it on (config webApp).
 	webApp := web.NewRunner(web.RunnerOptions{
 		Dial:        func() (*mesh.Conn, error) { return dialLocalViewer(cfg, "web") },
@@ -207,6 +222,8 @@ func cmdRun() error {
 		Log:       logger,
 		ClaudeDir: collector.ClaudeDir,
 		Managed:   mgr,
+		Codex:     codexMgr,
+		CodexDir:  codexDirOf(codexCollector),
 		Auth:      authMgr,
 		WebApp:    webApp,
 		Collect: func() model.Snapshot {
@@ -218,7 +235,9 @@ func cmdRun() error {
 				workspaces = claude.Regroup(cfg.MachineID, agents, workspaces)
 				usage = mgr.LatestUsage()
 			}
-			return model.Snapshot{Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude, Usage: usage}
+			snap := model.Snapshot{Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude, Usage: usage}
+			addCodex(&snap, cfg.MachineID, codexCollector, codexMgr)
+			return snap
 		},
 	})
 	if err != nil {
@@ -257,6 +276,15 @@ func cmdProbe() error {
 	r := c.Collect()
 	agents, workspaces := claude.Interpret(machineID, r, time.Now().UnixMilli())
 	snap := model.Snapshot{MachineID: machineID, Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude, At: time.Now().UnixMilli(), DaemonVersion: Version}
+	if err == nil && cfg.DisableCodex {
+		// Codex hidden by config.
+	} else {
+		codexDir := ""
+		if err == nil {
+			codexDir = cfg.CodexDir
+		}
+		addCodex(&snap, machineID, codex.NewCollector(codexDir, 120), nil)
+	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(snap)
@@ -688,4 +716,58 @@ func parseECKey(b []byte) (*ecdsa.PrivateKey, error) {
 		return nil, errors.New("not PEM")
 	}
 	return x509.ParseECPrivateKey(blk.Bytes)
+}
+
+func codexDirOf(c *codex.Collector) string {
+	if c == nil {
+		return ""
+	}
+	return c.CodexDir
+}
+
+// addCodex folds this machine's Codex threads into a snapshot beside the Claude Code sessions:
+// live threads become agents, every rollout counts towards its workspace, and a managed thread's
+// control state (pending approvals, usage) is merged in. Usage windows from both providers share
+// the map, so the fullest limit of either account shows.
+func addCodex(snap *model.Snapshot, machineID string, c *codex.Collector, mgr *codex.Manager) {
+	if c == nil {
+		return
+	}
+	r := c.Collect()
+	snap.HasCodex = r.HasCodex
+	if !r.HasCodex && mgr == nil {
+		return
+	}
+	agents, workspaces := codex.Interpret(machineID, r, time.Now().UnixMilli())
+	if mgr != nil {
+		agents = mgr.Merge(machineID, agents)
+		workspaces = claude.Regroup(machineID, agents, workspaces)
+		if u := mgr.LatestUsage(); u != nil {
+			if snap.Usage == nil {
+				snap.Usage = u
+			} else {
+				merged := *snap.Usage
+				merged.Windows = map[string]model.UsageWindow{}
+				for k, w := range snap.Usage.Windows {
+					merged.Windows[k] = w
+				}
+				for k, w := range u.Windows {
+					merged.Windows[k] = w
+				}
+				if u.At > merged.At {
+					merged.At = u.At
+				}
+				if u.Status == "rejected" {
+					merged.Status = u.Status
+				}
+				snap.Usage = &merged
+			}
+		}
+	}
+	if len(agents) == 0 && len(workspaces) == 0 {
+		return
+	}
+	snap.Agents = append(snap.Agents, agents...)
+	sort.Slice(snap.Agents, func(i, j int) bool { return snap.Agents[i].ID < snap.Agents[j].ID })
+	snap.Workspaces = codex.MergeWorkspaces(snap.Workspaces, workspaces)
 }

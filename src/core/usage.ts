@@ -12,6 +12,8 @@ export const WINDOW_LABEL: Record<string, string> = {
   seven_day_opus: 'Weekly Opus',
   seven_day_sonnet: 'Weekly Sonnet',
   seven_day_overage_included: 'Weekly Fable',
+  codex_primary: 'Codex session (5hr)',
+  codex_secondary: 'Codex weekly',
   overage: 'Usage credit',
 };
 const ORDER = Object.keys(WINDOW_LABEL);
@@ -23,6 +25,8 @@ export const WINDOW_SHORT: Record<string, string> = {
   seven_day_opus: 'weekly Opus limit',
   seven_day_sonnet: 'weekly Sonnet limit',
   seven_day_overage_included: 'weekly Fable limit',
+  codex_primary: 'Codex session limit',
+  codex_secondary: 'Codex weekly limit',
   overage: 'usage credit',
 };
 

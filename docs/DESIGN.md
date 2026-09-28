@@ -21,7 +21,10 @@ use it.
   (launchd / systemd --user / Scheduled Task) and reads Claude Code's own on-disk state:
   `~/.claude/sessions/*.json` (registry: pid, cwd, `busy|shell|idle|waiting`), the tail of the
   session transcript (model, effort, pending tool calls, AskUserQuestion, end of turn), and
-  `~/.claude/ide/*.lock` (which folders VS Code has open).
+  `~/.claude/ide/*.lock` (which folders VS Code has open). It reads Codex's the same way:
+  `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread>.jsonl` (one transcript per thread) and
+  `~/.codex/thread-writer-locks/<thread>.lock`, an flock a Codex process holds while the thread is
+  loaded, which is what makes a thread live (a shared lock is tried without blocking and released).
 * **No hub.** Every daemon is equal. The daemon on the machine where you open VS Code is your
   orchestrator: it dials the others and subscribes. Any machine can step in at any time.
 * **Silent unless watched.** A daemon with no VS Code attached holds no connections, runs no timers
@@ -83,7 +86,7 @@ use it.
   Reconnects use exponential backoff (2 s → 60 s) only while someone is watching. Offline or
   unreachable machines show their last-known snapshot from `~/.vineyard/cache.json`.
 * **Security.** All traffic is TLS 1.3 with mutual authentication. See [SECURITY.md](../SECURITY.md)
-  for the threat model. Transcript reads are sandboxed to `~/.claude/projects`. Viewers (VS Code, the
+  for the threat model. Transcript reads are sandboxed to `~/.claude/projects` and `~/.codex/sessions`. Viewers (VS Code, the
   CLI, the web app's server) must connect from the same machine over loopback, holding that machine's
   own certificate; a viewer hello from anywhere else is refused.
 * **Machine identity.** Every machine has its own key (`machine.key`, ECDSA P-256) and a certificate
@@ -156,6 +159,26 @@ are shown under the project that spawned them; the encoded name is decoded again
 Registry and transcript disagreements are reconciled (e.g. `busy` after `end_turn` = "starting next
 turn"; `idle` mid-turn for >30 s = "interrupted"). See `daemon/internal/claude/derive.go` and its tests.
 
+A Codex thread has no registry; its rollout tail decides alone (`daemon/internal/codex/derive.go`):
+
+| Evidence | State |
+| --- | --- |
+| writer lock not held | not shown (the thread is history, counted under its workspace) |
+| `task_started` without a later `task_complete` / `turn_aborted`, and a tool call without its output | `tool` |
+| …and the last item is `reasoning` | `thinking` |
+| …and the last item is a prompt, a tool output or an assistant message | `working` |
+| `task_complete` last (or, with no turn markers in the tail, a final-answer message) | `idle` |
+| `turn_aborted` last | `idle` ("Interrupted") |
+
+Approval prompts are not written to the rollout (they only travel over the app-server protocol),
+so an observed thread waiting for approval shows as running that tool. Model, effort, approval
+policy and sandbox come from `turn_context` and `thread_settings_applied`; context size from
+`token_count` (last request's total against `model_context_window`); cwd, originator, CLI version
+and branch from `session_meta`; the title is the first prompt. The rollout is also what the chat
+shows: `codex.Convert` turns its lines into the Claude-shaped entries the views already render
+(messages, reasoning summaries, `tool_use` / `tool_result` pairs with code-mode `exec` calls shown
+as Bash commands, compaction markers), with `codex:<byte offset>` as each entry's uuid.
+
 Subagents come from `<projects>/<encoded cwd>/<session>/subagents/agent-<id>.jsonl` plus the
 `.meta.json` beside each one (agent type, description, the parent's `toolUseId`, `parentAgentId`
 for nested spawns, background or foreground). Each file's tail is derived like a session's, with
@@ -177,6 +200,8 @@ daemon/                 Go module: vineyardd
   cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join | web
   internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
   internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
+  internal/codex        Codex: collector (reads ~/.codex), state derivation, rollout → transcript conversion,
+                        `codex queue` for observed threads, app-server (JSON-RPC over stdio) manager for managed ones
   internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
   internal/web          `vineyardd web`: the mobile web app's server and its viewer link to the local daemon
   internal/service      launchd / systemd / Task Scheduler installers (Windows needs no elevation: XML logon task, then HKCU Run key)
@@ -364,6 +389,19 @@ is embedded in the binary, built from `src/web` by esbuild into `daemon/internal
 | Lifetime | independent | child of the daemon; ends if the daemon restarts |
 | Becoming managed | *Take Over Session*: process ended, same session resumed as a daemon child; a pending question is asked again in the chat | — |
 
+Codex threads follow the same split. Observed ones (the Codex VS Code extension, the terminal app,
+`codex exec`) are read from the rollout and take messages through `codex queue`; managed ones are
+`codex app-server` children speaking JSON-RPC over stdio: `thread/start` or `thread/resume`, then
+`turn/start` per prompt (`turn/steer` while a turn runs), `turn/interrupt`, `thread/name/set`,
+`thread/compact/start`, `model/list`, `account/read` and `account/rateLimits/read`. Its server
+requests (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/tool/requestUserInput`, `item/permissions/requestApproval`, `mcpServer/elicitation/request`)
+become the pending requests the chat's cards already answer (Bash, Edit, AskUserQuestion,
+elicitation), and the card's Claude-shaped answer is mapped back (`accept` / `acceptForSession` /
+`decline`; question ids; elicitation actions). Model, effort and mode changes are sent as overrides
+on the next `turn/start`. Stopping closes stdin, which ends the app-server. There is no take-over:
+a Codex thread has no pid on disk and the app that owns it holds the writer lock.
+
 ## Taking over a session
 
 Observed sessions (started outside Vineyard) cannot have their permission prompts or questions
@@ -398,4 +436,6 @@ tree, on the card an observed question or permission shows, or in the chat's / m
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
 * Relays are one hop: a machine that no member you reach can reach either shows last-known state only.
-* Only Claude Code is detected.
+* Codex: no take-over or terminate for threads started elsewhere, no sign-in relay, no sub-agent
+  tree, approvals pending in another app are invisible, and `thread-writer-locks` is probed with a
+  non-blocking shared lock (a Codex process starting at that instant could see a momentary conflict).

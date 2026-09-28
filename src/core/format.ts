@@ -54,6 +54,16 @@ export const STATE_LABEL: Record<AgentState, string> = {
   unknown: 'Unknown',
 };
 
+/** The product an agent runs under, for labels: "Claude Code" or "Codex". */
+export function providerLabel(provider: string | undefined): string {
+  return provider === 'codex' ? 'Codex' : 'Claude Code';
+}
+
+/** The agent's own name in a sentence: "Claude" or "Codex". */
+export function providerName(provider: string | undefined): string {
+  return provider === 'codex' ? 'Codex' : 'Claude';
+}
+
 export function agentLabel(agent: Agent): string {
   return agent.title ?? agent.name ?? agent.sessionId.slice(0, 8);
 }
