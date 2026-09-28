@@ -14,7 +14,9 @@ makes it work; the daemons talk only to each other, and only while you are looki
 
 * **One tree for everything.** Machines › workspaces › agents › subagents › background tasks, each
   with its live state: working, thinking, running a tool, asking you a question, waiting for
-  permission, idle. Model, effort, context size, branch, uptime and the last prompt are a hover away.
+  permission, idle. A session whose own turn has ended but whose subagents are still running shows
+  as working ("2 subagents working"), not idle. Model, effort, context size, branch, uptime and the
+  last prompt are a hover away.
 * **Know who needs you.** A machine row rolls its agents up ("1 needs you · 2 working"), the status
   bar counts the whole fleet, and an optional notification fires when an agent asks a question, wants a
   permission, or finishes while you were elsewhere. Sort any tier attention-first and the agents that
@@ -71,7 +73,7 @@ makes it work; the daemons talk only to each other, and only while you are looki
 * **Account & usage** in the / menu, with a bar per limit window, and a dismissable banner from 80 %
   that behaves like the pane's.
 
-## On your phone (preview)
+## On your phone
 
 Turn on `vineyard.webApp.enabled` and every machine's daemon also serves Vineyard to its local
 network, sized for a phone. The tree becomes a stack of screens you tap through (machines,
@@ -81,8 +83,13 @@ rename agents, answer their questions and permission prompts, attach photos, sig
 Claude and wake a sleeping one. `vineyard.webApp.machines` limits it to some machines, and
 `vineyard.webApp.port` (7735) sets the port.
 
+It is young but in daily use from an iPhone's home screen, and the mobile layout is still being
+reworked as that turns things up, so expect it to change from release to release.
+
 A phone sees nothing until it is paired. Run *Vineyard: Pair a Phone with the Web App*, open the
-link it gives you on the phone (or type the code), and the phone gets its own credential. *Web App
+link it gives you on the phone (or type the code), and the phone gets its own credential. A phone
+pairs with one machine and sees the whole fleet through it; the app marks that machine *Serving this
+app*. Every visit renews the credential, and a phone unseen for 30 days is signed out. *Web App
 Devices…* in VS Code, or Settings on a paired phone, lists paired devices and signs them out. On an
 iPhone, open the link in Safari and choose *Share › Add to Home Screen* for a full-screen app with an
 edge swipe to go back.
@@ -91,9 +98,10 @@ edge swipe to go back.
 and the app is plain HTTP: anyone on the same network can read the traffic and copy a paired phone's
 credential. Turning the setting on asks you to confirm that on each computer. Use it on networks you
 trust, or reach it over Tailscale, a VPN or a TLS reverse proxy (list the proxy's name in
-`webAppHosts` in `~/.vineyard/config.json`), and firewall the port elsewhere. Pushing daemon updates
-and rotating the fleet key stay with VS Code and the CLI. The app keeps the fleet as quiet as VS Code
-does: it attaches to its daemon only while a paired page is open and in front.
+`webAppHosts` in `~/.vineyard/config.json`), and firewall the port elsewhere. Pushing daemon
+updates, adding machines, creating invite codes and rotating the fleet key stay with VS Code and the
+CLI. The app keeps the fleet as quiet as VS Code does: it attaches to its daemon only while a paired
+page is open and in front.
 
 ## Quiet, private, yours
 
@@ -115,7 +123,8 @@ does: it attaches to its daemon only while a paired page is open and in front.
 * **A fleet that updates itself.** Upgrade the extension on one machine and it brings every daemon up
   to the same version over the mesh. Daemons install only builds signed with the project's release
   keys, so a machine in the fleet cannot push code to the others. See [SECURITY.md](SECURITY.md).
-* **macOS, Linux and Windows**, arm64 and amd64, daemons bundled for every platform.
+* **macOS, Linux and Windows**, arm64 and amd64, daemons bundled for every platform. The author's
+  own fleet mixes all three, including a Windows desktop that joined with an invite code.
 
 ## Beyond the Claude Code pane
 
@@ -289,8 +298,8 @@ Blocked by Claude Code itself or by the agent living on another machine.
 
 ## Known gaps
 
-* The Windows daemon and installer are compiled and reasoned about but lightly tested; the Claude
-  project-directory encoding on Windows is a best guess.
+* On Windows, `~/.vineyard` is not yet locked down with ACLs (see
+  [SECURITY.md](SECURITY.md#known-gaps)).
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
 * Relays are one hop: a machine that no member you reach can reach either shows last-known state only.

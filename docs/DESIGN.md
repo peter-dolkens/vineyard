@@ -164,6 +164,12 @@ background one once the parent's tail carries its `<task-notification>`, or its 
 mid-turn but silent for 15 minutes is shown as `unknown`. A session contributes at most 60 subagents
 to a snapshot (oldest finished dropped first). See `daemon/internal/claude/subagents.go`.
 
+The daemon reports each session's own state. The views show a *shown* state on top of it
+(`shownState` in `src/core/subagents.ts`): a live session that is not busy and not waiting on you, but
+has subagents still running, shows as `working` ("2 subagents working"), or as `question` /
+`permission` when one of those subagents is. Roll-ups, counts, attention sorting and notifications
+all use the shown state. Background shell tasks do not count.
+
 ## Repository layout
 
 ```
@@ -309,10 +315,12 @@ is embedded in the binary, built from `src/web` by esbuild into `daemon/internal
   fragment, so it never reaches a server log). Ten wrong codes drop every outstanding code and pause
   pairing for a minute. `POST /api/pair` redeems a code and sets `vineyard_device`, a 256-bit random
   credential, as an HttpOnly, SameSite=Strict cookie (Secure over HTTPS), out of reach of any script
-  a transcript could inject. The machine keeps only its SHA-256, with the device's name and when it
-  was paired and last seen, in `~/.vineyard/web-devices.json` (0600). `webdevices` / `webrevoke`
+  a transcript could inject. The cookie lasts a rolling 30 days (`DeviceTTL`): `info` sets it again on
+  every visit, and devices unseen for 30 days are dropped. The machine keeps only its SHA-256, with
+  the device's name and when it was paired and last seen, in `~/.vineyard/web-devices.json` (0600). `webdevices` / `webrevoke`
   and the app's Settings list and sign devices out. Pairing is per machine: a phone pairs with the
-  machine whose address it opens, and sees the whole fleet through it.
+  machine whose address it opens, and sees the whole fleet through it; the app labels that machine
+  *Serving this app* rather than "this machine", which would read as the phone.
 * **One viewer link, only while watched.** The server connects to its daemon over loopback exactly as
   VS Code does (its machine certificate, `hello {role: viewer}`), and only while at least one paired browser
   holds the event stream. The page closes the stream whenever it is hidden, and the server drops the
@@ -321,8 +329,9 @@ is embedded in the binary, built from `src/web` by esbuild into `daemon/internal
 * **Endpoints.** `GET /api/events` is a server-sent event stream: a `state` message (how the server's
   daemon link stands), then `fleet`, `update` and `peerstatus` exactly as the daemon sends them, with a
   comment line every 20 s. A new browser gets the cached fleet at once. `POST /api/req {target, op,
-  args, timeoutMs}` relays one `req` and returns its `res`; `upgrade`, `stage`, `dist`, `rotatekey`,
-  `addpeer` and the `web*` ops are refused. `/api/log` (the local daemon's log), `POST /api/restart`,
+  args, timeoutMs}` relays one `req` and returns its `res`, for an allowlist of ops (`allowedOps` in
+  `server.go`): `upgrade`, `stage`, `dist`, `rotatekey`, `addpeer`, `invite`, `certify` and the
+  `web*` ops are refused. `/api/log` (the local daemon's log), `POST /api/restart`,
   `/api/devices`, `/api/devices/revoke` and `/api/pair/new` cover the local machine.
 * **Other guards.** Acting requests need an `X-Vineyard` header (a cross-site page cannot add one
   without a CORS preflight, which the server never approves) and a matching `Origin`. Every request
@@ -385,8 +394,7 @@ tree, on the card an observed question or permission shows, or in the chat's / m
 
 ## Known gaps
 
-* Windows daemon and installer are compiled and reasoned about but not yet tested on a real box; the
-  Claude project-directory encoding on Windows is a best guess.
+* On Windows, Vineyard does not set ACLs on `~/.vineyard` yet (see SECURITY.md, *Known gaps*).
 * Installing on a Mac over SSH needs the target user to have a GUI login for `launchctl bootstrap`;
   the installer falls back to `launchctl load -w`.
 * Relays are one hop: a machine that no member you reach can reach either shows last-known state only.

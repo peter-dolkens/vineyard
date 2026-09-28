@@ -26,8 +26,8 @@ screenshots here are made up.)*
 
 * Claude Code installed and signed in. A machine without it still joins and shows up as *no Claude
   Code*, and you can sign it in later with *Sign In to Claude on Machine…* from its right-click menu.
-* macOS, Linux or Windows on arm64 or x64. The extension bundles a daemon for each; see [Known
-  gaps](../README.md#known-gaps) for how well tested Windows is.
+* macOS, Linux or Windows on arm64 or x64. The extension bundles a daemon for each. Windows machines
+  join with an invite code (2a).
 
 **On the machines you will sit at**
 
@@ -72,8 +72,8 @@ step; if anything fails, the reason is there.
 
 ## 2a. Join a machine with an invite code
 
-Use this for any machine where you can run VS Code: laptops, Windows machines without an SSH
-server, or machines where you do not have key-based SSH set up.
+Use this for any machine where you can run VS Code: laptops, Windows machines (this is how they
+join), or machines where you do not have key-based SSH set up.
 
 **On a machine already in the fleet** (here `atelier`), click the **link icon** in the Vineyard view's
 toolbar, or run **Vineyard: Create Invite Code** from the Command Palette.
@@ -156,8 +156,7 @@ Requirements and details:
   already trusted.
 * **The machine id is the host exactly as you typed it**, lowercased, and its display name is the
   first label. Type the name you want to see.
-* **Windows targets** need the OpenSSH server enabled. If they don't have it, use an invite code
-  instead.
+* **Windows machines** join with an invite code (2a), not over SSH.
 * **Macs over SSH:** `launchctl` needs the target user to have a GUI login session. Without one the
   installer falls back to `launchctl load -w`.
 * SSH is only used for the install. Once it's done, the daemons talk to each other directly and
