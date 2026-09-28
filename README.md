@@ -98,7 +98,8 @@ does: it attaches to its daemon only while a paired page is open and in front.
 ## Quiet, private, yours
 
 * **No hub, no cloud, no account.** One static Go binary per machine, talking to its peers over
-  mutually authenticated TLS with a certificate your fleet generates for itself.
+  mutually authenticated TLS. Each machine has its own key and a certificate signed by the machine
+  that brought it in; no key anywhere can mint identities.
 * **Silent unless watched.** With no VS Code looking, a daemon holds no connections and does not even
   read the Claude directory. Snapshots are pushed only on change, and only to a viewer. The one
   exception is a machine nobody can connect to (a laptop on hotel Wi-Fi), which keeps a single idle
@@ -110,9 +111,10 @@ does: it attaches to its daemon only while a paired page is open and in front.
   Code already reports. The one outside request is an optional once-a-day check for extension updates,
   and only for installs that did not come from the Marketplace.
 * **Join without SSH** with a single-use invite code, or bootstrap over SSH where you have it.
-  Removing a machine removes it everywhere, and *Rotate Fleet Key* locks a lost laptop out.
+  Removing a machine revokes its key everywhere, which is all a lost laptop needs.
 * **A fleet that updates itself.** Upgrade the extension on one machine and it brings every daemon up
-  to the same version over the mesh.
+  to the same version over the mesh. Daemons install only builds signed with the project's release
+  keys, so a machine in the fleet cannot push code to the others. See [SECURITY.md](SECURITY.md).
 * **macOS, Linux and Windows**, arm64 and amd64, daemons bundled for every platform.
 
 ## Beyond the Claude Code pane
@@ -139,8 +141,8 @@ it does that the pane has no equivalent for.
 step, with screenshots, network requirements and troubleshooting. In short:
 
 1. Install **Vineyard** from the Extensions view and open its icon in the Activity Bar.
-2. **Set Up This Machine.** This writes `~/.vineyard/config.json`, generates the fleet certificate and
-   installs a login service. Your local agents appear within a second.
+2. **Set Up This Machine.** This writes `~/.vineyard/config.json`, gives the machine its own key and
+   certificate, and installs a login service. Your local agents appear within a second.
 3. On the next machine, install the extension and choose **Join Fleet with Invite Code**, pasting a
    code from *Vineyard: Create Invite Code* on a machine that is already in. The joiner needs only TCP
    reachability to the inviter on the daemon port (7734 by default). **Add Machine** does the same over

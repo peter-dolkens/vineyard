@@ -1,6 +1,7 @@
 # Setting up a fleet
 
-A **fleet** is every machine whose Vineyard daemon holds the same fleet certificate. You create it
+A **fleet** is every machine whose Vineyard daemon holds a certificate that leads back to the same
+fleet root, each machine with its own key. You create it
 once on the first machine, then bring each further machine in with an **invite code** (no SSH) or
 over **SSH**. There is no hub, so any machine can add the next one, and any machine you open VS Code
 on can watch all of them.
@@ -53,9 +54,10 @@ This takes a few seconds and does three things:
 1. **Writes `~/.vineyard/config.json`.** The machine id is the lowercase hostname (`atelier.local`),
    the display name is its first label (`atelier`), and the address other machines should dial is
    `<hostname>:7734`.
-2. **Generates the fleet certificate** (`fleet.crt` and `fleet.key` in `~/.vineyard`). This one
-   certificate *is* the fleet: every member holds a copy, and holding `fleet.key` is what lets a
-   machine in. Treat it like a private key.
+2. **Starts the fleet.** It makes this machine's own key (`machine.key`) and a fleet root that signs
+   this machine's certificate (`machine.crt`). The root's key is thrown away straight after, so no
+   machine ever holds a key that can mint identities; `fleet.crt` keeps only the root's public
+   certificate. Every later machine gets a certificate signed by the member that brings it in.
 3. **Installs the daemon as a login service** so it starts with your session: a launchd agent on
    macOS, a systemd user unit on Linux, a logon scheduled task on Windows.
 
@@ -86,8 +88,8 @@ An invite code:
 
 * works **once** and expires after **15 minutes**;
 * carries the inviting machine's addresses (its advertised name and its LAN IPs), a fingerprint of
-  the fleet certificate so the joiner cannot be tricked into joining an impostor, and a random token;
-* is, until it is used, as good as the fleet key. Send it the way you would send a password.
+  the inviter's certificate so the joiner cannot be tricked into joining an impostor, and a random token;
+* admits one new machine to the fleet until it is used. Send it the way you would send a password.
 
 **On the new machine** (here `forge`), install the extension, open the Vineyard view and choose
 **Join Fleet with Invite Code** (or run it from the Command Palette, or open the `vscode://` link).
@@ -95,8 +97,9 @@ Paste the code and press Enter.
 
 <p align="center"><img src="images/setup-join.png" width="720" alt="The Join fleet input box on the new machine with an invite code pasted in."></p>
 
-The new machine dials the inviter, checks its certificate against the fingerprint in the code,
-presents the token, and receives the fleet certificate and the list of known machines. It then writes
+The new machine makes its own key, dials the inviter, checks its certificate against the fingerprint
+in the code, and presents the token and its public key. The inviter signs the key and sends back the
+certificate and the list of known machines; no private key crosses the network. It then writes
 its own config and installs its own service, just as in step 1. The inviting machine only needs its
 daemon running; its VS Code window can be closed.
 
@@ -138,8 +141,10 @@ alias from `~/.ssh/config`, or `user@host`.
 The extension then:
 
 1. detects the target's OS and CPU over SSH and picks the matching bundled daemon;
-2. copies the daemon, `fleet.crt` and `fleet.key` into `~/.vineyard` on the target with `scp`;
-3. runs `vineyardd init` there with the list of machines this one knows, then `vineyardd install`;
+2. copies the daemon to the target with `scp` and runs `vineyardd keygen` there, which makes the
+   target's own key and prints its public half;
+3. has this machine's daemon sign that key, copies the certificate and the fleet roots back, and runs
+   `vineyardd init` there with the list of machines this one knows, then `vineyardd install`;
 4. adds the target to this machine's list and waits up to 20 seconds for it to connect.
 
 <p align="center"><img src="images/setup-sshdone.png" width="720" alt="The new server appears in the tree and a notification confirms the daemon was installed and connected."></p>
@@ -227,29 +232,31 @@ packets, and a watched Mac is kept awake while you look at it. Both are covered 
 
 ## Removing, leaving and rejoining
 
-* **Remove a machine:** right-click it in the tree, then *Remove Machine*. The removal reaches every
-  member: those connected at the time hear at once, the rest the next time they connect to anyone
-  who knows. From then on members refuse its connections, even though it still holds the fleet key
-  (to lock it out for good, rotate the key as well). *Remove and uninstall daemon* also runs
+* **Remove a machine:** right-click it in the tree, then *Remove Machine*. Its key is revoked, and the
+  removal reaches every member: those connected at the time hear at once, the rest the next time they
+  connect to anyone who knows. From then on members refuse its connections. A revoked key also
+  revokes the certificates it signed, so machines that joined through the removed one are listed
+  first: keep the ones you recognise and this machine signs their keys again, so they stay in (they
+  switch on their next connection); untick any you do not. *Remove and uninstall daemon* also runs
   `vineyardd uninstall` on it over SSH. To bring it back, add it again deliberately: *Add Machine*,
   a new invite code, or `vineyardd peer add`. A later add beats an earlier removal everywhere.
 * **Retired machines fade out:** a machine offline and unseen for 30 days leaves the tree without
   being removed, and comes back the moment it reappears. Change the period, or turn it off with 0,
   in `vineyard.hideMachinesUnseenForDays`.
 * **Uninstall on a machine itself:** `~/.vineyard/bin/vineyardd uninstall` stops and removes the
-  service. Delete `~/.vineyard` as well to remove its config and its copy of the fleet key.
+  service. Delete `~/.vineyard` as well to remove its config and its key.
 * **Rejoin or move to another fleet:** *Join Fleet with Invite Code* with a code from that fleet. You
   are asked to confirm replacing the current certificate.
-* **Revoke a lost machine:** anyone holding `fleet.key` is a member, so a stolen laptop means
-  replacing the key. Run **Vineyard: Rotate Fleet Key…** (or `vineyardd rotate-key --exclude
-  <machine id>`) on any member and pick the lost machine: it is removed from the fleet and never
-  gets the new key. Connected machines switch at once; machines that are offline switch the next
-  time they connect to any member, as long as that is within the grace period (14 days by default).
-  After the grace period the old key stops working, and a machine that missed it has to join again
-  with an invite code. Until then, someone holding the old key could still pretend to be one of the
-  machines that has not switched yet, so keep the grace period as short as your fleet allows.
-  Rotate once every machine's Vineyard extension is up to date: an extension from 0.3.21 or earlier
-  cannot open its own machine's view during the grace period, until it updates.
+* **Revoke a lost machine:** remove it (above). Its key is what identifies it, and revoking the key
+  shuts it out everywhere; nothing else needs replacing.
+* **Re-issue the fleet's certificates** only if the fleet key from before 0.3.23 (`fleet.key`, which
+  every member used to share) may be in the wrong hands, for example a machine lost before its daemon
+  moved to machine certificates. **Vineyard: Rotate Fleet Key…** (or `vineyardd rotate-key`) makes a
+  new root, signs every current member's key with it and discards the root's key; no private key
+  travels. Connected machines switch at once; machines that are offline switch the next time they
+  connect to any member within the grace period (14 days by default). After it only the new root is
+  trusted, which also shuts out anything made with the old shared key, and a machine that missed it
+  has to join again with an invite code.
 
 ## Troubleshooting
 
@@ -300,7 +307,8 @@ show *never seen*.
 | Path | What |
 | --- | --- |
 | `~/.vineyard/config.json` | Machine id, name, listen port, advertised address, known machines, options |
-| `~/.vineyard/fleet.crt`, `fleet.key` | The fleet certificate. The key is membership. Both are mode 600 |
+| `~/.vineyard/machine.key`, `machine.crt` | This machine's own key and its certificate chain. Mode 600; the key never leaves the machine |
+| `~/.vineyard/fleet.crt` | The fleet roots (public). Before 0.3.23 also `fleet.key`, the shared key, deleted once the fleet has moved to machine certificates |
 | `~/.vineyard/bin/vineyardd` | The daemon (`vineyardd.exe` on Windows) |
 | `~/.vineyard/vineyardd.log` | Daemon log |
 | `~/.vineyard/cache.json` | Last-known state of other machines, shown while they're offline |

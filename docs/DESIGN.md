@@ -7,7 +7,7 @@ use it.
 ## Design
 
 ```
- ┌──────────────┐        mTLS, fleet cert         ┌──────────────┐
+ ┌──────────────┐     mTLS, machine certs         ┌──────────────┐
  │ VS Code      │◄──────────────┐                  │ build-box    │
  │  (viewer)    │  localhost    │   subscribe      │  vineyardd   │
  │      │       │──────────────►│◄────────────────►│  (quiet)     │
@@ -82,37 +82,58 @@ use it.
 * **Stateless connections.** A fresh connection carries everything it needs: hello, then subscribe.
   Reconnects use exponential backoff (2 s → 60 s) only while someone is watching. Offline or
   unreachable machines show their last-known snapshot from `~/.vineyard/cache.json`.
-* **Security.** All traffic is TLS 1.3 with mutual authentication using one shared fleet certificate
-  (ECDSA P-256, self-signed, 100 years) generated on the first machine and copied to the others over
-  SSH during setup. Possession of `fleet.key` *is* membership, exactly like a pre-shared key. Transcript reads are
-  sandboxed to `~/.claude/projects`.
-* **Key rotation.** `rotatekey` (*Rotate Fleet Key…*, `vineyardd rotate-key`) makes a new key with two
-  certificates: a self-signed one (the new `fleet.crt`) and a cross certificate for the same key signed
-  by the old one (`fleet-cross.crt`); the old certificate is kept as `fleet-prev.crt`. Until `prevUntil`
-  (default 14 days) rotated machines present the cross certificate, which machines still on the old key
-  accept, and trust both old and new, so those machines are accepted too. Excluded machines are removed
-  (fleet-wide, as above) first. The key set goes out in `rekey` over every live peer link, every hello
-  states `keyAt`, and whichever side of a connection has the newer key pushes it, so a machine offline
-  at rotation catches up the next time it meets any rotated member. When the grace period ends the
-  previous and cross certificates are deleted and only the new key is trusted. Invites hand out the
-  whole key set, grace files included. The key set lists its `members` (the machines the rotating
-  daemon knew, minus the excluded ones) and is only ever pushed to those, so a thief who renames an
-  excluded laptop gets nothing. A pushed set is installed only if its cross certificate chains to a
-  key the receiver already trusts. Rotating again inside a grace period chains the new cross
-  certificate to the earlier ones and keeps every earlier certificate in `fleet-prev.crt`, so machines
-  on any key still in grace keep working and catch up. Viewers (VS Code, the CLI) must connect from
-  the same machine; a viewer hello from anywhere else is refused.
+* **Security.** All traffic is TLS 1.3 with mutual authentication. See [SECURITY.md](../SECURITY.md)
+  for the threat model. Transcript reads are sandboxed to `~/.claude/projects`. Viewers (VS Code, the
+  CLI, the web app's server) must connect from the same machine over loopback, holding that machine's
+  own certificate; a viewer hello from anywhere else is refused.
+* **Machine identity.** Every machine has its own key (`machine.key`, ECDSA P-256) and a certificate
+  naming it (`machine.crt`): a `vineyard://machine/<id>` URI SAN, the `vineyard` DNS name older daemons
+  check, and CA rights so it can sign for machines it invites. The chain runs leaf first through the
+  machines that vouched for it to a root in `fleet.crt`. After the handshake a daemon admits a
+  connection only if no key in its verified chain is revoked, a peer's hello names the machine its
+  certificate names, a dial reached the machine it was aimed at, and a viewer holds this machine's own
+  certificate. The keys members present on direct links are kept in `memberKeys`; they are never
+  learned second-hand.
+* **Joining issues a certificate.** The joiner makes its key and sends only the public half in
+  `join`. The inviter signs it with its own key and returns the chain, the roots and the peers. No
+  private key leaves either machine, and there is no key anywhere that can mint arbitrary identities:
+  `vineyardd init` for a new fleet signs the first machine with a root and throws the root's key away.
+  SSH setup does the same through `vineyardd keygen` on the target and the local-only `certify` op.
+* **Removal revokes a key.** *Remove Machine* adds the machine's key fingerprint to the removal
+  record and to `revokedKeys`, which every hello carries. A revoked key breaks every chain through it,
+  so machines that joined through the removed one are cut off too. The removing machine lists them
+  (`descendants`) and vouches again for the ones the user keeps: a `vouch` is a new certificate for the
+  kept machine's existing key, signed by the remover, delivered on a live link or to the machine's next
+  (refused) connection, and passed on in hellos until taken up. A machine cannot remove the machine its
+  own chain runs through.
+* **Migration from the shared key (0.3.23).** Before 0.3.23 every member held one shared certificate
+  and `fleet.key`, whose possession was membership. On first start a 0.3.23 daemon signs itself a
+  machine certificate with that key, offline. The result chains to the same root, so older daemons
+  accept it. For `legacyUntil` (14 days) it still accepts the shared certificate from older daemons;
+  once every known member has presented its own certificate, or the time is up, it refuses the shared
+  one and deletes `fleet.key`.
+* **Rotation is re-issue.** `rotatekey` (*Rotate Fleet Key…*, `vineyardd rotate-key`) removes and
+  revokes any excluded machines, makes a new root, signs with it a certificate for every other
+  member's existing key, and discards the root's key. The package (`reissue`: new root, certificates,
+  a bridge certificate for the new root signed by the rotating machine, and the rotating machine's
+  signature) contains no private key. Members accept it only from a signer whose key they already hold
+  on record, add the root, switch to their new certificate and present the bridge behind it, so
+  machines still on the old root can verify them and catch up from any hello within the grace period.
+  After it only the new root is trusted, which also shuts out anything minted with the pre-0.3.23
+  shared key. A lost laptop needs removal, not rotation.
 * **Joining without SSH: invite codes.** Any member can mint a single-use code valid for 15 minutes
   (`vineyardd invite`, or *Vineyard: Create Invite Code*). The code is `vineyard:` + base64url JSON
   carrying the inviter's addresses (advertised name plus its LAN IPs), a 128-bit fingerprint of the
-  fleet certificate, and a 128-bit random token. The joiner dials the inviter, pins the fingerprint,
-  presents the token over TLS 1.3, and receives the fleet certificate + key and the peer list. The
-  inviter accepts certificate-less connections **only while an invite is outstanding**, and such a
-  connection may send exactly one `join`. This is how Windows boxes (no SSH server) and machines
-  without key-based SSH get in; the extension bundles binaries for every platform so the joiner runs
-  its own copy locally. Codes also work as `vscode://peter-dolkens.vineyard/join?code=…` links.
+  inviter's certificate, and a 128-bit random token. The joiner dials the inviter, pins the
+  fingerprint, presents the token and its public key over TLS 1.3, and receives its certificate, the
+  roots and the peer list. The inviter accepts certificate-less connections **only while an invite is
+  outstanding**, and such a connection may send exactly one `join`. This is how Windows boxes (no SSH
+  server) and machines without key-based SSH get in; the extension bundles binaries for every platform
+  so the joiner runs its own copy locally. Codes also work as
+  `vscode://peter-dolkens.vineyard/join?code=…` links.
 * **SSH is an optional bootstrap.** For machines you *can* SSH to, *Add Machine* copies the binary
-  and certificate with `scp` and runs `vineyardd init && vineyardd install` remotely. Day-to-day
+  with `scp`, runs `vineyardd keygen` there, has the local daemon certify the printed public key, copies
+  the certificate and roots back, and runs `vineyardd init && vineyardd install` remotely. Day-to-day
   traffic never touches SSH either way.
 
 ### Agent state derivation
@@ -194,7 +215,8 @@ Updates flow from the extension outwards, so upgrading one VS Code is enough to 
 * **Daemons.** The extension bundles a `vineyardd` build for every platform. When a Vineyard view is
   open and it sees an online machine reporting an older daemon than the bundled one, it streams the
   matching binary to that machine over the existing mesh connection (the `upgrade` request, relayed by
-  the local daemon in 512 KB chunks). The receiving daemon stages the file, checks the SHA-256, runs
+  the local daemon in 512 KB chunks). The receiving daemon stages the file, checks the SHA-256, and
+  refuses it unless its release signature (below) is valid, before running anything. It then runs
   `vineyardd version` on it to prove it executes on that platform, then hands over to it: the new
   binary copies itself into `~/.vineyard/bin`, re-registers the login service and restarts. No SSH,
   no polling, and nothing at all happens while every daemon is current. Turn it off with
@@ -202,6 +224,13 @@ Updates flow from the extension outwards, so upgrading one VS Code is enough to 
   by hand. Only the numeric part of a version is compared, so two different dev builds never
   overwrite each other; unparseable versions (`dev`) are never touched. Daemons older than 0.3.0 do
   not understand `upgrade`, so the first update of those goes over SSH (or the local installer) once.
+* **Signed builds.** From 0.3.23 a daemon installs or stores a build only with a signature
+  (`<binary>.sig`, carried in the final `upgrade` / `stage` chunk) from one of the two Ed25519 release
+  keys compiled into it (`daemon/internal/release`), over the build's platform, version and SHA-256.
+  The fleet key is not enough to put code on a machine. The release workflow signs every build with
+  both keys (`cmd/vineyard-sign`, secrets `VINEYARD_SIGNING_KEY_A` and `_B`) and fails without them.
+  Rotation replaces one key at a time (see SECURITY.md). A development machine can opt in to unsigned
+  builds with `"allowUnsignedUpgrades": true` in its own config.json; it is never set over the mesh.
 
 ## Build and run
 
@@ -213,14 +242,16 @@ npm test                 # node --test + go test
 
 Press **F5** ("Run Vineyard") to launch an Extension Development Host. In the Vineyard view:
 
-1. **Set Up This Machine** – writes `~/.vineyard/config.json`, generates the fleet certificate and
-   installs the login service. The view connects to the local daemon within a second.
+1. **Set Up This Machine** – writes `~/.vineyard/config.json`, starts a fleet (a root that signs this
+   machine's certificate and is then discarded) and installs the login service. The view connects to
+   the local daemon within a second.
 2. **Create Invite Code** on this machine, then on another machine (with the extension installed)
-   run **Join Fleet with Invite Code** and paste it. The joiner fetches the certificate and peers from
-   the inviter, installs its own service and shows up in both views. This needs only TCP reachability
+   run **Join Fleet with Invite Code** and paste it. The joiner has its key certified by the inviter,
+   gets the peers from it, installs its own service and shows up in both views. This needs only TCP reachability
    on the daemon port, no SSH.
 3. **Add Machine** (alternative) – enter an SSH host. The extension detects the platform, copies the matching
-   binary and the certificate, runs `init` with the current peer list, installs the service, and
+   binary, has this machine certify the key the target makes for itself, copies the certificate back,
+   runs `init` with the current peer list, installs the service, and
    registers the new peer locally. Repeat for each machine, from any machine.
 4. Every daemon learns the other members and their addresses from hellos and persists them, so a
    machine that was set up from `studio` can itself be the orchestrator later.
@@ -237,18 +268,23 @@ tail -f ~/.vineyard/vineyardd.log
 
 | Message | Direction | Purpose |
 | --- | --- | --- |
-| `hello {role: peer\|viewer, machineId, listen, addrs, peers, uplink, uplinks}` | both | identity, every address it answers on, every other member it knows, whether this may be an uplink, and which machines hold an uplink to the sender (once per connection) |
+| `hello {role: peer\|viewer, machineId, listen, addrs, peers, uplink, uplinks, revokedKeys, vouches, reissue}` | both | identity, every address it answers on, every other member it knows, whether this may be an uplink, which machines hold an uplink to the sender, revoked keys, vouches it carries and a re-issue in grace (once per connection) |
 | `req dialback {addrs}` → `{reachable}` / `uplink` | peer→peer | "can you connect to me?"; mark this link as an uplink |
 | `subscribe` / `unsubscribe` | peer→peer | "push me your snapshot on change" |
 | `snapshot {snapshot}` | peer→subscriber | full self-report (idempotent, newest `at` wins) |
 | `sync {entries}` | accepting peer→dialer | once per connection: last-known state of other machines |
 | `removed {removals}` | peer→peer | a machine was just removed from the fleet |
-| `rekey {keys}` | peer→peer | a newer fleet key set, pushed to a machine that has an older one |
-| `req rotatekey {exclude, graceHours}` | viewer→local daemon | rotate the fleet key |
+| `removed {removals}` records carry `keys` | peer→peer | the removed machine's key fingerprints, revoked for good |
+| `vouch {vouch}` | peer→peer | a new certificate for a machine whose chain ran through a removed one |
+| `reissue {reissue}` | peer→peer | a new root and every member's re-issued certificate (see *Rotation is re-issue*) |
+| `req rotatekey {exclude, graceHours}` | viewer→local daemon | re-issue every certificate under a new root |
+| `req certify {machineId, publicKey}` | viewer→local daemon only | sign a new machine's key (SSH setup) |
+| `req descendants {machineId}` | viewer→daemon | machines whose chain runs through that machine's key |
+| `rekey {keys}` | pre-0.3.23 peer→peer | a shared key set; ignored from 0.3.23 |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
 | `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*) |
-| `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
+| `join {token, machineId, listen, publicKey}` / `joined {cert, chain, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active: the roots and the joiner's certificate chain |
 | `tunnel` / `tunnel-in` / `tunnel-callback` / `tunnel-accept`, `tunnel-ok` / `tunnel-fail` | requester→relay→target | one-hop relay setup; first line of a fresh connection (callback travels on an existing link) |
 
 ## The web app
@@ -278,7 +314,7 @@ is embedded in the binary, built from `src/web` by esbuild into `daemon/internal
   and the app's Settings list and sign devices out. Pairing is per machine: a phone pairs with the
   machine whose address it opens, and sees the whole fleet through it.
 * **One viewer link, only while watched.** The server connects to its daemon over loopback exactly as
-  VS Code does (fleet certificate, `hello {role: viewer}`), and only while at least one paired browser
+  VS Code does (its machine certificate, `hello {role: viewer}`), and only while at least one paired browser
   holds the event stream. The page closes the stream whenever it is hidden, and the server drops the
   link 15 s after the last stream ends; the daemon then applies its own 30 s grace. Both the server and
   VS Code ping the daemon every 30 s over loopback, inside its 95 s idle limit.
