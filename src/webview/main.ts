@@ -149,6 +149,7 @@ app.innerHTML = `
 <section id="cards" class="cards"></section>
 <footer class="composer">
   <div class="composer-box">
+    <div class="subagent-note" id="subagentNote" hidden><i class="codicon codicon-hubot"></i><div><div class="subagent-note-title">Viewing a subagent</div><div class="subagent-note-sub">Read-only: it takes its instructions from its parent session, not from here.</div></div></div>
     <textarea id="input" rows="1" placeholder="Message this agent…"></textarea>
     <div class="composer-actions">
       <span class="hint" id="hint"></span>
@@ -281,7 +282,7 @@ titleEdit.onblur = () => endRename(true);
 const btnHistory = document.getElementById('btnHistory')!;
 btnHistory.onclick = () => vscode.postMessage({ type: 'action', id: 'history' });
 function syncHistoryButton() {
-  btnHistory.hidden = stats.turns > 0 || !!turnsEl.querySelector('[data-echo]');
+  btnHistory.hidden = agent?.kind === 'subagent' || stats.turns > 0 || !!turnsEl.querySelector('[data-echo]');
 }
 document.getElementById('btnInfo')!.onclick = () => {
   infoEl.hidden = !infoEl.hidden;
@@ -561,7 +562,8 @@ function renderEntry(e: Entry) {
   }
   const type = e.type;
   const time = fmtTime(e.timestamp);
-  const side = e.isSidechain === true;
+  // A subagent's own transcript is all sidechain; only mark side threads inside a parent's transcript.
+  const side = e.isSidechain === true && agent?.kind !== 'subagent';
 
   if (type === 'system') {
     const sub = e.subtype ?? 'system';
@@ -733,8 +735,13 @@ function renderHeader() {
   if (!BUSY.has(agent.state)) interruptAt = undefined; // the turn ended: back to Send next time
   renderButton();
   input.disabled = !canSend;
+  // A subagent cannot take messages: the box gives way to a note, the toolbar stays for its model,
+  // context and cache, and the window takes a purple tint in place of the blue.
+  document.body.classList.toggle('subagent-view', subagent);
+  document.getElementById('subagentNote')!.hidden = !subagent;
+  syncHistoryButton();
   input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? (HOST.enterSends === false ? 'Message this agent…' : 'Message this agent…  (Enter to send, Shift+Enter for newline)') : 'Message this agent…  (delivered as a cross-session message)';
-  document.getElementById('hint')!.textContent = subagent ? 'subagent · read-only' : managedLive ? '' : agent.alive ? 'observed session' : '';
+  document.getElementById('hint')!.textContent = !subagent && !managedLive && agent.alive ? 'observed session' : '';
 
   bar.render(agent, machine, barStats());
   renderTicker();

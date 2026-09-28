@@ -130,6 +130,16 @@ input:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outl
 textarea { width: 100%; border: none; background: transparent; color: var(--vscode-input-foreground); font: inherit; resize: none; outline: none; line-height: 1.4; max-height: 200px; }
 .composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .hint { font-size: 11px; opacity: 0.6; margin-right: auto; }
+/* a subagent's view: purple where a session is blue, a note where the message box was, and the
+   read-only toolbar under it */
+body.subagent-view { --vscode-focusBorder: var(--vscode-charts-purple, #b180d7); }
+body.subagent-view .hdr { border-bottom-color: var(--vscode-focusBorder); }
+body.subagent-view .composer-box { border-color: var(--vscode-focusBorder); }
+body.subagent-view #input, body.subagent-view #btnSend, body.subagent-view #btnAttach { display: none; }
+.subagent-note { display: flex; align-items: flex-start; gap: 8px; padding: 2px 0 6px; }
+.subagent-note > .codicon { color: var(--vscode-focusBorder); margin-top: 1px; }
+.subagent-note-title { font-weight: 600; }
+.subagent-note-sub { font-size: 11px; opacity: 0.7; }
 /* the one composer button: Send, Sending, Pause (interrupt the turn) or Stop (end the session) */
 .send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 6px; padding: 4px 8px; min-width: 32px; transition: background .12s, color .12s, border-color .12s; }
 .send:hover { background: var(--vscode-button-hoverBackground); }
