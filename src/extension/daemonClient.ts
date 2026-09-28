@@ -14,6 +14,12 @@ import type { FleetEntry, PeerStatus } from '../core/model.ts';
 export const PROTOCOL_VERSION = 1;
 export const DEFAULT_PORT = 7734;
 export const FLEET_SERVER_NAME = 'vineyard';
+/**
+ * The daemon closes a link that has said nothing for 95 s, and a viewer only speaks when it asks for
+ * something, so an idle window pings. Without it the view was dropped and re-attached every 95 s,
+ * and every re-attach made the daemon retry its relayed peers' direct paths.
+ */
+const VIEWER_PING_MS = 30_000;
 
 export interface PeerAddr {
   machineId: string;
@@ -84,6 +90,7 @@ export class DaemonClient implements vscode.Disposable {
   private socket: tls.TLSSocket | undefined;
   private buffer = '';
   private reconnectTimer: NodeJS.Timeout | undefined;
+  private pingTimer: NodeJS.Timeout | undefined;
   private backoffMs = 1000;
   private stopped = false;
   private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -160,6 +167,10 @@ export class DaemonClient implements vscode.Disposable {
       });
       this.setState('connected');
       this.log.appendLine(`connected to local daemon on :${cfg.port}`);
+      clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => {
+        if (this.socket === socket) this.send({ t: 'ping' });
+      }, VIEWER_PING_MS);
     });
     socket.on('data', (chunk: string) => this.onData(chunk));
     socket.on('error', (err) => {
@@ -167,7 +178,10 @@ export class DaemonClient implements vscode.Disposable {
       this.log.appendLine(`daemon connection error: ${err.message}`);
     });
     socket.on('close', () => {
-      if (this.socket === socket) this.socket = undefined;
+      if (this.socket === socket) {
+        this.socket = undefined;
+        clearInterval(this.pingTimer);
+      }
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
         p.reject(new Error('daemon disconnected'));
@@ -258,6 +272,7 @@ export class DaemonClient implements vscode.Disposable {
   dispose(): void {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
+    clearInterval(this.pingTimer);
     this.socket?.destroy();
     this._onFleet.dispose();
     this._onUpdate.dispose();
