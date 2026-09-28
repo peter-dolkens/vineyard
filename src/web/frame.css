@@ -46,7 +46,9 @@ button.icon .codicon { font-size: 20px; }
 
 /* composer */
 /* no backdrop-filter here: it would make the composer the containing block of the fixed popovers */
-.composer { padding: 6px 8px calc(8px + var(--sab, 0px)); background: var(--bg-plain); border-top: 0.5px solid var(--sep); }
+/* Home-screen apps report the home indicator's 34 px as the bottom inset; the bar's background runs
+   under it and the field sits just above the indicator, as in Messages, rather than 34 px above it. */
+.composer { padding: 6px 8px max(8px, calc(var(--sab, 0px) - 14px)); background: var(--bg-plain); border-top: 0.5px solid var(--sep); }
 .composer-box { border-radius: 20px; padding: 6px 6px 4px 12px; background: var(--row); }
 .composer-box textarea, #input { font-size: 16px; line-height: 1.35; padding: 4px 0; max-height: 40vh; }
 .composer-actions { flex-wrap: nowrap; gap: 4px; }
