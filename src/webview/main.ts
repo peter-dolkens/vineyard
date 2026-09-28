@@ -140,9 +140,6 @@ app.innerHTML = `
   <div class="hdr-actions">
     <button class="icon" id="btnHistory" title="Past sessions in this workspace: resume one under Vineyard's control"><i class="codicon codicon-history"></i></button>
     <button class="icon" id="btnInfo" title="Session info"><i class="codicon codicon-info"></i></button>
-    <button class="icon" id="btnTerminal" title="Open terminal here"><i class="codicon codicon-terminal"></i></button>
-    <button class="icon" id="btnWorkspace" title="Open workspace in VS Code"><i class="codicon codicon-folder-opened"></i></button>
-    <button class="icon" id="btnReload" title="Reload transcript"><i class="codicon codicon-refresh"></i></button>
   </div>
 </header>
 <section class="info" id="info" hidden></section>
@@ -280,16 +277,15 @@ titleEdit.onkeydown = (e) => {
 };
 titleEdit.onblur = () => endRename(true);
 // The clock, like the Claude Code pane's: the workspace's past sessions, newest first, to resume one.
-document.getElementById('btnHistory')!.onclick = () => vscode.postMessage({ type: 'action', id: 'history' });
-document.getElementById('btnTerminal')!.onclick = () => vscode.postMessage({ type: 'openTerminal' });
-document.getElementById('btnWorkspace')!.onclick = () => vscode.postMessage({ type: 'openWorkspace' });
+// Only on a session with nothing said yet; once a message is sent it goes, as in Claude Code.
+const btnHistory = document.getElementById('btnHistory')!;
+btnHistory.onclick = () => vscode.postMessage({ type: 'action', id: 'history' });
+function syncHistoryButton() {
+  btnHistory.hidden = stats.turns > 0 || !!turnsEl.querySelector('[data-echo]');
+}
 document.getElementById('btnInfo')!.onclick = () => {
   infoEl.hidden = !infoEl.hidden;
   renderInfo();
-};
-document.getElementById('btnReload')!.onclick = () => {
-  resetLog();
-  vscode.postMessage({ type: 'reload' });
 };
 // One button, like the Claude Code pane's: Send when the session can take a message, Pause (interrupt
 // the turn) while a managed session is mid-turn, and Stop (end the session, asks first) once an
@@ -365,6 +361,7 @@ function resetLog() {
   currentTurn = undefined;
   Object.assign(stats, { input: 0, cacheRead: 0, cacheCreate: 0, output: 0, lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, toolCalls: 0, turns: 0, cacheUsage: undefined, cacheRequestAt: undefined, cacheRespondedAt: undefined, cacheTtlMs: undefined, compactedAt: undefined });
   stats.subagents.clear();
+  syncHistoryButton();
 }
 
 function autoGrow() {
@@ -526,6 +523,7 @@ function appendLocalEcho(text: string) {
   const meta = el('div', 'meta echo-meta', agent?.managed && !agent.managed.exited ? 'sent' : 'queued · read between tool calls or when idle');
   row.appendChild(meta);
   turnFor().appendChild(row);
+  syncHistoryButton();
   afterAppend();
 }
 
@@ -552,6 +550,7 @@ function startTurn(promptText: string, time: string, cross: boolean) {
   turnsEl.appendChild(turn);
   currentTurn = turn;
   stats.turns++;
+  syncHistoryButton();
 }
 
 function renderEntry(e: Entry) {

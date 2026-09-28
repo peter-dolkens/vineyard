@@ -13,13 +13,12 @@ html, body { height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-
 body { background: var(--bg-plain); -webkit-tap-highlight-color: transparent; }
 #app { height: 100%; }
 
-/* header: back, state, title; history and info are the only actions a phone keeps */
+/* header: back, state, title, then the same history and info buttons as VS Code */
 .hdr { padding: calc(6px + var(--sat, 0px)) 8px 6px 4px; gap: 4px; background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom: 0.5px solid var(--sep); }
 .hdr-main { flex: 1; gap: 8px; }
 .hdr .title { font-size: 16px; }
 .hdr .sub { font-size: 12px; }
 .state-dot { width: 28px; height: 28px; }
-#btnTerminal, #btnWorkspace, #btnReload { display: none; }
 button.icon { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; padding: 0; opacity: 1; color: var(--blue); }
 button.icon .codicon { font-size: 20px; }
 #btnBack { min-width: 34px; margin-right: -2px; }

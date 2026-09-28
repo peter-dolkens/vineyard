@@ -288,11 +288,6 @@
           "group": "navigation@3"
         },
         {
-          "command": "vineyard.resumeFromHistory",
-          "when": "view == vineyard.fleet",
-          "group": "navigation@2"
-        },
-        {
           "command": "vineyard.createInvite",
           "when": "view == vineyard.fleet",
           "group": "navigation@4"
