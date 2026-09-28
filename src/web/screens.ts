@@ -288,7 +288,6 @@ export class HomeScreen extends Screen {
           actionSheet(undefined, [
             { label: 'New agent…', run: () => this.pickMachine('New agent on…', (m) => flows.newAgent(m)) },
             { label: 'Resume a past session…', run: () => this.pickMachine('Past sessions on…', (m) => this.ctx.navigate(R.history(m.id))) },
-            { label: 'Create invite code', run: () => flows.run(flows.invite()) },
             { label: 'Settings', run: () => this.ctx.navigate(R.settings) },
           ]),
       },

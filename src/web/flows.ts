@@ -249,17 +249,6 @@ export class Flows {
     this.navigate(R.home);
   }
 
-  async invite(): Promise<void> {
-    const res = await this.api.request<{ code: string; expiresInSeconds: number }>('invite', undefined, undefined, 10_000);
-    const mins = Math.round(res.expiresInSeconds / 60);
-    await dialog({
-      title: 'Invite code',
-      message: `Single use, valid ${mins} minutes. On the new machine run Vineyard: Join Fleet with Invite Code in VS Code, or vineyardd join <code>.`,
-      body: copyBlock(res.code),
-      buttons: [{ label: 'Done', value: 'cancel' }],
-    });
-  }
-
   async restartDaemon(m: MachineView): Promise<void> {
     if (!(await confirm(`Restart the daemon on ${m.name}?`, 'Sessions started by Vineyard on this machine end with it (they can be resumed). The app reconnects on its own.', 'Restart', true))) return;
     await this.api.restartDaemon();

@@ -37,6 +37,30 @@ type Devices struct {
 
 const lastSeenWrite = 10 * time.Minute
 
+// DeviceTTL is how long a paired device may go unseen before it is signed out. Every visit renews it
+// (the cookie is set again with the same lifetime), so a phone in use never has to pair again.
+const DeviceTTL = 30 * 24 * time.Hour
+
+// expireLocked drops devices unseen for DeviceTTL; it reports whether any went.
+func (d *Devices) expireLocked(now time.Time) bool {
+	cut := now.Add(-DeviceTTL).UnixMilli()
+	kept := d.list[:0:0]
+	for _, x := range d.list {
+		seen := x.LastSeen
+		if seen == 0 {
+			seen = x.PairedAt
+		}
+		if seen >= cut {
+			kept = append(kept, x)
+		}
+	}
+	if len(kept) == len(d.list) {
+		return false
+	}
+	d.list = kept
+	return true
+}
+
 func NewDevices(path string) *Devices {
 	return &Devices{path: path, saved: map[string]int64{}}
 }
@@ -133,6 +157,9 @@ func (d *Devices) Check(token string) (Device, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.loadLocked()
+	if d.expireLocked(time.Now()) {
+		_ = d.saveLocked()
+	}
 	for i := range d.list {
 		if subtle.ConstantTimeCompare([]byte(d.list[i].Hash), []byte(want)) == 1 {
 			now := time.Now().UnixMilli()
@@ -151,6 +178,9 @@ func (d *Devices) List() []Device {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.loadLocked()
+	if d.expireLocked(time.Now()) {
+		_ = d.saveLocked()
+	}
 	out := make([]Device, 0, len(d.list))
 	for _, x := range d.list {
 		x.Hash = ""

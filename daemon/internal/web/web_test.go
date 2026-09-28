@@ -172,7 +172,7 @@ func TestRequestRelayAndAllowlist(t *testing.T) {
 	if _, out := post(t, ts, `{"op":"kill","args":{}}`, nil); out["ok"] != false || out["error"] != "refused" {
 		t.Fatalf("daemon error not passed on: %v", out)
 	}
-	for _, op := range []string{"upgrade", "stage", "rotatekey", "addpeer"} {
+	for _, op := range []string{"upgrade", "stage", "rotatekey", "addpeer", "invite"} {
 		if res, _ := post(t, ts, `{"op":"`+op+`"}`, nil); res.StatusCode != http.StatusForbidden {
 			t.Fatalf("%s allowed: %d", op, res.StatusCode)
 		}
@@ -388,4 +388,48 @@ func TestRunnerStartsAndStops(t *testing.T) {
 	if st := r.Status(); st.Listen != "" || len(st.URLs) != 0 {
 		t.Fatalf("status after stop %+v", st)
 	}
+}
+
+func TestDevicesExpireWhenUnseen(t *testing.T) {
+	path := t.TempDir() + "/web-devices.json"
+	d := NewDevices(path)
+	tok, dev, err := d.Add("old phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _, _ := d.Add("new phone")
+	d.mu.Lock()
+	for i := range d.list {
+		if d.list[i].ID == dev.ID {
+			d.list[i].LastSeen = time.Now().Add(-DeviceTTL - time.Hour).UnixMilli()
+		}
+	}
+	_ = d.saveLocked()
+	d.mu.Unlock()
+	if _, ok := d.Check(tok); ok {
+		t.Fatal("a device unseen for over 30 days was accepted")
+	}
+	if _, ok := d.Check(fresh); !ok {
+		t.Fatal("a recently seen device was dropped")
+	}
+	if l := d.List(); len(l) != 1 || l[0].Name != "new phone" {
+		t.Fatalf("list after expiry: %+v", l)
+	}
+}
+
+func TestInfoRenewsTheCookie(t *testing.T) {
+	ts, _ := newTestServer(t)
+	req, _ := http.NewRequest("GET", ts.URL+"/api/info", nil)
+	req.AddCookie(ts.cookie())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	for _, c := range res.Cookies() {
+		if c.Name == deviceCookie && c.Value == ts.token && c.MaxAge == int(DeviceTTL.Seconds()) {
+			return
+		}
+	}
+	t.Fatalf("no renewed 30-day cookie: %v", res.Cookies())
 }

@@ -29,13 +29,13 @@ import (
 //go:embed static
 var embedded embed.FS
 
-// Ops the web app may relay. Pushing daemon binaries (upgrade, stage) and rotating the fleet key stay
-// with VS Code and the CLI until the web app has authentication.
+// Ops the web app may relay. Pushing daemon binaries (upgrade, stage), rotating the fleet key and
+// minting invite codes (which admit a new machine to the fleet) stay with VS Code and the CLI.
 var allowedOps = map[string]bool{
 	"transcript": true, "send": true, "spawn": true, "takeover": true, "respond": true,
 	"interrupt": true, "stop": true, "stoptask": true, "configure": true, "login": true,
 	"rename": true, "wake": true, "sessions": true, "kill": true, "probe": true,
-	"removepeer": true, "invite": true, "version": true, "ping": true,
+	"removepeer": true, "descendants": true, "version": true, "ping": true,
 }
 
 const (
@@ -172,7 +172,7 @@ func secure(r *http.Request) bool {
 }
 
 func setCookie(w http.ResponseWriter, r *http.Request, token string) {
-	http.SetCookie(w, &http.Cookie{Name: deviceCookie, Value: token, Path: "/", MaxAge: 400 * 24 * 3600, HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: deviceCookie, Value: token, Path: "/", MaxAge: int(DeviceTTL.Seconds()), HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteStrictMode})
 }
 
 func clearCookie(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +304,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"name": s.o.Name, "paired": false}
 	if c, err := r.Cookie(deviceCookie); err == nil && s.o.Devices != nil {
 		if dev, ok := s.o.Devices.Check(c.Value); ok {
+			setCookie(w, r, c.Value) // every app start renews the 30 days
 			out = map[string]any{"version": s.o.Version, "self": s.o.Self, "name": s.o.Name, "restart": s.o.Restart != nil, "log": s.o.LogFile != "", "paired": true, "device": map[string]string{"id": dev.ID, "name": dev.Name}}
 		}
 	}
