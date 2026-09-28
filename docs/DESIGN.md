@@ -147,14 +147,16 @@ to a snapshot (oldest finished dropped first). See `daemon/internal/claude/subag
 
 ```
 daemon/                 Go module: vineyardd
-  cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join
+  cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join | web
   internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
   internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
   internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
+  internal/web          `vineyardd web`: the mobile web app's server and its viewer link to the local daemon
   internal/service      launchd / systemd / Task Scheduler installers (Windows needs no elevation: XML logon task, then HKCU Run key)
 src/core                wire types + formatting shared by the extension
 src/extension           VS Code extension: daemon client, fleet store, tree, chat panel host, setup over SSH
 src/webview             chat panel UI (bundled separately; marked for Markdown)
+src/web                 mobile web app: screens, fleet store, chat host, the iframe stand-in for VS Code
 scripts/build-daemon.sh cross-compiles vineyardd into bin/: macOS arm64/amd64, Linux and Windows arm64/amd64/386
 scripts/screenshots    renders the README screenshots from synthetic data (see its README)
 docs/                   internals (this file) and the listing images; not shipped in the .vsix
@@ -245,9 +247,64 @@ tail -f ~/.vineyard/vineyardd.log
 | `req rotatekey {exclude, graceHours}` | viewer→local daemon | rotate the fleet key |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version` |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*) |
 | `join {token, machineId, listen}` / `joined {cert, key, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active |
 | `tunnel` / `tunnel-in` / `tunnel-callback` / `tunnel-accept`, `tunnel-ok` / `tunnel-fail` | requester→relay→target | one-hop relay setup; first line of a fresh connection (callback travels on an existing link) |
+
+## The web app
+
+The daemon serves a mobile web app when `webApp` in its config.json is set (e.g. `":7735"`). The app
+is embedded in the binary, built from `src/web` by esbuild into `daemon/internal/web/static/build`.
+`vineyardd web` runs the same server in the foreground for development, printing a pairing code.
+
+* **Turned on by a VS Code setting.** `vineyard.webApp.enabled` (off by default, with `.port` and
+  `.machines`) is fleet-wide. Turning it on in a VS Code install first shows a modal saying a paired
+  phone can drive every agent, the app is plain HTTP, and securing the route is up to the user; until
+  they confirm, that install asks no daemon to start it, and cancelling turns the setting back off.
+  The choice then goes out as `req webapp {listen, at}` to each online machine whose snapshot
+  `webApp` differs from it. `at` is when the setting was changed; a daemon applies a choice only if
+  it is later than the one it holds (`webAppAt`), so two windows with different settings cannot turn
+  a machine on and off in turns. The daemon starts or stops the server in place and reports
+  `webApp {listen, urls, error, at, devices}` in its snapshot, even while off, so an older daemon
+  (no `webApp`) is asked at most once per version.
+* **Pairing.** Every API call except `info` and `pair` needs a paired device. `webpair` (from VS Code)
+  or `POST /api/pair/new` (from a paired browser) mints a single-use code, 8 characters from a
+  31-letter alphabet, valid 10 minutes, at most 5 outstanding, carried in links as `#pair=CODE` (a
+  fragment, so it never reaches a server log). Ten wrong codes drop every outstanding code and pause
+  pairing for a minute. `POST /api/pair` redeems a code and sets `vineyard_device`, a 256-bit random
+  credential, as an HttpOnly, SameSite=Strict cookie (Secure over HTTPS), out of reach of any script
+  a transcript could inject. The machine keeps only its SHA-256, with the device's name and when it
+  was paired and last seen, in `~/.vineyard/web-devices.json` (0600). `webdevices` / `webrevoke`
+  and the app's Settings list and sign devices out. Pairing is per machine: a phone pairs with the
+  machine whose address it opens, and sees the whole fleet through it.
+* **One viewer link, only while watched.** The server connects to its daemon over loopback exactly as
+  VS Code does (fleet certificate, `hello {role: viewer}`), and only while at least one paired browser
+  holds the event stream. The page closes the stream whenever it is hidden, and the server drops the
+  link 15 s after the last stream ends; the daemon then applies its own 30 s grace. Both the server and
+  VS Code ping the daemon every 30 s over loopback, inside its 95 s idle limit.
+* **Endpoints.** `GET /api/events` is a server-sent event stream: a `state` message (how the server's
+  daemon link stands), then `fleet`, `update` and `peerstatus` exactly as the daemon sends them, with a
+  comment line every 20 s. A new browser gets the cached fleet at once. `POST /api/req {target, op,
+  args, timeoutMs}` relays one `req` and returns its `res`; `upgrade`, `stage`, `dist`, `rotatekey`,
+  `addpeer` and the `web*` ops are refused. `/api/log` (the local daemon's log), `POST /api/restart`,
+  `/api/devices`, `/api/devices/revoke` and `/api/pair/new` cover the local machine.
+* **Other guards.** Acting requests need an `X-Vineyard` header (a cross-site page cannot add one
+  without a CORS preflight, which the server never approves) and a matching `Origin`. Every request
+  needs a `Host` that is an IP address, `localhost`, a single-label or `.local` name, this machine's
+  hostname or one listed in `webAppHosts` (or `--allow-host`), which stops DNS rebinding. None of this
+  encrypts anything: on plain HTTP a network observer can read the traffic and replay the cookie.
+* **The chat is the VS Code webview.** `src/webview/main.ts` runs in an iframe (`chat.html`) with a
+  stand-in for `acquireVsCodeApi` (`src/web/frameHost.ts`), and `src/web/chatHost.ts` does in the page
+  what `chatPanel.ts` does in the extension. The few things iOS only allows inside the tap that asked
+  for them (the file picker, copying the session id, opening links) happen in the frame. Photos are
+  redrawn as JPEG at up to 2048 px when they are HEIC or over the 5 MB image limit. On a touch screen
+  Return makes a new line and the button sends; the menu hides what needs VS Code (open workspace,
+  terminal, raw transcript).
+* **Settings live in the browser.** View, sort and chat settings and the per-workspace model, effort
+  and mode memory (`SessionPrefStore`, the extension's class over `localStorage`) are per phone.
+* `npm run build:web` builds the app; `vineyardd web --dev daemon/internal/web/static` serves it from
+  disk so `node esbuild.mjs --web --watch` output shows on reload. `scripts/build-daemon.sh` builds the
+  app before cross-compiling; a daemon built without it serves a page saying so.
 
 ## Managed vs observed sessions
 

@@ -301,6 +301,21 @@ export interface Snapshot {
   hasClaude: boolean;
   /** Newest account-limit report from any managed session on the machine; limits are per account. */
   usage?: Usage;
+  /** The machine's web app; sent even while off by daemons that have one (older ones leave it out). */
+  webApp?: WebAppStatus;
+}
+
+/**
+ * `listen` is where the web app is meant to serve ("" or missing = off), `urls` where it answers while
+ * running, `error` why it could not start, `at` when the setting behind it was chosen (the latest
+ * choice wins), `devices` how many browsers are paired.
+ */
+export interface WebAppStatus {
+  listen?: string;
+  urls?: string[];
+  error?: string;
+  at?: number;
+  devices?: number;
 }
 
 export interface FleetEntry {

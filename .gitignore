@@ -4,3 +4,4 @@ bin/
 *.vsix
 .DS_Store
 .env
+daemon/internal/web/static/build/

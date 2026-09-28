@@ -1,0 +1,105 @@
+/*
+ * The web app's palette: iOS system colours, light and dark, published both as the app's own tokens
+ * and as the --vscode-* variables the chat webview (media/chat.css, composer.css) reads from its host.
+ */
+:root {
+  color-scheme: light dark;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --bg: #f2f2f7;
+  --bg-plain: #ffffff;
+  --row: #ffffff;
+  --row-active: #d1d1d6;
+  --fill: rgba(120, 120, 128, 0.12);
+  --fg: #000000;
+  --fg2: rgba(60, 60, 67, 0.6);
+  --fg3: rgba(60, 60, 67, 0.3);
+  --sep: rgba(60, 60, 67, 0.29);
+  --bar: rgba(249, 249, 249, 0.86);
+  --blue: #007aff;
+  --green: #34c759;
+  --orange: #ff9500;
+  --red: #ff3b30;
+  --purple: #af52de;
+  --yellow: #ffcc00;
+  --warn: #c93400;
+  --gray: #8e8e93;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --bg-plain: #000000;
+    --row: #1c1c1e;
+    --row-active: #3a3a3c;
+    --fill: rgba(118, 118, 128, 0.24);
+    --fg: #ffffff;
+    --fg2: rgba(235, 235, 245, 0.6);
+    --fg3: rgba(235, 235, 245, 0.3);
+    --sep: rgba(84, 84, 88, 0.65);
+    --bar: rgba(22, 22, 24, 0.86);
+    --blue: #0a84ff;
+    --green: #30d158;
+    --orange: #ff9f0a;
+    --red: #ff453a;
+    --purple: #bf5af2;
+    --yellow: #ffd60a;
+    --warn: #ffd60a;
+    --gray: #8e8e93;
+    --shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root {
+  --vscode-font-family: var(--font);
+  --vscode-font-size: 15px;
+  --vscode-editor-font-family: var(--mono);
+  --vscode-editor-font-size: 13px;
+  --vscode-foreground: var(--fg);
+  --vscode-descriptionForeground: var(--fg2);
+  --vscode-disabledForeground: var(--fg3);
+  --vscode-errorForeground: var(--red);
+  --vscode-focusBorder: var(--blue);
+  --vscode-editor-background: var(--bg-plain);
+  --vscode-sideBar-background: var(--row);
+  --vscode-editorWidget-background: var(--row);
+  --vscode-editorWidget-foreground: var(--fg);
+  --vscode-menu-background: var(--row);
+  --vscode-input-background: var(--row);
+  --vscode-input-foreground: var(--fg);
+  --vscode-input-border: var(--sep);
+  --vscode-inputValidation-errorBackground: color-mix(in srgb, var(--red) 16%, var(--bg-plain));
+  --vscode-inputValidation-errorBorder: var(--red);
+  --vscode-inputValidation-infoBackground: color-mix(in srgb, var(--blue) 14%, var(--bg-plain));
+  --vscode-inputOption-activeBorder: var(--blue);
+  --vscode-inlineChatInput-border: var(--fill);
+  --vscode-editorInfo-background: color-mix(in srgb, var(--blue) 14%, var(--bg-plain));
+  --vscode-button-background: var(--blue);
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: var(--blue);
+  --vscode-button-secondaryBackground: var(--fill);
+  --vscode-button-secondaryForeground: var(--fg);
+  --vscode-button-secondaryHoverBackground: var(--fill);
+  --vscode-badge-background: var(--fill);
+  --vscode-badge-foreground: var(--fg);
+  --vscode-panel-border: var(--sep);
+  --vscode-widget-border: var(--sep);
+  --vscode-charts-blue: var(--blue);
+  --vscode-charts-green: var(--green);
+  --vscode-charts-orange: var(--orange);
+  --vscode-charts-purple: var(--purple);
+  --vscode-charts-yellow: var(--yellow);
+  --vscode-editorWarning-foreground: var(--orange);
+  --vscode-textLink-foreground: var(--blue);
+  --vscode-textCodeBlock-background: var(--fill);
+  --vscode-textBlockQuote-border: var(--fg3);
+  --vscode-list-hoverBackground: var(--fill);
+  --vscode-list-activeSelectionBackground: color-mix(in srgb, var(--blue) 22%, var(--row));
+  --vscode-list-activeSelectionForeground: var(--fg);
+  --vscode-dropdown-background: var(--row);
+  --vscode-dropdown-foreground: var(--fg);
+  --vscode-toolbar-hoverBackground: var(--fill);
+  --vscode-terminal-ansiBrightBlue: var(--blue);
+}

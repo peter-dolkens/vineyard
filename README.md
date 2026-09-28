@@ -71,6 +71,30 @@ makes it work; the daemons talk only to each other, and only while you are looki
 * **Account & usage** in the / menu, with a bar per limit window, and a dismissable banner from 80 %
   that behaves like the pane's.
 
+## On your phone (preview)
+
+Turn on `vineyard.webApp.enabled` and every machine's daemon also serves Vineyard to its local
+network, sized for a phone. The tree becomes a stack of screens you tap through (machines,
+workspaces, agents, then subagents and background tasks), and the chat is the same one VS Code shows,
+with its cards, / menu and pickers sized for a thumb. You can start, resume, take over, stop and
+rename agents, answer their questions and permission prompts, attach photos, sign a machine in to
+Claude and wake a sleeping one. `vineyard.webApp.machines` limits it to some machines, and
+`vineyard.webApp.port` (7735) sets the port.
+
+A phone sees nothing until it is paired. Run *Vineyard: Pair a Phone with the Web App*, open the
+link it gives you on the phone (or type the code), and the phone gets its own credential. *Web App
+Devices…* in VS Code, or Settings on a paired phone, lists paired devices and signs them out. On an
+iPhone, open the link in Safari and choose *Share › Add to Home Screen* for a full-screen app with an
+edge swipe to go back.
+
+**Securing the route is up to you.** A paired phone can read every transcript and drive every agent,
+and the app is plain HTTP: anyone on the same network can read the traffic and copy a paired phone's
+credential. Turning the setting on asks you to confirm that on each computer. Use it on networks you
+trust, or reach it over Tailscale, a VPN or a TLS reverse proxy (list the proxy's name in
+`webAppHosts` in `~/.vineyard/config.json`), and firewall the port elsewhere. Pushing daemon updates
+and rotating the fleet key stay with VS Code and the CLI. The app keeps the fleet as quiet as VS Code
+does: it attaches to its daemon only while a paired page is open and in front.
+
 ## Quiet, private, yours
 
 * **No hub, no cloud, no account.** One static Go binary per machine, talking to its peers over

@@ -11,6 +11,11 @@ import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
+/**
+ * Set by a host other than VS Code (the mobile web app, src/web/frame.ts) before this script runs:
+ * whether Return sends, and menu actions it cannot perform.
+ */
+const HOST: { enterSends?: boolean; hideActions?: string[]; touch?: boolean } = (globalThis as { vineyardHost?: typeof HOST }).vineyardHost ?? {};
 
 type Entry = Record<string, any>;
 interface Pending {
@@ -167,6 +172,8 @@ const banner = document.getElementById('banner')!;
 // Toolbar under the message box, like the Claude Code pane: attach, "/" actions, context ring, cache
 // clock, subagent count, model + effort, permission mode. composer.ts draws it; this file acts on it.
 const barDeps: BarDeps = {
+  hideActions: new Set(HOST.hideActions ?? []),
+  touch: HOST.touch,
   configure,
   run: runAction,
   insert(text) {
@@ -336,7 +343,7 @@ jump.onclick = () => {
 };
 input.addEventListener('keydown', (e) => {
   if (bar.isOpen() && bar.onKey(e)) return; // the "/" menu or a picker took the key
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && HOST.enterSends !== false) {
     e.preventDefault();
     send();
   }
@@ -727,7 +734,7 @@ function renderHeader() {
   if (!BUSY.has(agent.state)) interruptAt = undefined; // the turn ended: back to Send next time
   renderButton();
   input.disabled = !canSend;
-  input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? 'Message this agent…  (Enter to send, Shift+Enter for newline)' : 'Message this agent…  (delivered as a cross-session message)';
+  input.placeholder = !machine.online ? `${machine.name} is offline` : subagent ? 'A subagent only hears from its parent session; open the session to send a message' : !agent.alive ? 'This session has exited' : managedLive ? (HOST.enterSends === false ? 'Message this agent…' : 'Message this agent…  (Enter to send, Shift+Enter for newline)') : 'Message this agent…  (delivered as a cross-session message)';
   document.getElementById('hint')!.textContent = subagent ? 'subagent · read-only' : managedLive ? '' : agent.alive ? 'observed session' : '';
 
   bar.render(agent, machine, barStats());

@@ -65,6 +65,13 @@ type Config struct {
 	// WakePeers: send Wake-on-LAN / a sleep-proxy nudge to peers that do not answer while someone is
 	// watching. Default true.
 	WakePeersEnabled *bool `json:"wakePeers,omitempty"`
+	// WebApp is where this daemon serves the mobile web app, e.g. ":7735"; empty (the default) is
+	// off. VS Code's vineyard.webApp setting sets it over the mesh ("webapp" op), stamping WebAppAt
+	// so the latest choice wins. Plain HTTP with pairing: securing the route is up to the user.
+	WebApp   string `json:"webApp,omitempty"`
+	WebAppAt int64  `json:"webAppAt,omitempty"`
+	// WebAppHosts are extra Host names the web app answers to (a reverse proxy's, a VPN name).
+	WebAppHosts []string `json:"webAppHosts,omitempty"`
 }
 
 func (c *Config) WakePeers() bool { return c.WakePeersEnabled == nil || *c.WakePeersEnabled }

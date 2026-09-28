@@ -295,6 +295,20 @@ type Snapshot struct {
 	// Usage is the newest account-limit report from any session this daemon manages. Limits are
 	// per account, so it applies to every session on the machine signed in as that account.
 	Usage *Usage `json:"usage,omitempty"`
+	// WebApp is the state of this machine's web app (vineyardd web), sent by daemons that have one
+	// even while it is off, so a viewer can tell them from older daemons.
+	WebApp *WebAppStatus `json:"webApp,omitempty"`
+}
+
+// WebAppStatus: Listen is where it is meant to serve ("" = off), URLs where it answers while running,
+// Error why it could not start, At when the setting behind it was chosen (Unix ms; the latest wins),
+// Devices how many browsers are paired.
+type WebAppStatus struct {
+	Listen  string   `json:"listen,omitempty"`
+	URLs    []string `json:"urls,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	At      int64    `json:"at,omitempty"`
+	Devices int      `json:"devices,omitempty"`
 }
 
 // FleetEntry is what viewers see: a snapshot plus how and when this daemon learned about it.

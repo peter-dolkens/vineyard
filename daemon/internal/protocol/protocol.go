@@ -355,6 +355,19 @@ type StopTaskArgs struct {
 	TaskID    string `json:"taskId"`
 }
 
+// WebAppArgs turns the target's web app on (Listen, e.g. ":7735") or off (""), as the fleet's
+// setting chosen at At (Unix ms) says; a daemon holding a later choice keeps its own ("webapp").
+type WebAppArgs struct {
+	Listen string `json:"listen"`
+	At     int64  `json:"at"`
+}
+
+// WebRevokeArgs signs one paired web app device out, or all of them ("webrevoke").
+type WebRevokeArgs struct {
+	ID  string `json:"id,omitempty"`
+	All bool   `json:"all,omitempty"`
+}
+
 // RespondArgs answers a managed session's pending control request.
 type RespondArgs struct {
 	SessionID string          `json:"sessionId"`

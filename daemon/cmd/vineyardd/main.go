@@ -27,6 +27,7 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
+	"github.com/peter-dolkens/vineyard/daemon/internal/web"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=…".
@@ -51,6 +52,9 @@ Usage:
   vineyardd rotate-key [--exclude ID ...] [--grace 336h]
         Replace the fleet key everywhere: the new key reaches connected members now and others when
         they next connect within the grace period. Excluded machines are removed and never get it.
+  vineyardd web [--listen :7735] [--allow-host NAME ...] [--dev DIR]
+        Serve the mobile web app in the foreground and print a pairing code. The daemon serves it
+        itself when VS Code's vineyard.webApp setting is on. Plain HTTP: securing it is up to you.
   vineyardd version
 
 Environment: VINEYARD_DIR overrides ~/.vineyard.
@@ -88,6 +92,8 @@ func main() {
 		err = cmdRotateKey(os.Args[2:])
 	case "join":
 		err = cmdJoin(os.Args[2:])
+	case "web":
+		err = cmdWeb(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(Version)
 	case "help", "-h", "--help":
@@ -171,6 +177,20 @@ func cmdRun() error {
 	}
 	authMgr := auth.New(logger)
 	authMgr.ClaudeBin = cfg.ClaudeBin
+	// The web app is off unless the fleet's vineyard.webApp setting turned it on (config webApp).
+	webApp := web.NewRunner(web.RunnerOptions{
+		Dial:        func() (*mesh.Conn, error) { return dialLocalViewer(cfg, "web") },
+		Version:     Version,
+		Self:        cfg.MachineID,
+		Name:        cfg.Name,
+		LogFile:     service.LogFile(),
+		Restart:     service.Restart,
+		DevicesFile: config.Path("web-devices.json"),
+		Logf:        logger.Printf,
+	})
+	if cfg.WebApp != "" {
+		_ = webApp.Set(cfg.WebApp, cfg.WebAppHosts) // a failure shows in the snapshot
+	}
 	node, err = mesh.New(mesh.Options{
 		Config:    cfg,
 		Version:   Version,
@@ -178,6 +198,7 @@ func cmdRun() error {
 		ClaudeDir: collector.ClaudeDir,
 		Managed:   mgr,
 		Auth:      authMgr,
+		WebApp:    webApp,
 		Collect: func() model.Snapshot {
 			r := collector.Collect()
 			agents, workspaces := claude.Interpret(cfg.MachineID, r, time.Now().UnixMilli())
@@ -539,4 +560,54 @@ func cmdJoin(args []string) error {
 	}
 	fmt.Printf("joined fleet via %s (%s); %d peers known; wrote %s\n", inv.Name, via, len(c.Peers), config.Path(config.ConfigFile))
 	return nil
+}
+
+// cmdWeb serves the mobile web app from the foreground, for development or a machine whose daemon
+// does not run it; it prints a pairing code to pair the first device with.
+func cmdWeb(args []string) error {
+	fs := flag.NewFlagSet("web", flag.ContinueOnError)
+	listen := fs.String("listen", ":7735", "address to serve the web app on")
+	dev := fs.String("dev", "", "serve the app from this directory instead of the built-in copy")
+	var hosts peerFlags
+	fs.Var(&hosts, "allow-host", "extra host name the app is reached by (repeatable)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	o := web.RunnerOptions{
+		Dial:        func() (*mesh.Conn, error) { return dialLocalViewer(cfg, "web") },
+		Version:     Version,
+		Self:        cfg.MachineID,
+		Name:        cfg.Name,
+		LogFile:     service.LogFile(),
+		Restart:     service.Restart,
+		DevicesFile: config.Path("web-devices.json"),
+		Logf:        log.Printf,
+	}
+	if *dev != "" {
+		o.Static = os.DirFS(*dev)
+	}
+	r := web.NewRunner(o)
+	if err := r.Set(*listen, hosts); err != nil {
+		return err
+	}
+	var pair struct {
+		Code  string   `json:"code"`
+		Links []string `json:"links"`
+	}
+	if raw, err := r.Pair(); err == nil {
+		_ = json.Unmarshal(raw, &pair)
+	}
+	fmt.Printf("Vineyard web app for %s. Pair a device with code %s-%s (single use, 10 minutes):\n", cfg.Name, pair.Code[:4], pair.Code[4:])
+	for _, l := range pair.Links {
+		fmt.Println("  " + l)
+	}
+	fmt.Println("Plain HTTP: anyone on this network can read the traffic. Securing this route is up to you.")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	return r.Set("", nil)
 }

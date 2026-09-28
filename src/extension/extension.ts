@@ -10,6 +10,7 @@ import { Setup } from './setup.ts';
 import { ChatPanels } from './chatPanel.ts';
 import { SessionPrefStore, type SettingsDefaults } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
+import { WebAppSync } from './webApp.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 import { subagentAsAgent } from '../core/subagents.ts';
 
@@ -31,8 +32,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const chats = new ChatPanels(context, fleet, log, sessionPrefs);
   const notifier = new Notifier(fleet, (id) => chats.isActive(id));
   const updater = new Updater(context, client, fleet, setup, log);
+  const webApp = new WebAppSync(context, fleet, log);
 
-  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
+  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, webApp, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
 
   const describe = (state: DaemonConnState) => {
     const s = fleet.summary();
@@ -437,6 +439,26 @@ export function activate(context: vscode.ExtensionContext): void {
     const res = await fleet.client.request<{ ok: boolean; message: string }>('login', machine.id, { action: 'code', id: start.id, code: code.trim() }, 150_000);
     void vscode.window.showInformationMessage(`Claude on ${machine.name}: ${res.message}`);
     fleet.refreshAll();
+  });
+
+  // The web app's machines: those whose snapshot says it is running.
+  const webMachineOf = async (node: Node | undefined): Promise<MachineView | undefined> => {
+    if (node) return node.machine;
+    const running = fleet.machines().filter((m) => m.online && m.entry.snapshot.webApp?.urls?.length);
+    if (running.length === 1) return running[0];
+    const pick = await vscode.window.showQuickPick(
+      (running.length ? running : fleet.machines().filter((m) => m.online)).map((m) => ({ label: m.name, description: m.entry.snapshot.webApp?.urls?.[0] ?? 'web app not running', m })),
+      { placeHolder: 'Machine whose web app the phone will open' },
+    );
+    return pick?.m;
+  };
+  cmd('vineyard.pairWebApp', async (node?: Node) => {
+    const m = await webMachineOf(node);
+    if (m) await webApp.pair(m);
+  });
+  cmd('vineyard.webAppDevices', async (node?: Node) => {
+    const m = await webMachineOf(node);
+    if (m) await webApp.devices(m);
   });
 
   cmd('vineyard.wakeMachine', async (node?: Node) => {

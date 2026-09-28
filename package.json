@@ -262,6 +262,17 @@
         "title": "Wake Machine",
         "category": "Vineyard",
         "icon": "$(bell)"
+      },
+      {
+        "command": "vineyard.pairWebApp",
+        "title": "Pair a Phone with the Web App…",
+        "category": "Vineyard",
+        "icon": "$(device-mobile)"
+      },
+      {
+        "command": "vineyard.webAppDevices",
+        "title": "Web App Devices…",
+        "category": "Vineyard"
       }
     ],
     "menus": {
@@ -472,6 +483,16 @@
           "command": "vineyard.wakeMachine",
           "when": "view == vineyard.fleet && viewItem == machine-offline",
           "group": "0_agent@0"
+        },
+        {
+          "command": "vineyard.pairWebApp",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline && config.vineyard.webApp.enabled",
+          "group": "1_manage@4"
+        },
+        {
+          "command": "vineyard.webAppDevices",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline && config.vineyard.webApp.enabled",
+          "group": "1_manage@5"
         }
       ],
       "commandPalette": [
@@ -502,6 +523,14 @@
         {
           "command": "vineyard.resumeManaged",
           "when": "false"
+        },
+        {
+          "command": "vineyard.webAppDevices",
+          "when": "config.vineyard.webApp.enabled"
+        },
+        {
+          "command": "vineyard.pairWebApp",
+          "when": "config.vineyard.webApp.enabled"
         }
       ]
     },
@@ -664,6 +693,29 @@
           ],
           "default": "recent",
           "description": "How agents are ordered under each workspace."
+        },
+        "vineyard.webApp.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "**Serve the mobile web app from every machine's daemon** (or those in `#vineyard.webApp.machines#`), on port `#vineyard.webApp.port#` of each machine's network. Off by default.\n\nA phone must be paired with a single-use code (*Vineyard: Pair a Phone with the Web App*) before it sees anything, and a paired phone can read every transcript and drive every agent in the fleet. The app is **plain HTTP**: anyone on the same network can read the traffic and copy a paired phone's credential. **Securing this route is up to you**: use it only on networks you trust, or reach it over Tailscale, a VPN or a TLS reverse proxy, and firewall the port elsewhere. Turning it on asks you to confirm that on each computer."
+        },
+        "vineyard.webApp.port": {
+          "type": "number",
+          "default": 7735,
+          "minimum": 1,
+          "maximum": 65535,
+          "scope": "application",
+          "description": "Port the web app listens on, on every machine that serves it."
+        },
+        "vineyard.webApp.machines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "application",
+          "markdownDescription": "Machine names or ids that serve the web app when `#vineyard.webApp.enabled#` is on. Empty: every machine in the fleet."
         }
       }
     }
@@ -671,6 +723,7 @@
   "scripts": {
     "vscode:prepublish": "npm run build:all",
     "build": "node esbuild.mjs",
+    "build:web": "node esbuild.mjs --web",
     "build:daemon": "sh scripts/build-daemon.sh",
     "build:all": "npm run build:daemon && npm run build",
     "watch": "node esbuild.mjs --watch",

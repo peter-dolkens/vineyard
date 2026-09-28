@@ -60,6 +60,18 @@ type Options struct {
 	Auth *auth.Manager
 	// Dir holds the fleet key files; empty means config.Dir(). Tests give each daemon its own.
 	Dir string
+	// WebApp serves the mobile web app when the config says so (optional; see package web).
+	WebApp WebApp
+}
+
+// WebApp is the daemon's handle on its web app (web.Runner), kept as an interface so this package
+// does not import the web server that imports it.
+type WebApp interface {
+	Set(listen string, extraHosts []string) error
+	Status() model.WebAppStatus
+	Pair() (json.RawMessage, error)
+	Devices() (json.RawMessage, error)
+	Revoke(id string, all bool) error
 }
 
 type link struct {
@@ -1217,7 +1229,13 @@ func (n *Node) collectSelf(force bool) {
 	if n.up.link != nil {
 		snap.Uplink = n.up.link.peerID
 	}
+	webAt := n.cfg.WebAppAt
 	n.mu.Unlock()
+	if n.opts.WebApp != nil {
+		st := n.opts.WebApp.Status()
+		st.At = webAt
+		snap.WebApp = &st
+	}
 	canon := canonical(snap)
 
 	n.mu.Lock()
@@ -1631,6 +1649,8 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.handleDist()
 	case "version":
 		return json.Marshal(map[string]any{"version": n.opts.Version, "protocol": protocol.Version})
+	case "webapp", "webpair", "webdevices", "webrevoke":
+		return n.handleWebApp(r)
 	case "wake":
 		// Manual wake of a sleeping peer: send the wake signals now and dial again right away.
 		var a protocol.PeerAddr
@@ -2022,4 +2042,57 @@ func trimErr(err error) string {
 		s = s[:200]
 	}
 	return s
+}
+
+// handleWebApp carries out the web app ops: turning it on or off as the fleet's setting says (the
+// later choice wins, so two VS Code windows with different settings cannot flip it back and forth),
+// minting a pairing code, and listing or signing out paired devices.
+func (n *Node) handleWebApp(r protocol.Request) (json.RawMessage, error) {
+	w := n.opts.WebApp
+	if w == nil {
+		return nil, errors.New("this daemon has no web app")
+	}
+	switch r.Op {
+	case "webapp":
+		var a protocol.WebAppArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		n.mu.Lock()
+		apply := a.At > n.cfg.WebAppAt
+		if apply {
+			n.cfg.WebApp, n.cfg.WebAppAt = a.Listen, a.At
+		}
+		listen, hosts := n.cfg.WebApp, n.cfg.WebAppHosts
+		n.mu.Unlock()
+		if apply {
+			if err := n.saveConfig(); err != nil {
+				n.logf("save config: %v", err)
+			}
+			if listen == "" {
+				n.logf("web app turned off")
+			}
+			_ = w.Set(listen, hosts) // a bind failure shows in the snapshot's webApp.error
+			n.kickCollector()
+		}
+		st := w.Status()
+		n.mu.Lock()
+		st.At = n.cfg.WebAppAt
+		n.mu.Unlock()
+		return json.Marshal(st)
+	case "webpair":
+		return w.Pair()
+	case "webdevices":
+		return w.Devices()
+	default: // webrevoke
+		var a protocol.WebRevokeArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if err := w.Revoke(a.ID, a.All); err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"ok":true}`), nil
+	}
 }

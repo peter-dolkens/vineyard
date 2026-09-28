@@ -1,0 +1,82 @@
+/*
+ * The chat UI VS Code uses (media/chat.css, composer.css), fitted to a phone: the app's palette,
+ * a header with a back button inside the safe area, 16 px text fields (smaller ones make iOS zoom
+ * in on focus), 44 px touch targets, one scrolling row of composer pills, and popovers as sheets.
+ * --sat / --sab are the app page's safe-area insets, set by the page (an iframe reads env() as 0).
+ */
+@import '../../media/codicon.css';
+@import '../../media/chat.css';
+@import '../../media/composer.css';
+@import './theme.css';
+
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+body { background: var(--bg-plain); -webkit-tap-highlight-color: transparent; }
+#app { height: 100%; }
+
+/* header: back, state, title; history and info are the only actions a phone keeps */
+.hdr { padding: calc(6px + var(--sat, 0px)) 8px 6px 4px; gap: 4px; background: var(--bar); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); border-bottom: 0.5px solid var(--sep); }
+.hdr-main { flex: 1; gap: 8px; }
+.hdr .title { font-size: 16px; }
+.hdr .sub { font-size: 12px; }
+.state-dot { width: 28px; height: 28px; }
+#btnTerminal, #btnWorkspace, #btnReload { display: none; }
+button.icon { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; padding: 0; opacity: 1; color: var(--blue); }
+button.icon .codicon { font-size: 20px; }
+#btnBack { min-width: 34px; margin-right: -2px; }
+#btnBack .codicon { font-size: 24px; }
+.title-edit { font-size: 16px; max-width: none; }
+
+.banner { font-size: 13px; padding: 8px 14px; }
+.log { padding: 10px 12px 8px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.turn { padding-left: 18px; }
+.turn::before { left: 5px; }
+.turn-prompt .marker { left: -17px; }
+.md pre, .tool-body pre { font-size: 12px; }
+.md table { display: block; overflow-x: auto; }
+.tool > summary { min-height: 34px; }
+.jump { bottom: 130px; padding: 8px 14px; }
+
+/* cards: questions, permissions, plans, elicitations */
+.cards { padding: 0 10px; }
+.card { border-radius: 12px; padding: 12px; }
+.card button, .option { min-height: 44px; font-size: 15px; border-radius: 10px; }
+.btn-row { gap: 8px; }
+.btn-row > button { flex: 1 1 auto; }
+.option { padding: 10px 12px; }
+.card input, .card textarea, .card select, .other, .deny-reason, .field-input { font-size: 16px; min-height: 40px; border-radius: 8px; }
+
+/* composer */
+/* no backdrop-filter here: it would make the composer the containing block of the fixed popovers */
+.composer { padding: 6px 8px calc(8px + var(--sab, 0px)); background: var(--bg-plain); border-top: 0.5px solid var(--sep); }
+.composer-box { border-radius: 20px; padding: 6px 6px 4px 12px; background: var(--row); }
+.composer-box textarea, #input { font-size: 16px; line-height: 1.35; padding: 4px 0; max-height: 40vh; }
+.composer-actions { flex-wrap: nowrap; gap: 4px; }
+.composer-actions .hint { display: none; }
+.bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); padding-right: 12px; }
+.bar::-webkit-scrollbar { display: none; }
+.pill { height: 32px; font-size: 13px; padding: 0 10px; border-radius: 16px; flex-shrink: 0; }
+.pill .codicon { font-size: 16px; }
+.pill#btnAttach, .pill#btnActions { width: 34px; }
+.pill#ctxPill { width: 34px; }
+.pill#modePill { margin-left: 0; }
+.slash-svg { width: 19px; height: 19px; }
+button.send { width: 36px; height: 36px; min-width: 36px; border-radius: 50%; display: inline-grid; place-items: center; padding: 0; flex-shrink: 0; }
+button.send .codicon { font-size: 18px; }
+.attachments .chip { height: 28px; font-size: 13px; }
+.chip-x { height: 24px; min-width: 24px; }
+.limit { font-size: 13px; }
+
+/* popovers become sheets over the composer */
+.pop { position: fixed; left: 0; right: 0; bottom: 0; max-height: 72%; border-radius: 14px 14px 0 0; border: none; padding: 8px 0 calc(10px + var(--sab, 0px)); font-size: 16px; box-shadow: var(--shadow); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.pop::before { content: ''; display: block; width: 36px; height: 5px; border-radius: 3px; background: var(--fg3); margin: 0 auto 8px; }
+.pop-item { min-height: 46px; padding: 8px 16px; }
+.pop-group, .pop-title, .pop-hint, .pop-foot, .pop-note { font-size: 12px; }
+.pop-desc { font-size: 13px; }
+.pop-value { font-size: 14px; }
+.pop-filter { font-size: 16px; padding: 9px 12px; margin: 0 10px 8px; width: calc(100% - 20px); border-radius: 10px; }
+.etrack { --h: 26px; --thumb: 22px; width: 140px; }
+.amap-row { min-height: 40px; align-items: center; }
+.amap-stop { padding: 8px; }
+
+/* info strip */
+.info { max-height: 45%; overflow-y: auto; font-size: 13px; }

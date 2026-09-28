@@ -66,6 +66,10 @@ export interface BarDeps {
   /** Put text into the composer, e.g. a slash command waiting for its argument. */
   insert(text: string): void;
   extVersion?: string;
+  /** Action ids this host cannot perform (the web app has no terminal or VS Code window to open). */
+  hideActions?: ReadonlySet<string>;
+  /** A touch screen: do not focus the menu's filter box, which would raise the keyboard over it. */
+  touch?: boolean;
 }
 
 export interface ComposerBar {
@@ -640,7 +644,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       usageSummary: usageSummary(),
       extVersion: deps.extVersion,
       claudeVersion: agent?.version,
-    });
+    }).filter((a) => !deps.hideActions?.has(a.id));
   }
   function runAction(a: Action) {
     if (a.disabled) return;
@@ -705,7 +709,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     foot.append(el('span', undefined, [deps.extVersion && `Vineyard ${deps.extVersion}`, agent?.version && `Claude Code ${agent.version}`].filter(Boolean).join(' · ')));
     if (agent?.managed?.account) foot.append(el('span', 'dim', agent.managed.account));
     pop.append(foot);
-    if (filterBox) filterBox.focus();
+    if (filterBox && !deps.touch) filterBox.focus();
   }
 
   btnAttach.onclick = () => deps.run('attach');

@@ -1,0 +1,11 @@
+{
+  "name": "Vineyard",
+  "short_name": "Vineyard",
+  "description": "Your Claude Code agents across machines",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [{ "src": "build/icon.png", "sizes": "512x512", "type": "image/png" }]
+}
