@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/release"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
@@ -194,12 +195,24 @@ func (n *Node) handleUpgrade(a protocol.UpgradeArgs) (json.RawMessage, error) {
 		return json.Marshal(res)
 	}
 
-	// Final chunk: prove the binary runs on this machine, then hand over.
+	// Final chunk: check the release signature before running anything, prove the binary runs on
+	// this machine, then hand over.
 	delete(u.cur, sha)
+	signed, err := n.checkSignature(a, runtime.GOOS+"-"+runtime.GOARCH, sha, st.path)
+	if err != nil {
+		_ = os.Remove(st.path)
+		return nil, err
+	}
 	version, err := probeVersion(st.path)
 	if err != nil {
 		_ = os.Remove(st.path)
+		_ = os.Remove(release.SigPath(st.path))
 		return nil, fmt.Errorf("staged binary does not run here (%v); wrong platform?", err)
+	}
+	if signed && version != a.Version {
+		_ = os.Remove(st.path)
+		_ = os.Remove(release.SigPath(st.path))
+		return nil, fmt.Errorf("staged binary reports %s but was signed as %s", version, a.Version)
 	}
 	res.Version = version
 	res.Installed = true
@@ -251,6 +264,10 @@ func (n *Node) handleStage(a protocol.UpgradeArgs) (json.RawMessage, error) {
 		return json.Marshal(res)
 	}
 	delete(u.cur, sha)
+	if _, err := n.checkSignature(a, a.Platform, sha, st.path); err != nil {
+		_ = os.Remove(st.path)
+		return nil, err
+	}
 	dest := service.DistBinary(a.Version, goos, goarch)
 	if err := os.MkdirAll(filepath.Join(service.DistDir(), a.Version), 0o755); err != nil {
 		_ = os.Remove(st.path)
@@ -259,8 +276,11 @@ func (n *Node) handleStage(a protocol.UpgradeArgs) (json.RawMessage, error) {
 	_ = os.Remove(dest) // Windows will not rename over an existing file
 	if err := os.Rename(st.path, dest); err != nil {
 		_ = os.Remove(st.path)
+		_ = os.Remove(release.SigPath(st.path))
 		return nil, err
 	}
+	_ = os.Remove(release.SigPath(dest))
+	_ = os.Rename(release.SigPath(st.path), release.SigPath(dest))
 	res.Stored = true
 	res.Version = a.Version
 	n.logf("dist: stored vineyardd %s for %s", a.Version, a.Platform)
@@ -321,4 +341,26 @@ func probeVersion(bin string) (string, error) {
 		return "", errors.New("empty version output")
 	}
 	return v, nil
+}
+
+// checkSignature verifies a received build's release signature and, when it is valid, writes it next
+// to the staged file so it travels on with the binary. Without a valid signature the build is refused,
+// unless this machine's config allows unsigned upgrades (a development machine).
+func (n *Node) checkSignature(a protocol.UpgradeArgs, platform, sha, staged string) (signed bool, err error) {
+	verr := release.Verify(a.Signature, platform, a.Version, sha)
+	if verr == nil {
+		if err := os.WriteFile(release.SigPath(staged), a.Signature, 0o644); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	n.mu.Lock()
+	allow := n.cfg.AllowUnsignedUpgrades
+	n.mu.Unlock()
+	if allow {
+		n.logf("upgrade: accepting %s %s without a valid release signature (%v): allowUnsignedUpgrades is set", platform, a.Version, verr)
+		return false, nil
+	}
+	n.logf("upgrade: refused %s %s: %v", platform, a.Version, verr)
+	return false, fmt.Errorf("refusing vineyardd %s for %s: %v", a.Version, platform, verr)
 }

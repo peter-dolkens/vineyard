@@ -174,6 +174,15 @@ func EnsureBinary() (string, error) {
 	if err := os.Rename(tmp, dst); err != nil {
 		return "", err
 	}
+	// The release signature travels with the binary, so this daemon can pass it on to its peers
+	// (release.SigPath). A binary without one leaves none behind: a stale signature never verifies.
+	if sig, err := os.ReadFile(self + ".sig"); err == nil {
+		if err := os.WriteFile(dst+".sig.tmp", sig, 0o644); err == nil {
+			_ = os.Rename(dst+".sig.tmp", dst+".sig")
+		}
+	} else {
+		_ = os.Remove(dst + ".sig")
+	}
 	return dst, nil
 }
 

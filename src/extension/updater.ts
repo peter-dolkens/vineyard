@@ -252,12 +252,20 @@ export class Updater implements vscode.Disposable {
     const data = fs.readFileSync(file);
     const sha256 = crypto.createHash('sha256').update(data).digest('hex');
     const target = !m || m.local ? undefined : m.id;
+    // The release signature built beside each bundled binary; daemons from 0.3.23 refuse a build without it.
+    let signature: unknown;
+    try {
+      signature = JSON.parse(fs.readFileSync(`${file}.sig`, 'utf8'));
+    } catch {
+      signature = undefined;
+      this.log.appendLine(`${path.basename(file)} has no release signature; up-to-date daemons will refuse it`);
+    }
     this.log.appendLine(`${op === 'stage' ? 'staging' : 'pushing'} ${path.basename(file)} (${data.length} bytes, ${sha256.slice(0, 12)}) ${m ? `to ${m.name}` : 'on the local daemon'}`);
     let sent = 0;
     while (sent < data.length) {
       const end = Math.min(sent + CHUNK, data.length);
       const done = end === data.length;
-      const res = await this.client.request<UpgradeResult>(op, target, { ...extra, sha256, size: data.length, offset: sent, data: data.subarray(sent, end).toString('base64'), done }, 60_000);
+      const res = await this.client.request<UpgradeResult>(op, target, { ...extra, sha256, size: data.length, offset: sent, data: data.subarray(sent, end).toString('base64'), done, signature: done ? signature : undefined }, 60_000);
       progress?.report({ message: `${Math.round((end / data.length) * 100)}%`, increment: ((end - sent) / data.length) * 100 });
       sent = end;
       if (done) return res;

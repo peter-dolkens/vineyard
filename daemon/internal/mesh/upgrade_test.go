@@ -4,6 +4,8 @@ package mesh
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/release"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
@@ -60,6 +63,9 @@ func TestUpgradeStagesVerifiesAndHandsOver(t *testing.T) {
 		a.Offset = int64(off)
 		a.Data = base64.StdEncoding.EncodeToString(bin[off:end])
 		a.Done = end == len(bin)
+		if a.Done {
+			a.Signature = testSig(hostPlatform(), a.Version, sha)
+		}
 		res, err := sendChunk(t, n, a)
 		if err != nil {
 			t.Fatalf("chunk at %d: %v", off, err)
@@ -115,13 +121,13 @@ func TestUpgradeRejectsBadInput(t *testing.T) {
 	}
 	// A mid-stream gap is refused and the upload can be restarted from zero.
 	half := len(bin) / 2
-	if _, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "v", SHA256: sha, Size: int64(len(bin)), Data: base64.StdEncoding.EncodeToString(bin[:half])}); err != nil {
+	if _, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "9.9.9-fake", SHA256: sha, Size: int64(len(bin)), Data: base64.StdEncoding.EncodeToString(bin[:half])}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "v", SHA256: sha, Size: int64(len(bin)), Offset: int64(half + 1), Data: "AA=="}); err == nil || !strings.Contains(err.Error(), "offset mismatch") {
+	if _, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "9.9.9-fake", SHA256: sha, Size: int64(len(bin)), Offset: int64(half + 1), Data: "AA=="}); err == nil || !strings.Contains(err.Error(), "offset mismatch") {
 		t.Fatalf("gap accepted: %v", err)
 	}
-	if res, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "v", SHA256: sha, Size: int64(len(bin)), Offset: int64(half), Data: base64.StdEncoding.EncodeToString(bin[half:]), Done: true}); err != nil || !res.Installed {
+	if res, err := sendChunk(t, n, protocol.UpgradeArgs{Version: "9.9.9-fake", SHA256: sha, Size: int64(len(bin)), Offset: int64(half), Data: base64.StdEncoding.EncodeToString(bin[half:]), Done: true, Signature: testSig(hostPlatform(), "9.9.9-fake", sha)}); err != nil || !res.Installed {
 		t.Fatalf("resume after gap failed: %v %+v", err, res)
 	}
 	time.Sleep(installerDelay + 300*time.Millisecond)
@@ -204,6 +210,7 @@ func TestStageStoresForDistribution(t *testing.T) {
 		t.Fatalf("staging a foreign version accepted: %v", err)
 	}
 	a.Version = "9.9.9"
+	a.Signature = testSig("plan9-mips", "9.9.9", sha)
 	raw, err = n.handleStage(a)
 	if err != nil {
 		t.Fatal(err)
@@ -230,4 +237,52 @@ func TestStageStoresForDistribution(t *testing.T) {
 	if n.binaryFor("plan9", "mips") != "" {
 		t.Fatal("CleanDist kept a version it should have dropped")
 	}
+}
+
+func wholeUpgrade(bin []byte, version string, sig []byte) protocol.UpgradeArgs {
+	sum := sha256.Sum256(bin)
+	return protocol.UpgradeArgs{Version: version, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(bin)), Data: base64.StdEncoding.EncodeToString(bin), Done: true, Signature: sig}
+}
+
+// A build without a valid release signature is refused before it is ever run, whatever else is right
+// about it: unsigned, signed by some other key, or signed for a different platform or version.
+func TestUpgradeRequiresReleaseSignature(t *testing.T) {
+	n := newTestNode(t, "zebra")
+	bin := fakeBinary()
+	sum := sha256.Sum256(bin)
+	sha := hex.EncodeToString(sum[:])
+	_, evil, _ := ed25519.GenerateKey(rand.Reader)
+	forged, _ := json.Marshal(release.Sign(hostPlatform(), "9.9.9-fake", sha, []ed25519.PrivateKey{evil}))
+	for name, sig := range map[string][]byte{
+		"unsigned":       nil,
+		"other key":      forged,
+		"other platform": testSig("plan9-mips", "9.9.9-fake", sha),
+		"other version":  testSig(hostPlatform(), "9.9.10", sha),
+	} {
+		_, err := sendChunk(t, n, wholeUpgrade(bin, "9.9.9-fake", sig))
+		if err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Fatalf("%s: accepted (%v)", name, err)
+		}
+		if _, err := os.Stat(service.StagedBinary(sha[:12])); !os.IsNotExist(err) {
+			t.Fatalf("%s: refused build left on disk", name)
+		}
+	}
+	// Signed as one version, reporting another once run: refused too.
+	if _, err := sendChunk(t, n, wholeUpgrade(bin, "9.9.8", testSig(hostPlatform(), "9.9.8", sha))); err == nil || !strings.Contains(err.Error(), "signed as") {
+		t.Fatalf("version mismatch accepted: %v", err)
+	}
+	if _, err := n.handleStage(protocol.UpgradeArgs{Version: "test", Platform: "plan9-mips", SHA256: sha, Size: int64(len(bin)), Data: base64.StdEncoding.EncodeToString(bin), Done: true}); err == nil || !strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("unsigned stage accepted: %v", err)
+	}
+}
+
+// A development machine can opt in to unsigned builds in its own config.
+func TestAllowUnsignedUpgrades(t *testing.T) {
+	n := newTestNode(t, "zebra")
+	n.cfg.AllowUnsignedUpgrades = true
+	res, err := sendChunk(t, n, wholeUpgrade(fakeBinary(), "9.9.9-fake", nil))
+	if err != nil || !res.Installed {
+		t.Fatalf("unsigned build refused on an opted-in machine: %v %+v", err, res)
+	}
+	time.Sleep(installerDelay + 300*time.Millisecond)
 }

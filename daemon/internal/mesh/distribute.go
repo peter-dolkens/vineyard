@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/release"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
@@ -146,6 +147,10 @@ func (n *Node) pushUpgrade(peerID, theirVersion, platform, bin string) {
 	sha := hex.EncodeToString(sum[:])
 	n.logf("dist: %s runs %s; pushing vineyardd %s for %s (%d bytes)", peerID, theirVersion, n.opts.Version, platform, len(data))
 
+	sig := release.ReadSig(bin)
+	if sig == nil {
+		n.logf("dist: %s has no release signature; daemons from 0.3.23 will refuse it", bin)
+	}
 	args := protocol.UpgradeArgs{Version: n.opts.Version, SHA256: sha, Size: int64(len(data))}
 	for off := 0; off < len(data); {
 		end := min(off+distChunk, len(data))
@@ -153,6 +158,9 @@ func (n *Node) pushUpgrade(peerID, theirVersion, platform, bin string) {
 		a.Offset = int64(off)
 		a.Data = base64.StdEncoding.EncodeToString(data[off:end])
 		a.Done = end == len(data)
+		if a.Done {
+			a.Signature = sig
+		}
 		raw, err := n.request(l, "upgrade", a, distReqTimeout)
 		if err != nil {
 			msg := err.Error()

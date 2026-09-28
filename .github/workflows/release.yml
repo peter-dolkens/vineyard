@@ -49,6 +49,18 @@ jobs:
       - name: Cross-compile vineyardd for all platforms
         run: VERSION="${{ steps.ver.outputs.version }}" sh scripts/build-daemon.sh
 
+      # Daemons install a build only with a signature from a release key compiled into them
+      # (daemon/internal/release). Every build is signed with both keys; a missing secret fails the
+      # release rather than shipping binaries the fleet would refuse. See SECURITY.md.
+      - name: Sign daemon binaries
+        env:
+          VINEYARD_SIGNING_KEY_A: ${{ secrets.VINEYARD_SIGNING_KEY_A }}
+          VINEYARD_SIGNING_KEY_B: ${{ secrets.VINEYARD_SIGNING_KEY_B }}
+        run: |
+          reported="$(bin/vineyardd-linux-amd64 version)"
+          echo "binaries report $reported"
+          cd daemon && go run ./cmd/vineyard-sign -version "$reported" ../bin/vineyardd-*
+
       - name: Tests
         run: |
           npm run typecheck

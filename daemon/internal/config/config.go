@@ -72,6 +72,9 @@ type Config struct {
 	WebAppAt int64  `json:"webAppAt,omitempty"`
 	// WebAppHosts are extra Host names the web app answers to (a reverse proxy's, a VPN name).
 	WebAppHosts []string `json:"webAppHosts,omitempty"`
+	// AllowUnsignedUpgrades lets this daemon install and store vineyardd builds that carry no valid
+	// release signature: for a development machine only. It is never set over the mesh.
+	AllowUnsignedUpgrades bool `json:"allowUnsignedUpgrades,omitempty"`
 }
 
 func (c *Config) WakePeers() bool { return c.WakePeersEnabled == nil || *c.WakePeersEnabled }

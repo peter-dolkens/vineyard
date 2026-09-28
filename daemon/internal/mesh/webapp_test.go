@@ -14,10 +14,10 @@ type fakeWebApp struct {
 }
 
 func (f *fakeWebApp) Set(listen string, _ []string) error { f.listen = listen; f.sets++; return nil }
-func (f *fakeWebApp) Status() model.WebAppStatus         { return model.WebAppStatus{Listen: f.listen} }
-func (f *fakeWebApp) Pair() (json.RawMessage, error)     { return json.RawMessage(`{"code":"X"}`), nil }
-func (f *fakeWebApp) Devices() (json.RawMessage, error)  { return json.RawMessage(`{}`), nil }
-func (f *fakeWebApp) Revoke(string, bool) error          { return nil }
+func (f *fakeWebApp) Status() model.WebAppStatus          { return model.WebAppStatus{Listen: f.listen} }
+func (f *fakeWebApp) Pair() (json.RawMessage, error)      { return json.RawMessage(`{"code":"X"}`), nil }
+func (f *fakeWebApp) Devices() (json.RawMessage, error)   { return json.RawMessage(`{}`), nil }
+func (f *fakeWebApp) Revoke(string, bool) error           { return nil }
 
 func webappReq(listen string, at int64) protocol.Request {
 	b, _ := json.Marshal(protocol.WebAppArgs{Listen: listen, At: at})

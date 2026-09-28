@@ -298,6 +298,9 @@ type UpgradeArgs struct {
 	Done     bool   `json:"done,omitempty"`     // last chunk: verify and install (or store)
 	Force    bool   `json:"force,omitempty"`    // install even if the version matches or is older than the running one
 	Platform string `json:"platform,omitempty"` // "stage" only: "<os>-<arch>" of the binary
+	// Signature is the release signature (package release) for this binary, sent with the final
+	// chunk. Daemons from 0.3.23 refuse a binary without a valid one unless allowUnsignedUpgrades.
+	Signature json.RawMessage `json:"signature,omitempty"`
 }
 
 type UpgradeResult struct {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/release"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
@@ -46,6 +47,11 @@ func fakePeer(t *testing.T, c *Conn, version string) (<-chan []byte, <-chan prot
 			}
 			chunk, _ := base64.StdEncoding.DecodeString(a.Data)
 			buf.Write(chunk)
+			if a.Done && release.Verify(a.Signature, "plan9-mips", a.Version, a.SHA256) != nil {
+				// A real peer from 0.3.23 on refuses a push without its release signature.
+				_ = c.Send(protocol.Response{T: "res", ID: r.ID, OK: false, Error: "refusing: unsigned"})
+				return
+			}
 			res := protocol.UpgradeResult{Received: int64(buf.Len()), Installed: a.Done, Version: a.Version}
 			data, _ := json.Marshal(res)
 			_ = c.Send(protocol.Response{T: "res", ID: r.ID, OK: true, Data: data})
@@ -91,6 +97,11 @@ func TestDistributesStoredBinaryToOlderPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dest, bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binSum := sha256.Sum256(bin)
+	sig := testSig("plan9-mips", "9.9.9", hex.EncodeToString(binSum[:]))
+	if err := os.WriteFile(dest+".sig", sig, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, far := connectFakePeer(t, n, "apple")
