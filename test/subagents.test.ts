@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Agent, Subagent } from '../src/core/model.ts';
-import { findSubagent, isSubagentId, subagentActive, subagentAsAgent, subagentChildren, subagentDescendants, subagentId } from '../src/core/subagents.ts';
+import { delegatedTo, findSubagent, isDelegating, isSubagentId, shownState, shownStateLabel, subagentActive, subagentAsAgent, subagentChildren, subagentDescendants, subagentId } from '../src/core/subagents.ts';
 import { subagentLabel } from '../src/core/format.ts';
 
 const sub = (agentId: string, state: Subagent['state'], parentAgentId?: string, extra: Partial<Subagent> = {}): Subagent => ({ agentId, state, parentAgentId, ...extra });
@@ -72,4 +72,26 @@ test('labels fall back from description to type to id', () => {
   assert.equal(subagentLabel(sub('abcdef123456', 'done', undefined, { description: 'Find callers', type: 'Explore' })), 'Find callers');
   assert.equal(subagentLabel(sub('abcdef123456', 'done', undefined, { type: 'Explore' })), 'Explore');
   assert.equal(subagentLabel(sub('abcdef123456', 'done')), 'abcdef12');
+});
+
+test('a live session whose turn ended shows as working while its subagents run', () => {
+  const idle: Agent = { ...parent, state: 'idle', subagents: [sub('a', 'tool'), sub('b', 'thinking', 'a'), sub('c', 'done')] };
+  assert.equal(isDelegating(idle), true);
+  assert.equal(delegatedTo(idle).length, 2);
+  assert.equal(shownState(idle), 'working');
+  assert.equal(shownStateLabel(idle), '2 subagents working');
+  // A subagent's question or permission prompt is the session's to show.
+  const asking: Agent = { ...idle, subagents: [sub('a', 'tool'), sub('b', 'permission')] };
+  assert.equal(shownState(asking), 'permission');
+  assert.equal(shownStateLabel(asking), 'A subagent is waiting for permission');
+});
+
+test('own state wins when the session is busy, needs you, has exited or has no running subagents', () => {
+  assert.equal(isDelegating(parent), false); // busy itself ('tool')
+  assert.equal(shownState(parent), 'tool');
+  assert.equal(shownState({ ...parent, state: 'question' }), 'question');
+  assert.equal(shownState({ ...parent, state: 'idle', alive: false }), 'idle');
+  const finished: Agent = { ...parent, state: 'idle', subagents: [sub('a', 'done')] };
+  assert.equal(isDelegating(finished), false);
+  assert.equal(shownStateLabel(finished), 'Idle');
 });

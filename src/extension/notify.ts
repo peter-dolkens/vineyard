@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import type { AgentTransition, FleetService } from './fleet.ts';
 import { isBusy, needsAttention, notifiesHere } from '../core/model.ts';
-import { STATE_LABEL, agentLabel, basename } from '../core/format.ts';
+import { agentLabel, basename } from '../core/format.ts';
+import { shownState, shownStateLabel } from '../core/subagents.ts';
 
 /**
  * Surfaces agent state transitions the user cares about as VS Code notifications. Usage limits are
@@ -29,18 +30,22 @@ export class Notifier implements vscode.Disposable {
     // windows and machines decide for themselves and still notify.
     if (this.paneActive(current.id)) return;
 
-    const wantsAttention = cfg.get<boolean>('notify.attention', true) && needsAttention(current.state) && !(previous && needsAttention(previous.state));
-    const finished = cfg.get<boolean>('notify.finished', false) && current.state === 'idle' && previous !== undefined && isBusy(previous.state);
+    // Shown states: a subagent's question counts as the session's, and a session waiting on its
+    // subagents has not finished until they have.
+    const now = shownState(current);
+    const before = previous && shownState(previous);
+    const wantsAttention = cfg.get<boolean>('notify.attention', true) && needsAttention(now) && !(before && needsAttention(before));
+    const finished = cfg.get<boolean>('notify.finished', false) && now === 'idle' && before !== undefined && isBusy(before);
     if (!wantsAttention && !finished) return;
 
     // Debounce: the same agent flapping between two states should not spam.
-    const key = `${current.id}:${current.state}`;
+    const key = `${current.id}:${now}`;
     const last = this.lastShown.get(key) ?? 0;
     if (Date.now() - last < 20_000) return;
     this.lastShown.set(key, Date.now());
 
     const where = `${basename(current.workspacePath)} on ${machine.name}`;
-    const headline = wantsAttention ? `${agentLabel(current)} is ${STATE_LABEL[current.state].toLowerCase()}` : `${agentLabel(current)} finished`;
+    const headline = wantsAttention ? `${agentLabel(current)}: ${shownStateLabel(current).toLowerCase()}` : `${agentLabel(current)} finished`;
     const detail = current.stateDetail ? ` — ${current.stateDetail}` : '';
     const message = `${headline} (${where})${detail}`;
 

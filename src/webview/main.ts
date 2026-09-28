@@ -9,6 +9,7 @@ import { createComposerBar, type AttachmentChip, type BarDeps, type BarStats } f
 import { thumbnails, wireFileInputs } from './files.ts';
 import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/composer.ts';
 import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
+import { isDelegating, shownState, shownStateLabel } from '../core/subagents.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -752,12 +753,14 @@ function renderHeader() {
   if (!agent || !machine) return;
   const title = agent.title || agent.name || agent.sessionId.slice(0, 8);
   if (titleEdit.hidden) titleEl.textContent = title;
-  const st = agent.alive ? agent.state : 'exited';
+  // A session whose turn has ended but whose subagents are still running shows as working on them.
+  const delegating = agent.alive && isDelegating(agent);
+  const st = agent.alive ? shownState(agent) : 'exited';
   const icon = document.getElementById('stateIcon')!;
   icon.className = `state-dot state-${st}`;
-  icon.innerHTML = `<i class="codicon codicon-${STATE_ICON[st] ?? 'circle-outline'}"></i>`;
-  const bits = [STATE_LABEL[st] ?? st];
-  if (agent.stateDetail && st !== 'idle') bits.push(agent.stateDetail);
+  icon.innerHTML = `<i class="codicon codicon-${delegating ? 'hubot' : STATE_ICON[st] ?? 'circle-outline'}"></i>`;
+  const bits = [agent.alive ? shownStateLabel(agent) : STATE_LABEL.exited];
+  if (agent.stateDetail && st !== 'idle' && !delegating) bits.push(agent.stateDetail);
   // Model, effort, mode and context size live in the toolbar under the message box.
   const meta: string[] = [`${machine.name} · ${agent.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? ''}`];
   if (agent.gitBranch) meta.push(agent.gitBranch);

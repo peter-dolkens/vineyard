@@ -4,9 +4,9 @@
  * own, into an Agent-shaped view the chat panel and transcript viewer already understand.
  */
 
-import type { Agent, Subagent } from './model.ts';
+import type { Agent, AgentState, Subagent } from './model.ts';
 import { isBusy, needsAttention } from './model.ts';
-import { subagentLabel } from './format.ts';
+import { STATE_LABEL, subagentLabel } from './format.ts';
 
 /** Separator between a session's agent id and a subagent id; never appears in either. */
 const SEP = '/';
@@ -76,4 +76,46 @@ export function subagentAsAgent(parent: Agent, sub: Subagent): Agent {
     pendingTools: sub.pendingTools ?? [],
     transcriptPath: sub.transcriptPath,
   };
+}
+
+/** The little a state summary needs from a session; the chat webview's own Agent type fits too. */
+interface Delegator {
+  alive: boolean;
+  state: AgentState | string;
+  subagents?: Pick<Subagent, 'state'>[];
+}
+
+/**
+ * Subagents still at work for a session whose own turn has ended. Claude Code reports a session that
+ * handed work to background subagents as idle while they run; this is how many it is waiting on.
+ */
+export function delegatedTo(a: Delegator): Pick<Subagent, 'state'>[] {
+  if (!a.alive || isBusy(a.state as AgentState) || needsAttention(a.state as AgentState)) return [];
+  return (a.subagents ?? []).filter((s) => subagentActive(s as Subagent));
+}
+
+/**
+ * The state to show and count a session by. One waiting on its subagents is working; one whose
+ * subagent is asking something needs you, as if it asked itself.
+ */
+export function shownState(a: Delegator): AgentState {
+  const subs = delegatedTo(a);
+  if (subs.some((s) => s.state === 'question')) return 'question';
+  if (subs.some((s) => s.state === 'permission')) return 'permission';
+  return subs.length ? 'working' : (a.state as AgentState);
+}
+
+/** "2 subagents working", "A subagent is asking a question", or the session's own state. */
+export function shownStateLabel(a: Delegator): string {
+  const subs = delegatedTo(a);
+  if (!subs.length) return STATE_LABEL[a.state as AgentState] ?? String(a.state);
+  const shown = shownState(a);
+  if (shown === 'question') return 'A subagent is asking a question';
+  if (shown === 'permission') return 'A subagent is waiting for permission';
+  return `${subs.length} subagent${subs.length === 1 ? '' : 's'} working`;
+}
+
+/** Whether the session is idle itself but waiting on subagents: shown with its own icon. */
+export function isDelegating(a: Delegator): boolean {
+  return delegatedTo(a).length > 0;
 }

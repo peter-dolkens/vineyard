@@ -7,7 +7,7 @@
 import type { Agent, Usage } from '../core/model.ts';
 import { isBusy, needsAttention } from '../core/model.ts';
 import { STATE_LABEL, agentLabel, basename, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
-import { subagentActive, subagentId } from '../core/subagents.ts';
+import { isDelegating, shownState, shownStateLabel, subagentActive, subagentId } from '../core/subagents.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning, WARN_PERCENT } from '../core/usage.ts';
 import type { Api, PairedDevice, ServerInfo } from './api.ts';
@@ -158,8 +158,8 @@ function machineIcon(m: MachineView): string {
 function machineTint(m: MachineView): string {
   if (!m.online) return 'var(--gray)';
   const live = m.entry.snapshot.agents.filter((a) => a.alive);
-  if (live.some((a) => needsAttention(a.state))) return 'var(--orange)';
-  if (live.some((a) => isBusy(a.state))) return 'var(--blue)';
+  if (live.some((a) => needsAttention(shownState(a)))) return 'var(--orange)';
+  if (live.some((a) => isBusy(shownState(a)))) return 'var(--blue)';
   return 'var(--green)';
 }
 
@@ -177,12 +177,12 @@ function machineSub(m: MachineView): string {
 }
 
 function agentSub(a: Agent): string {
-  const bits: string[] = [STATE_LABEL[a.state]];
+  const bits: string[] = [shownStateLabel(a)];
   if (a.managed && !a.managed.exited) bits.push('managed');
   const model = shortModel(a.model);
   if (model) bits.push(a.effort ? `${model} · ${a.effort}` : model);
   const subs = (a.subagents ?? []).filter(subagentActive).length;
-  if (subs) bits.push(`${subs} subagent${subs === 1 ? '' : 's'}`);
+  if (subs && !isDelegating(a)) bits.push(`${subs} subagent${subs === 1 ? '' : 's'}`);
   const tasks = (a.tasks ?? []).filter(taskActive).length;
   if (tasks) bits.push(`${tasks} task${tasks === 1 ? '' : 's'}`);
   if (a.lastActivityAt) bits.push(relativeTime(a.lastActivityAt));
@@ -194,19 +194,25 @@ function agentNote(a: Agent): string | undefined {
   if (!a.alive) return undefined;
   const q = a.pendingTools.find((t) => t.name === 'AskUserQuestion');
   if (a.state === 'question' && q?.summary) return q.summary;
+  if (isDelegating(a)) return `Its own turn has ended; waiting on ${a.subagents?.filter(subagentActive).length === 1 ? 'its subagent' : 'its subagents'}`;
   if (a.managed?.pending?.description) return a.managed.pending.description;
   return a.stateDetail || undefined;
+}
+
+/** A session's icon: its own state's, or the agent glyph while it waits on its subagents. */
+function agentIcon(a: Agent): string {
+  return isDelegating(a) ? 'hubot' : STATE_ICON[a.state];
 }
 
 function agentRow(ctx: Ctx, m: MachineView, a: Agent, opts: { where?: boolean; info?: boolean } = {}): Row {
   return {
     key: a.id,
-    icon: STATE_ICON[a.state],
-    spin: a.state === 'working',
-    tint: STATE_TINT[a.state],
+    icon: agentIcon(a),
+    spin: shownState(a) === 'working' && !isDelegating(a),
+    tint: STATE_TINT[shownState(a)],
     title: agentLabel(a),
     sub: opts.where ? `${m.name} · ${basename(a.workspacePath)}` : agentSub(a),
-    note: opts.where ? [STATE_LABEL[a.state], agentNote(a)].filter(Boolean).join(' — ') : agentNote(a),
+    note: opts.where ? [shownStateLabel(a), agentNote(a)].filter(Boolean).join(' — ') : agentNote(a),
     onTap: () => ctx.flows.openChat(m, a),
     onInfo: opts.info === false ? undefined : () => ctx.navigate(R.agent(a.id)),
   };
@@ -532,14 +538,16 @@ export class AgentScreen extends Screen {
     this.setTitle(agentLabel(a));
     this.setActions([{ icon: 'comment-discussion', label: 'Open chat', onTap: () => flows.openChat(m, a) }]);
 
-    const state = a.alive ? a.state : 'exited';
-    const heroEl = this.hero.set(`${agentLabel(a)}|${state}|${a.stateDetail}`, (el) => {
+    const state = a.alive ? shownState(a) : 'exited';
+    const delegating = a.alive && isDelegating(a);
+    const label = a.alive ? shownStateLabel(a) : STATE_LABEL.exited;
+    const heroEl = this.hero.set(`${agentLabel(a)}|${state}|${label}|${a.stateDetail}`, (el) => {
       const row = h('div', 'hero');
       const ic = h('span', 'ic');
       ic.style.setProperty('--tint', STATE_TINT[state]);
-      ic.append(icon(STATE_ICON[state], state === 'working' ? 'codicon-modifier-spin' : ''));
+      ic.append(icon(delegating ? 'hubot' : STATE_ICON[state], state === 'working' && !delegating ? 'codicon-modifier-spin' : ''));
       const txt = h('div', 'hero-text');
-      txt.append(h('div', 'hero-title', agentLabel(a)), h('div', 'hero-sub', [STATE_LABEL[state], a.stateDetail].filter(Boolean).join(' — ')));
+      txt.append(h('div', 'hero-title', agentLabel(a)), h('div', 'hero-sub', [label, a.stateDetail].filter(Boolean).join(' — ')));
       row.append(ic, txt);
       el.append(row);
     });

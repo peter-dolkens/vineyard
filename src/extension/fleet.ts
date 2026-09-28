@@ -5,7 +5,7 @@
 import * as vscode from 'vscode';
 import type { Agent, FleetEntry, FleetSummary, PeerStatus } from '../core/model.ts';
 import { isBusy, needsAttention } from '../core/model.ts';
-import { findSubagent, subagentAsAgent } from '../core/subagents.ts';
+import { findSubagent, shownState, subagentAsAgent } from '../core/subagents.ts';
 import { DaemonClient } from './daemonClient.ts';
 
 export interface MachineView {
@@ -68,7 +68,8 @@ export class FleetService implements vscode.Disposable {
     const machine = this.view(cur);
     for (const a of cur.snapshot.agents) {
       const p = before.get(a.id);
-      if (!p || p.state !== a.state) this._onAgentTransition.fire({ machine, previous: p, current: a });
+      // By shown state: a session idle but waiting on subagents only "finishes" when they do.
+      if (!p || shownState(p) !== shownState(a)) this._onAgentTransition.fire({ machine, previous: p, current: a });
     }
   }
 
@@ -137,8 +138,9 @@ export class FleetService implements vscode.Disposable {
       for (const a of m.entry.snapshot.agents) {
         if (!a.alive) continue;
         s.agentsLive++;
-        if (needsAttention(a.state)) s.attention++;
-        else if (isBusy(a.state)) s.busy++;
+        const st = shownState(a);
+        if (needsAttention(st)) s.attention++;
+        else if (isBusy(st)) s.busy++;
         else s.idle++;
       }
     }

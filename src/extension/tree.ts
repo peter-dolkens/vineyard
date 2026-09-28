@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { Agent, AgentState, BackgroundTask, Subagent, Workspace } from '../core/model.ts';
 import { STATE_PRIORITY, isBusy, isLongUnseen, needsAttention } from '../core/model.ts';
-import { subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
+import { isDelegating, shownState, shownStateLabel, subagentActive, subagentChildren, subagentDescendants } from '../core/subagents.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning } from '../core/usage.ts';
 import type { FleetService, MachineView } from './fleet.ts';
@@ -74,15 +74,23 @@ function dominantState(agents: Agent[]): AgentState | undefined {
   let best: AgentState | undefined;
   for (const a of agents) {
     if (!a.alive) continue;
-    if (!best || STATE_PRIORITY[a.state] < STATE_PRIORITY[best]) best = a.state;
+    const st = shownState(a);
+    if (!best || STATE_PRIORITY[st] < STATE_PRIORITY[best]) best = st;
   }
   return best;
 }
 
+/** A session's icon: its own state, or the agent glyph while it waits on its subagents. */
+function agentIcon(a: Agent): vscode.ThemeIcon {
+  if (!isDelegating(a)) return stateIcon(a.state);
+  const st = shownState(a);
+  return new vscode.ThemeIcon('hubot', color(st === 'working' ? 'charts.blue' : 'notificationsWarningIcon.foreground'));
+}
+
 function countByState(agents: Agent[]): string {
   const live = agents.filter((a) => a.alive);
-  const attention = live.filter((a) => needsAttention(a.state)).length;
-  const busy = live.filter((a) => isBusy(a.state)).length;
+  const attention = live.filter((a) => needsAttention(shownState(a))).length;
+  const busy = live.filter((a) => isBusy(shownState(a))).length;
   const idle = live.length - attention - busy;
   const parts: string[] = [];
   if (attention) parts.push(`${attention} need${attention === 1 ? 's' : ''} you`);
@@ -95,8 +103,8 @@ function machineIcon(m: MachineView): vscode.ThemeIcon {
   const base = m.local ? 'device-desktop' : 'server';
   if (!m.online) return new vscode.ThemeIcon(base, color('disabledForeground'));
   const agents = m.entry.snapshot.agents.filter((a) => a.alive);
-  if (agents.some((a) => needsAttention(a.state))) return new vscode.ThemeIcon(base, color('notificationsWarningIcon.foreground'));
-  if (agents.some((a) => isBusy(a.state))) return new vscode.ThemeIcon(base, color('charts.blue'));
+  if (agents.some((a) => needsAttention(shownState(a)))) return new vscode.ThemeIcon(base, color('notificationsWarningIcon.foreground'));
+  if (agents.some((a) => isBusy(shownState(a)))) return new vscode.ThemeIcon(base, color('charts.blue'));
   return new vscode.ThemeIcon(base, color('charts.green'));
 }
 
@@ -321,13 +329,13 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     item.id = `agent:${agent.id}`;
     const managedLive = !!agent.managed && !agent.managed.exited;
     item.contextValue = (agent.alive ? `agent-${agent.state}` : 'agent-exited') + (managedLive ? '-managed' : '');
-    item.iconPath = stateIcon(agent.state);
+    item.iconPath = agentIcon(agent);
 
-    const bits: string[] = [STATE_LABEL[agent.state]];
+    const bits: string[] = [shownStateLabel(agent)];
     if (managedLive) bits.push('managed');
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
-    if (activeSubs) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
+    if (activeSubs && !isDelegating(agent)) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
     if (activeTasks) bits.push(`${activeTasks} background task${activeTasks === 1 ? '' : 's'}`);
     if (agent.lastActivityAt) bits.push(relativeTime(agent.lastActivityAt));
     item.description = bits.join(' · ');
@@ -335,7 +343,8 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
 
     const md = new vscode.MarkdownString('', true);
     md.appendMarkdown(`**${escapeMd(agentLabel(agent))}**  \n`);
-    md.appendMarkdown(`$(${stateIcon(agent.state).id}) **${STATE_LABEL[agent.state]}**`);
+    md.appendMarkdown(`$(${agentIcon(agent).id}) **${shownStateLabel(agent)}**`);
+    if (isDelegating(agent)) md.appendMarkdown(` (its own turn has ended: ${STATE_LABEL[agent.state].toLowerCase()})`);
     if (agent.stateDetail) md.appendMarkdown(` — ${escapeMd(agent.stateDetail)}`);
     md.appendMarkdown('\n\n');
     const rows: [string, string | undefined][] = [

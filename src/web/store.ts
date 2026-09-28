@@ -6,7 +6,7 @@
 
 import type { Agent, AgentState, BackgroundTask, FleetEntry, FleetSummary, PeerStatus, Subagent, Workspace } from '../core/model.ts';
 import { STATE_PRIORITY, isBusy, isLongUnseen, needsAttention } from '../core/model.ts';
-import { findSubagent, subagentActive, subagentAsAgent, subagentChildren, subagentDescendants } from '../core/subagents.ts';
+import { findSubagent, shownState, subagentActive, subagentAsAgent, subagentChildren, subagentDescendants } from '../core/subagents.ts';
 import { taskActive } from '../core/tasks.ts';
 import { agentLabel, basename } from '../core/format.ts';
 import type { LinkState, ServerMsg } from './api.ts';
@@ -95,7 +95,7 @@ export class FleetStore {
     const machine = this.view(cur);
     for (const a of cur.snapshot.agents) {
       const p = before.get(a.id);
-      if (!p || p.state !== a.state) for (const fn of this.transitionFns) fn({ machine, previous: p, current: a });
+      if (!p || shownState(p) !== shownState(a)) for (const fn of this.transitionFns) fn({ machine, previous: p, current: a });
     }
   }
 
@@ -150,8 +150,9 @@ export class FleetStore {
       for (const a of m.entry.snapshot.agents) {
         if (!a.alive) continue;
         s.agentsLive++;
-        if (needsAttention(a.state)) s.attention++;
-        else if (isBusy(a.state)) s.busy++;
+        const st = shownState(a);
+        if (needsAttention(st)) s.attention++;
+        else if (isBusy(st)) s.busy++;
         else s.idle++;
       }
     }
@@ -163,9 +164,9 @@ export class FleetStore {
     const out: { agent: Agent; machine: MachineView }[] = [];
     for (const m of this.allMachines()) {
       if (!m.online) continue;
-      for (const a of m.entry.snapshot.agents) if (a.alive && needsAttention(a.state)) out.push({ agent: a, machine: m });
+      for (const a of m.entry.snapshot.agents) if (a.alive && needsAttention(shownState(a))) out.push({ agent: a, machine: m });
     }
-    return out.sort((x, y) => STATE_PRIORITY[x.agent.state] - STATE_PRIORITY[y.agent.state] || (x.agent.lastActivityAt ?? 0) - (y.agent.lastActivityAt ?? 0));
+    return out.sort((x, y) => STATE_PRIORITY[shownState(x.agent)] - STATE_PRIORITY[shownState(y.agent)] || (x.agent.lastActivityAt ?? 0) - (y.agent.lastActivityAt ?? 0));
   }
 }
 
@@ -193,7 +194,8 @@ export function dominantState(agents: Agent[]): AgentState | undefined {
   let best: AgentState | undefined;
   for (const a of agents) {
     if (!a.alive) continue;
-    if (!best || STATE_PRIORITY[a.state] < STATE_PRIORITY[best]) best = a.state;
+    const st = shownState(a);
+    if (!best || STATE_PRIORITY[st] < STATE_PRIORITY[best]) best = st;
   }
   return best;
 }
@@ -219,7 +221,7 @@ export function workspacesFor(m: MachineView, p: ViewPrefs): Workspace[] {
 export function agentsFor(w: Workspace, p: ViewPrefs): Agent[] {
   return visibleAgents(w, p).sort((a, b) => {
     if (p.sortAgents === 'attention') {
-      const d = STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state];
+      const d = STATE_PRIORITY[shownState(a)] - STATE_PRIORITY[shownState(b)];
       if (d) return d;
     }
     if (p.sortAgents === 'recent' || p.sortAgents === 'attention') {
@@ -253,8 +255,8 @@ export function tasksFor(agent: Agent, p: ViewPrefs): BackgroundTask[] {
 /** "2 need you · 1 working · 3 idle" over live agents. */
 export function countByState(agents: Agent[]): string {
   const live = agents.filter((a) => a.alive);
-  const attention = live.filter((a) => needsAttention(a.state)).length;
-  const busy = live.filter((a) => isBusy(a.state)).length;
+  const attention = live.filter((a) => needsAttention(shownState(a))).length;
+  const busy = live.filter((a) => isBusy(shownState(a))).length;
   const idle = live.length - attention - busy;
   const parts: string[] = [];
   if (attention) parts.push(`${attention} need${attention === 1 ? 's' : ''} you`);
