@@ -242,7 +242,7 @@ export class Flows {
   }
 
   async remove(m: MachineView): Promise<void> {
-    if (m.local) return toast('This machine is always shown. Uninstall its daemon with "vineyardd uninstall".', 'info');
+    if (m.local) return toast(`${m.name} serves this app, so it is always shown. Uninstall its daemon with "vineyardd uninstall".`, 'info');
     // Its key is revoked, and with it the certificates it signed for machines that joined through it.
     let descendants: string[] = [];
     try {
@@ -255,7 +255,7 @@ export class Flows {
     if (descendants.length) {
       const r = await dialog({
         title: `Remove ${m.name} from the fleet?`,
-        message: `${names} joined through ${m.name}, so removing it revokes them too, unless this machine vouches for them.`,
+        message: `${names} joined through ${m.name}, so removing it revokes them too, unless ${this.localName()} vouches for them.`,
         buttons: [
           { label: `Keep ${descendants.length === 1 ? 'it' : 'them'}`, value: 'keep', primary: true },
           { label: `Remove ${descendants.length === 1 ? 'it' : 'them'} too`, value: 'all', destructive: true },
@@ -270,7 +270,7 @@ export class Flows {
   }
 
   async restartDaemon(m: MachineView): Promise<void> {
-    if (!(await confirm(`Restart the daemon on ${m.name}?`, 'Sessions started by Vineyard on this machine end with it (they can be resumed). The app reconnects on its own.', 'Restart', true))) return;
+    if (!(await confirm(`Restart the daemon on ${m.name}?`, `Sessions Vineyard started on ${m.name} end with it (they can be resumed). The app reconnects on its own.`, 'Restart', true))) return;
     await this.api.restartDaemon();
     toast('Daemon restarting…', 'ok');
   }
@@ -281,6 +281,6 @@ export class Flows {
   }
 
   localName(): string {
-    return this.info()?.name ?? 'this machine';
+    return this.info()?.name ?? 'the serving machine';
   }
 }

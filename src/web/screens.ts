@@ -151,8 +151,10 @@ class Block {
   }
 }
 
+// The phone reaches the fleet through the machine serving the app. It is not "this machine" to
+// the person holding the phone, so it is named by that role (not "relay", which a mesh relay is).
 function machineIcon(m: MachineView): string {
-  return m.local ? 'device-desktop' : 'server';
+  return m.local ? 'radio-tower' : 'server';
 }
 
 function machineTint(m: MachineView): string {
@@ -171,6 +173,7 @@ function machineSub(m: MachineView): string {
   }
   const live = snap.agents.filter((a) => a.alive);
   let s = !snap.hasClaude ? 'No Claude Code' : live.length ? countByState(live) : 'No agents';
+  if (m.local) s = `Serving this app · ${s}`;
   const limit = usageWarning(snap.usage);
   if (limit) s += ` · ${limit.rejected ? 'limit hit' : `${limit.row.percent}% of ${limit.row.label.toLowerCase()}`}`;
   return s;
@@ -306,7 +309,7 @@ export class HomeScreen extends Screen {
     this.sub.textContent = store.loaded ? bits.join(' · ') : '';
 
     const sections: Section[] = [];
-    const serverName = this.ctx.info()?.name ?? 'this machine';
+    const serverName = this.ctx.info()?.name ?? 'the serving machine';
     if (store.state !== 'connected') {
       const [title, text, kind] =
         store.state === 'offline'
@@ -330,7 +333,7 @@ export class HomeScreen extends Screen {
           key: m.id,
           icon: machineIcon(m),
           tint: machineTint(m),
-          title: m.local ? `${m.name} (this machine)` : m.name,
+          title: m.name,
           sub: machineSub(m),
           onTap: () => this.ctx.navigate(R.machine(m.id)),
         })),
@@ -377,14 +380,14 @@ export class MachineScreen extends Screen {
     this.setActions(m.online ? [{ icon: 'add', label: 'New agent', onTap: () => flows.newAgent(m) }] : []);
     const nameOf = (id: string) => this.ctx.store.machine(id)?.name ?? id;
 
-    const status = m.online ? (m.local ? 'Online' : `Online · ${describeVia(m.entry.via, nameOf)}`) : machineSub(m);
+    const status = m.online ? (m.local ? 'Online · serving this app' : `Online · ${describeVia(m.entry.via, nameOf)}`) : machineSub(m);
     const heroEl = this.hero.set(`${m.name}|${status}|${machineTint(m)}|${m.local}`, (el) => {
       const row = h('div', 'hero');
       const ic = h('span', 'ic');
       ic.style.setProperty('--tint', machineTint(m));
       ic.append(icon(machineIcon(m)));
       const txt = h('div', 'hero-text');
-      txt.append(h('div', 'hero-title', m.local ? `${m.name} (this machine)` : m.name), h('div', 'hero-sub', status));
+      txt.append(h('div', 'hero-title', m.name), h('div', 'hero-sub', status));
       row.append(ic, txt);
       el.append(row);
     });
