@@ -120,7 +120,7 @@ export class Setup {
         if (err) throw new Error(`${what}: ${err}`);
       };
 
-      progress.report({ message: 'copying daemon and fleet certificate' });
+      progress.report({ message: 'copying the daemon' });
       if (plat.os === 'windows') {
         check(await ssh(target, 'powershell -NoProfile -Command "New-Item -ItemType Directory -Force $HOME\\.vineyard\\bin | Out-Null"', { log: this.log }), 'create directory');
       } else {
@@ -128,8 +128,29 @@ export class Setup {
       }
       const newBin = plat.os === 'windows' ? '.vineyard/bin/vineyardd.upload.exe' : '.vineyard/bin/vineyardd.upload';
       check(await scp(target, bin, newBin, this.log), 'copy binary');
-      check(await scp(target, path.join(cfg.dir, 'fleet.crt'), '.vineyard/fleet.crt', this.log), 'copy certificate');
-      check(await scp(target, path.join(cfg.dir, 'fleet.key'), '.vineyard/fleet.key', this.log), 'copy key');
+      // The release signature goes along, so the new daemon can pass the build on to its peers.
+      if (fs.existsSync(`${bin}.sig`)) check(await scp(target, `${bin}.sig`, `${newBin}.sig`, this.log), 'copy signature');
+
+      // The new machine makes its own key; this machine's daemon certifies the public half, and only
+      // certificates are copied back. No private key leaves either machine.
+      progress.report({ message: `making ${name}'s own key` });
+      const keygen =
+        plat.os === 'windows'
+          ? await ssh(target, `powershell -NoProfile -Command "& $HOME\\${newBin.replace(/\//g, '\\')} keygen"`, { log: this.log })
+          : await ssh(target, `sh -c ${q(`chmod +x ~/${newBin} && ~/${newBin} keygen`)}`, { log: this.log });
+      check(keygen, 'make key');
+      const publicKey = keygen.stdout.slice(keygen.stdout.indexOf('-----BEGIN PUBLIC KEY-----'));
+      if (!publicKey.startsWith('-----BEGIN PUBLIC KEY-----')) throw new Error(`${name} did not print a public key`);
+      const certified = await this.client.request<{ chain: string; roots: string }>('certify', undefined, { machineId, publicKey }, 15_000);
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vineyard-'));
+      try {
+        fs.writeFileSync(path.join(tmp, 'machine.crt'), certified.chain, { mode: 0o600 });
+        fs.writeFileSync(path.join(tmp, 'fleet.crt'), certified.roots, { mode: 0o600 });
+        check(await scp(target, path.join(tmp, 'machine.crt'), '.vineyard/machine.crt', this.log), 'copy certificate');
+        check(await scp(target, path.join(tmp, 'fleet.crt'), '.vineyard/fleet.crt', this.log), 'copy fleet roots');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
 
       progress.report({ message: 'configuring and starting service' });
       const initArgs = `init --machine-id ${q(machineId)} --name ${q(name)} --port ${port} --advertise ${q(advertise)}`;
@@ -149,7 +170,7 @@ export class Setup {
       } else {
         const exe = '~/.vineyard/bin/vineyardd.upload';
         const script = [
-          `chmod 600 ~/.vineyard/fleet.crt ~/.vineyard/fleet.key`,
+          `chmod 600 ~/.vineyard/fleet.crt ~/.vineyard/machine.crt ~/.vineyard/machine.key`,
           `chmod +x ${exe}`,
           `if [ ! -f ~/.vineyard/config.json ]; then ${exe} ${initArgs}; fi`,
           ...peerCmds.map((p) => `${exe} peer add ${q(p.id)} ${q(p.addr)}`),
@@ -193,34 +214,39 @@ export class Setup {
   }
 
   /**
-   * Replace the fleet key everywhere, optionally leaving out (and removing) machines that must lose
-   * access, such as a lost laptop. Machines offline now catch up when they next connect within the
-   * grace period.
+   * Re-issue every machine's certificate under a new fleet root, optionally leaving out (and removing)
+   * machines that must lose access. Only public certificates travel and the new root's key is thrown
+   * away. Machines offline now catch up when they next connect within the grace period; after it,
+   * anything under the old root stops working, including certificates made with the pre-0.3.23 shared
+   * key. Removing a lost machine does not need this: its key is revoked by the removal.
    */
   async rotateFleetKey(): Promise<void> {
     if (this.client.state !== 'connected') throw new Error('Not connected to the local daemon.');
     const others = this.fleet.machines().filter((m) => !m.local);
     const picks = await vscode.window.showQuickPick(
       others.map((m) => ({ label: m.name, description: m.online ? 'online' : 'offline', id: m.id })),
-      { title: 'Rotate fleet key: machines to remove and leave out (optional)', canPickMany: true, placeHolder: 'Pick a lost or retired machine, or press Enter to leave everyone in' },
+      { title: 'Re-issue fleet certificates: machines to remove and leave out (optional)', canPickMany: true, placeHolder: 'Pick a lost or retired machine, or press Enter to leave everyone in' },
     );
     if (!picks) return;
     const days = await vscode.window.showInputBox({
-      title: 'Rotate fleet key: grace period',
-      prompt: 'Days that machines still on the old key (offline now) can reconnect and catch up. After that they must join again with an invite.',
+      title: 'Re-issue fleet certificates: grace period',
+      prompt: 'Days that machines still under the old root (offline now) can reconnect and catch up. After that they must join again with an invite.',
       value: '14',
       validateInput: (v) => (/^\d+$/.test(v.trim()) && Number(v) > 0 ? undefined : 'A whole number of days'),
     });
     if (!days) return;
     const excluded = picks.map((p) => p.label).join(', ');
     const ok = await vscode.window.showWarningMessage(
-      `Replace the fleet key on every machine?${excluded ? ` ${excluded} will be removed and will not get the new key.` : ''} Machines offline now have ${days} days to reconnect.`,
-      { modal: true },
-      'Rotate Key',
+      `Re-issue every machine's certificate under a new fleet root?${excluded ? ` ${excluded} will be removed and gets none.` : ''}`,
+      {
+        modal: true,
+        detail: `Machines offline now have ${days} days to reconnect and catch up. After that only the new root is trusted, which also shuts out anything made with the fleet key from before 0.3.23. To lock out one lost machine, Remove Machine is enough: its key is revoked.`,
+      },
+      'Re-issue',
     );
     if (!ok) return;
     await this.client.request('rotatekey', undefined, { exclude: picks.map((p) => p.id), graceHours: Number(days) * 24 }, 30_000);
-    void vscode.window.showInformationMessage(`Fleet key rotated. Connected machines have it now; the rest get it when they next connect within ${days} days.`);
+    void vscode.window.showInformationMessage(`Fleet certificates re-issued. Connected machines have theirs now; the rest get them when they next connect within ${days} days.`);
   }
 
   /** Join an existing fleet from this machine using an invite code; then install the service. */
@@ -278,9 +304,33 @@ export class Setup {
       void vscode.window.showInformationMessage('This machine is always shown. Uninstall the daemon with "vineyardd uninstall" if you no longer want it.');
       return;
     }
-    const choice = await vscode.window.showWarningMessage(`Remove ${m.name} from the fleet?`, { modal: true }, 'Remove', 'Remove and uninstall daemon');
+    // Its key is revoked, and with it the certificates it signed: machines that joined through it.
+    // Those the user recognises are vouched for again by this machine and stay.
+    let keep: string[] = [];
+    let descendants: string[] = [];
+    try {
+      descendants = (await this.client.request<{ machines: string[] }>('descendants', undefined, { machineId: m.id, addr: '' }, 10_000)).machines ?? [];
+    } catch {
+      descendants = []; // an older daemon: removal revokes by name only
+    }
+    if (descendants.length) {
+      const nameOf = (id: string) => this.fleet.machine(id)?.name ?? id;
+      const picks = await vscode.window.showQuickPick(
+        descendants.map((id) => ({ label: nameOf(id), description: id, id, picked: true })),
+        { title: `Machines that joined through ${m.name}`, placeHolder: `Removing ${m.name} revokes their certificates too. Keep the ones you recognise (untick any you do not); this machine vouches for them.`, canPickMany: true, ignoreFocusOut: true },
+      );
+      if (!picks) return;
+      keep = picks.map((p) => p.id);
+    }
+    const lose = descendants.filter((id) => !keep.includes(id));
+    const choice = await vscode.window.showWarningMessage(
+      `Remove ${m.name} from the fleet?`,
+      { modal: true, detail: `Its key is revoked on every machine.${lose.length ? ` ${lose.map((id) => this.fleet.machine(id)?.name ?? id).join(', ')} will lose access too.` : ''}` },
+      'Remove',
+      'Remove and uninstall daemon',
+    );
     if (!choice) return;
-    await this.client.request('removepeer', undefined, { machineId: m.id, addr: '' }, 10_000);
+    await this.client.request('removepeer', undefined, { machineId: m.id, addr: '', keep }, 15_000);
     if (choice === 'Remove and uninstall daemon') {
       const r = await ssh({ host: m.host }, 'sh -c "~/.vineyard/bin/vineyardd uninstall" || powershell -NoProfile -Command "& $HOME\\.vineyard\\bin\\vineyardd.exe uninstall"', { log: this.log, timeoutMs: 60_000 });
       const err = failed(r);

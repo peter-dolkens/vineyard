@@ -3,6 +3,7 @@ package mesh
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"runtime"
 
@@ -27,3 +28,11 @@ func testSig(platform, version, sha string) json.RawMessage {
 }
 
 func hostPlatform() string { return runtime.GOOS + "-" + runtime.GOARCH }
+
+func x509Pool(certs []*x509.Certificate) *x509.CertPool {
+	p := x509.NewCertPool()
+	for _, c := range certs {
+		p.AddCert(c)
+	}
+	return p
+}

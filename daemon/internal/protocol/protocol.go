@@ -27,6 +27,47 @@ type PeerAddr struct {
 type Removal struct {
 	MachineID string `json:"machineId"`
 	At        int64  `json:"at"`
+	// Keys are the removed machine's key fingerprints (config.KeyFingerprint) as the remover knew
+	// them. They are revoked for good, and with them every certificate those keys signed.
+	Keys []string `json:"keys,omitempty"`
+}
+
+// Vouch is a new certificate for a machine whose chain ran through one that was removed: another
+// member signed its key again, so it stays in the fleet. Chain is PEM, leaf first. Vouches travel in
+// hellos until the machine they are for presents a chain that is not revoked.
+type Vouch struct {
+	MachineID string `json:"machineId"`
+	Chain     string `json:"chain"`
+	At        int64  `json:"at"`
+}
+
+// Reissue replaces the fleet root (Rotate Fleet Key from 0.3.23). A new root signed Chains, a fresh
+// certificate for each member's existing key, and was then thrown away; no private key travels.
+// Signer (PEM chain, under the roots trusted before) is the rotating machine and Sig its signature
+// (base64 ASN.1 ECDSA over ReissueDigest). Members accept it only from a signer whose key they already
+// know for that machine. Older roots stay trusted until Until, then only Root is.
+type Reissue struct {
+	Root   string  `json:"root"`
+	At     int64   `json:"at"`
+	Until  int64   `json:"until"`
+	Chains []Vouch `json:"chains"`
+	// Bridge is the new root's key certified by the signer (then the signer's chain): members present
+	// it behind their new certificate until Until, so machines still on the old root can verify them.
+	Bridge string `json:"bridge"`
+	Signer string `json:"signer"`
+	Sig    string `json:"sig"`
+}
+
+type ReissueMsg struct {
+	T       string  `json:"t"` // "reissue"
+	Reissue Reissue `json:"reissue"`
+}
+
+// VouchMsg hands a machine its vouch ("vouch"), on a live link or to a connection refused for a
+// revoked chain.
+type VouchMsg struct {
+	T     string `json:"t"` // "vouch"
+	Vouch Vouch  `json:"vouch"`
 }
 
 // Removed tells connected peers about removals as they happen.
@@ -68,6 +109,12 @@ type Hello struct {
 	// KeyAt is when the sender's fleet key was made (Unix ms, 0 = original); the side with the newer
 	// key pushes it to the other in a rekey.
 	KeyAt int64 `json:"keyAt,omitempty"`
+	// RevokedKeys are every key fingerprint the sender knows to be revoked (removals); Vouches the
+	// replacement certificates it carries for other machines. Both spread through hellos.
+	RevokedKeys []string `json:"revokedKeys,omitempty"`
+	Vouches     []Vouch  `json:"vouches,omitempty"`
+	// Reissue is the newest re-issue still in its grace period, passed on to catch up stragglers.
+	Reissue *Reissue `json:"reissue,omitempty"`
 }
 
 // KeySet is a fleet key and, during a rotation grace period, the certificates that bridge it to
@@ -239,14 +286,19 @@ type Join struct {
 	MachineID string `json:"machineId"`
 	Name      string `json:"name,omitempty"`
 	Listen    string `json:"listen,omitempty"` // joiner's advertised host:port, if it can accept connections
+	// PublicKey is the joiner's own key (PEM), which the inviter certifies. From 0.3.23 an invite
+	// never hands out a private key.
+	PublicKey string `json:"publicKey,omitempty"`
 }
 
 type Joined struct {
-	T     string     `json:"t"` // "joined"
-	OK    bool       `json:"ok"`
-	Error string     `json:"error,omitempty"`
-	Cert  string     `json:"cert,omitempty"` // PEM
-	Key   string     `json:"key,omitempty"`  // PEM
+	T     string `json:"t"` // "joined"
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+	Cert  string `json:"cert,omitempty"` // PEM: the fleet roots to trust
+	Key   string `json:"key,omitempty"`  // PEM: only from inviters before 0.3.23
+	// Chain is the joiner's new certificate chain (PEM, leaf first), signed by the inviter.
+	Chain string     `json:"chain,omitempty"`
 	Peers []PeerAddr `json:"peers,omitempty"`
 	// Added is when the inviter admitted the joiner (Unix ms); the joiner puts it in its hellos.
 	Added int64 `json:"added,omitempty"`

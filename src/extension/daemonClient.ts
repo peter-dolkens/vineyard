@@ -34,8 +34,11 @@ export interface LocalDaemonConfig {
   advertise?: string;
   peers: PeerAddr[];
   port: number;
+  /** This machine's certificate chain and key (or, before 0.3.23, the shared ones). */
   certPem: string;
   keyPem: string;
+  /** The fleet roots to trust. */
+  rootsPem: string;
   /** The certificate before the last key rotation, present only during its grace period. */
   prevPem?: string;
 }
@@ -48,8 +51,19 @@ export function readLocalConfig(): LocalDaemonConfig | undefined {
   const dir = vineyardDir();
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) as Partial<LocalDaemonConfig>;
-    const certPem = fs.readFileSync(path.join(dir, 'fleet.crt'), 'utf8');
-    const keyPem = fs.readFileSync(path.join(dir, 'fleet.key'), 'utf8');
+    // fleet.crt holds the fleet's roots (more than one during a re-issue). The daemon accepts a viewer
+    // only with this machine's own certificate (machine.crt / machine.key, from 0.3.23); a machine
+    // still on the shared key presents fleet.crt with fleet.key.
+    const rootsPem = fs.readFileSync(path.join(dir, 'fleet.crt'), 'utf8');
+    let certPem: string;
+    let keyPem: string;
+    try {
+      certPem = fs.readFileSync(path.join(dir, 'machine.crt'), 'utf8');
+      keyPem = fs.readFileSync(path.join(dir, 'machine.key'), 'utf8');
+    } catch {
+      certPem = rootsPem;
+      keyPem = fs.readFileSync(path.join(dir, 'fleet.key'), 'utf8');
+    }
     // During a key rotation's grace period the daemon presents a certificate signed by the previous
     // key, so that one is trusted too until the daemon deletes it.
     let prevPem: string | undefined;
@@ -70,6 +84,7 @@ export function readLocalConfig(): LocalDaemonConfig | undefined {
       port,
       certPem,
       keyPem,
+      rootsPem,
       prevPem,
     };
   } catch {
@@ -147,7 +162,7 @@ export class DaemonClient implements vscode.Disposable {
       port: cfg.port,
       cert: cfg.certPem,
       key: cfg.keyPem,
-      ca: cfg.prevPem ? [cfg.certPem, cfg.prevPem] : [cfg.certPem],
+      ca: cfg.prevPem ? [cfg.rootsPem, cfg.prevPem] : [cfg.rootsPem],
       servername: FLEET_SERVER_NAME,
       minVersion: 'TLSv1.3',
     });

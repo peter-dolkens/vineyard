@@ -1,24 +1,29 @@
 package mesh
 
 import (
+	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
 
-// Fleet key rotation (certificates: config/keys.go). "Rotate Fleet Key" makes a new key here,
-// optionally removing the machines it must not reach (a lost laptop), and pushes the key set over
-// every live peer link. From then on every hello states the sender's KeyAt, and whichever side of a
-// new connection holds the newer key pushes it to the other, so machines that were offline catch up
-// the next time they meet any rotated member, as long as that is within the grace period. After it,
-// the previous key is no longer trusted and a straggler has to join again with an invite.
+// TLS configurations and fleet root rotation. The pre-0.3.23 rotation, which pushed a new shared
+// private key to every member, is gone; graceTick still ends the grace period of one made before.
 
 const DefaultRotationGrace = 14 * 24 * time.Hour
 
@@ -57,139 +62,114 @@ func (n *Node) rebuildTLS() error {
 	return nil
 }
 
-// keySet reads the key files to pass on: the current key, plus the previous and cross certificates
-// while the grace period runs.
-func (n *Node) keySet() (protocol.KeySet, error) {
-	read := func(name string) string {
-		b, _ := os.ReadFile(config.PathIn(n.opts.Dir, name))
-		return string(b)
-	}
-	n.mu.Lock()
-	ks := protocol.KeySet{KeyAt: n.cfg.KeyAt, PrevUntil: n.cfg.PrevUntil, Members: slices.Clone(n.cfg.KeyMembers)}
-	grace := n.tlsGrace
-	n.mu.Unlock()
-	ks.Cert, ks.Key = read(config.CertFile), read(config.KeyFile)
-	if ks.Cert == "" || ks.Key == "" {
-		return ks, errors.New("fleet key files missing")
-	}
-	if grace {
-		ks.Cross, ks.Prev = read(config.CrossCertFile), read(config.PrevCertFile)
-	} else {
-		ks.PrevUntil = 0
-	}
-	return ks, nil
+// ---- re-issue: Rotate Fleet Key from 0.3.23 -------------------------------------------------------
+//
+// A rotation no longer hands anyone a private key. The rotating machine makes a new root, signs with
+// it a fresh certificate for every current member's existing key (the excluded machines are removed
+// first), throws the root key away and sends out the result: the new root, the certificates, its own
+// signature. Members add the root, switch to their new certificate and pass the package on in hellos,
+// so machines offline at the time catch up within the grace period. After it, only the new root is
+// trusted: certificates under the old one, including anything minted with the pre-0.3.23 shared key,
+// stop working.
+
+// reissueDigest is what the rotating machine signs.
+func reissueDigest(r protocol.Reissue) []byte {
+	r.Signer, r.Sig = "", ""
+	b, _ := json.Marshal(r)
+	h := sha256.Sum256(b)
+	return h[:]
 }
 
-// validateKeySet checks a key set pushed to us before anything is written: the key must match its
-// certificates, and the cross certificate must chain to a key we already trust. That keeps a
-// malformed set from being installed (and spread), and a machine that has rotated from being handed
-// a key someone made up.
-func (n *Node) validateKeySet(ks protocol.KeySet) error {
-	if _, err := tls.X509KeyPair([]byte(ks.Cert), []byte(ks.Key)); err != nil {
-		return fmt.Errorf("certificate and key do not match: %w", err)
-	}
-	if ks.Cross == "" {
-		return errors.New("no certificate linking the new key to ours")
-	}
-	pair, err := tls.X509KeyPair([]byte(ks.Cross), []byte(ks.Key))
-	if err != nil {
-		return fmt.Errorf("cross certificate: %w", err)
-	}
-	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return err
-	}
-	inter := x509.NewCertPool()
-	for _, der := range pair.Certificate[1:] {
-		if c, err := x509.ParseCertificate(der); err == nil {
-			inter.AddCert(c)
-		}
-	}
-	roots := x509.NewCertPool()
-	for _, f := range []string{config.CertFile, config.PrevCertFile} {
-		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, f)); err == nil {
-			roots.AppendCertsFromPEM(b)
-		}
-	}
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: inter, DNSName: config.FleetServerName, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
-		return fmt.Errorf("the new key is not signed by a key we trust: %w", err)
-	}
-	return nil
-}
-
-// installKeySet takes a key set (our own rotation, or one pushed to us) and switches to it.
-func (n *Node) installKeySet(ks protocol.KeySet) error {
-	if err := config.InstallKeys(n.opts.Dir, []byte(ks.Cert), []byte(ks.Key), []byte(ks.Cross), []byte(ks.Prev)); err != nil {
-		return err
-	}
-	n.mu.Lock()
-	n.cfg.KeyAt = ks.KeyAt
-	n.cfg.PrevUntil = ks.PrevUntil
-	n.cfg.KeyMembers = ks.Members
-	n.mu.Unlock()
-	if err := n.saveConfig(); err != nil {
-		n.logf("save config: %v", err)
-	}
-	return n.rebuildTLS()
-}
-
-// rotateKey makes a new fleet key, removes the excluded machines from the fleet, and pushes the key
-// to every connected member. Returns the new key's time.
+// rotateKey is the "rotatekey" op: re-issue every member's certificate under a new root.
 func (n *Node) rotateKey(exclude []string, grace time.Duration) (int64, error) {
 	if grace <= 0 {
 		grace = DefaultRotationGrace
 	}
+	n.mu.Lock()
+	me := n.me
+	n.mu.Unlock()
+	if me == nil {
+		return 0, errors.New("this machine has no certificate of its own yet; it cannot rotate the fleet key")
+	}
 	now := time.Now().UnixMilli()
+	// The excluded machines go first, their keys revoked, so they get nothing.
 	var removals []protocol.Removal
 	n.mu.Lock()
 	for _, id := range exclude {
 		r := protocol.Removal{MachineID: id, At: now}
+		if k := n.cfg.MemberKeys[id].Key; k != "" {
+			r.Keys = []string{k}
+		}
 		if n.applyRemovalLocked(r) {
 			removals = append(removals, r)
 		}
 	}
-	n.mu.Unlock()
-	prevCert, err := os.ReadFile(config.PathIn(n.opts.Dir, config.CertFile))
-	if err != nil {
-		return 0, err
-	}
-	prevKey, err := os.ReadFile(config.PathIn(n.opts.Dir, config.KeyFile))
-	if err != nil {
-		return 0, err
-	}
-	cert, key, cross, err := config.NewFleetKey(prevCert, prevKey, now)
-	if err != nil {
-		return 0, err
-	}
-	prev := prevCert
-	n.mu.Lock()
-	overlapping := n.tlsGrace
-	members := []string{n.cfg.MachineID}
-	for id := range n.peers {
-		if !slices.Contains(exclude, id) {
-			members = append(members, id)
+	members := map[string]string{}
+	for id, mk := range n.cfg.MemberKeys {
+		if !slices.Contains(exclude, id) && !n.cfg.IsRemoved(id) && mk.Pub != "" {
+			members[id] = mk.Pub
 		}
 	}
 	n.mu.Unlock()
-	slices.Sort(members)
-	if overlapping {
-		// Rotating again inside a grace period: machines still on the key before last must be able
-		// to verify the new one too, so the old bridge certificates come along.
-		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, config.CrossCertFile)); err == nil {
-			cross = append(cross, b...)
-		}
-		if b, err := os.ReadFile(config.PathIn(n.opts.Dir, config.PrevCertFile)); err == nil {
-			prev = append(append([]byte(nil), prevCert...), b...)
-		}
-	}
-	ks := protocol.KeySet{Cert: string(cert), Key: string(key), Cross: string(cross), Prev: string(prev), KeyAt: now, PrevUntil: now + grace.Milliseconds(), Members: members}
-	if err := n.installKeySet(ks); err != nil {
+
+	rootPEM, rootKey, err := config.NewRoot(time.UnixMilli(now).UTC().Format("2006-01-02 15:04"))
+	if err != nil {
 		return 0, err
 	}
+	roots, err := config.ParseCerts(rootPEM)
+	if err != nil {
+		return 0, err
+	}
+	r := protocol.Reissue{Root: string(rootPEM), At: now, Until: now + grace.Milliseconds()}
+	issue := func(id string, pub any) error {
+		der, err := config.IssueMachineCert(roots[0], rootKey, id, pub)
+		if err != nil {
+			return err
+		}
+		r.Chains = append(r.Chains, protocol.Vouch{MachineID: id, Chain: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), At: now})
+		return nil
+	}
+	if err := issue(n.cfg.MachineID, me.Leaf.PublicKey); err != nil {
+		return 0, err
+	}
+	ids := make([]string, 0, len(members))
+	for id := range members {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		der, err := base64.StdEncoding.DecodeString(members[id])
+		if err != nil {
+			continue
+		}
+		pub, err := x509.ParsePKIXPublicKey(der)
+		if err != nil {
+			continue
+		}
+		if err := issue(id, pub); err != nil {
+			return 0, err
+		}
+	}
+	rootKey = nil // nothing keeps it: no machine can mint identities under the new root
+	bridge, err := me.Bridge(roots[0])
+	if err != nil {
+		return 0, err
+	}
+	r.Bridge = string(bridge)
+	r.Signer = string(me.ChainPEM())
+	sig, err := me.Key.Sign(rand.Reader, reissueDigest(r), crypto.SHA256)
+	if err != nil {
+		return 0, err
+	}
+	r.Sig = base64.StdEncoding.EncodeToString(sig)
+	if err := n.applyReissue(r, true); err != nil {
+		return 0, err
+	}
+
 	n.mu.Lock()
 	var peerLinks []*link
 	for l := range n.links {
-		if l.role == "peer" && !slices.Contains(exclude, l.peerID) {
+		if l.role == "peer" {
 			peerLinks = append(peerLinks, l)
 		}
 	}
@@ -198,51 +178,161 @@ func (n *Node) rotateKey(exclude []string, grace time.Duration) (int64, error) {
 		if len(removals) > 0 {
 			_ = l.conn.Send(protocol.Removed{T: "removed", Removals: removals})
 		}
-		_ = l.conn.Send(protocol.Rekey{T: "rekey", Keys: ks})
+		_ = l.conn.Send(protocol.ReissueMsg{T: "reissue", Reissue: r})
 	}
 	if len(removals) > 0 {
 		n.refreshViewers()
 	}
-	n.logf("fleet key rotated; the previous key is accepted until %s; told %d connected members", time.UnixMilli(ks.PrevUntil).Format(time.DateTime), len(peerLinks))
+	n.logf("fleet root re-issued for %d machines; the previous root is accepted until %s; told %d connected members", len(r.Chains), time.UnixMilli(r.Until).Format(time.DateTime), len(peerLinks))
 	return now, nil
 }
 
-// sendRekey pushes our key set to a peer that connected with an older key, if the rotation listed it.
-func (n *Node) sendRekey(l *link) {
-	n.mu.Lock()
-	listed := slices.Contains(n.cfg.KeyMembers, l.peerID)
-	n.mu.Unlock()
-	if !listed {
-		n.logf("not passing the fleet key to %s: it was not a member when the key was rotated", l.peerID)
-		return
-	}
-	ks, err := n.keySet()
+// checkReissue verifies a re-issue from a peer: newer than ours, signed by a member whose key we
+// already hold on record, and its signer's chain valid under the roots we trust now.
+func (n *Node) checkReissue(r protocol.Reissue) error {
+	signer, err := config.ParseCerts([]byte(r.Signer))
 	if err != nil {
-		n.logf("cannot pass the fleet key to %s: %v", l.peerID, err)
-		return
+		return fmt.Errorf("signer: %w", err)
 	}
-	if err := l.conn.Send(protocol.Rekey{T: "rekey", Keys: ks}); err == nil {
-		n.logf("passed the current fleet key to %s", l.peerID)
+	id := config.CertMachineID(signer[0])
+	n.mu.Lock()
+	known := n.cfg.MemberKeys[id].Key
+	revoked := n.revokedLocked()
+	n.mu.Unlock()
+	if id == "" || known == "" || known != config.KeyFingerprint(signer[0]) {
+		return fmt.Errorf("signed by %q, whose key this machine has not seen", id)
 	}
+	for _, c := range signer {
+		if revoked[config.KeyFingerprint(c)] {
+			return errors.New("signed through a revoked key")
+		}
+	}
+	trusted, err := config.Roots(n.opts.Dir)
+	if err != nil {
+		return err
+	}
+	pool, inter := x509.NewCertPool(), x509.NewCertPool()
+	for _, c := range trusted {
+		pool.AddCert(c)
+	}
+	for _, c := range signer[1:] {
+		inter.AddCert(c)
+	}
+	if _, err := signer[0].Verify(x509.VerifyOptions{Roots: pool, Intermediates: inter, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}); err != nil {
+		return fmt.Errorf("signer's certificate: %w", err)
+	}
+	sig, err := base64.StdEncoding.DecodeString(r.Sig)
+	if err != nil {
+		return err
+	}
+	pub, ok := signer[0].PublicKey.(*ecdsa.PublicKey)
+	if !ok || !ecdsa.VerifyASN1(pub, reissueDigest(r), sig) {
+		return errors.New("bad signature")
+	}
+	return nil
 }
 
-// handleRekey takes a newer key set from a peer.
-func (n *Node) handleRekey(l *link, ks protocol.KeySet) {
+// applyReissue adds the new root, switches this machine to its new certificate and keeps the
+// package to pass on until the grace period ends.
+func (n *Node) applyReissue(r protocol.Reissue, ours bool) error {
 	n.mu.Lock()
-	newer := ks.KeyAt > n.cfg.KeyAt
+	cur := n.cfg.Reissue
+	me := n.me
 	n.mu.Unlock()
-	if !newer || l.role != "peer" {
+	if cur != nil && cur.At >= r.At {
+		return nil
+	}
+	if !ours {
+		if err := n.checkReissue(r); err != nil {
+			return err
+		}
+	}
+	newRoot, err := config.ParseCerts([]byte(r.Root))
+	if err != nil {
+		return err
+	}
+	rootsPath := config.PathIn(n.opts.Dir, config.CertFile)
+	have, _ := os.ReadFile(rootsPath)
+	if !bytes.Contains(have, []byte(strings.TrimSpace(r.Root))) {
+		if err := writeFileAtomic(rootsPath, append(append([]byte(nil), have...), []byte(r.Root)...)); err != nil {
+			return err
+		}
+	}
+	for _, v := range r.Chains {
+		if v.MachineID != n.cfg.MachineID || me == nil {
+			continue
+		}
+		certs, err := config.ParseCerts([]byte(v.Chain))
+		if err != nil || config.KeyFingerprint(certs[0]) != config.KeyFingerprint(me.Leaf) {
+			continue
+		}
+		if err := certs[0].CheckSignatureFrom(newRoot[0]); err != nil {
+			return fmt.Errorf("our new certificate is not signed by the new root: %w", err)
+		}
+		// Until the grace period ends, present the bridge behind it for machines on the old root.
+		if err := config.WriteMachine(n.opts.Dir, nil, append([]byte(v.Chain), []byte(r.Bridge)...)); err != nil {
+			return err
+		}
+	}
+	n.mu.Lock()
+	rr := r
+	n.cfg.Reissue = &rr
+	n.mu.Unlock()
+	if err := n.saveConfig(); err != nil {
+		n.logf("save config: %v", err)
+	}
+	if err := n.reloadIdentity(); err != nil {
+		return err
+	}
+	if !ours {
+		n.logf("switched to the fleet root re-issued at %s; the previous one is accepted until %s", time.UnixMilli(r.At).Format(time.DateTime), time.UnixMilli(r.Until).Format(time.DateTime))
+	}
+	return nil
+}
+
+// reissueTick ends a re-issue's grace period: only the newest root is trusted from then on.
+func (n *Node) reissueTick() {
+	n.mu.Lock()
+	r := n.cfg.Reissue
+	over := r != nil && time.Now().UnixMilli() > r.Until
+	if over {
+		n.cfg.Reissue = nil
+	}
+	n.mu.Unlock()
+	if !over {
 		return
 	}
-	if err := n.validateKeySet(ks); err != nil {
-		n.logf("refused a fleet key from %s: %v", l.peerID, err)
+	if err := writeFileAtomic(config.PathIn(n.opts.Dir, config.CertFile), []byte(r.Root)); err != nil {
+		n.logf("drop old fleet roots: %v", err)
 		return
 	}
-	if err := n.installKeySet(ks); err != nil {
-		n.logf("fleet key from %s: %v", l.peerID, err)
-		return
+	// The bridge has done its job: present the new certificate alone.
+	if me, err := config.LoadMachine(n.opts.Dir); err == nil && len(me.Chain) > 1 {
+		if root, err := config.ParseCerts([]byte(r.Root)); err == nil && me.Leaf.CheckSignatureFrom(root[0]) == nil {
+			_ = config.WriteMachine(n.opts.Dir, nil, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: me.Leaf.Raw}))
+			_ = n.reloadIdentity()
+		}
 	}
-	n.logf("switched to the fleet key rotated at %s (from %s)", time.UnixMilli(ks.KeyAt).Format(time.DateTime), l.peerID)
+	if err := n.saveConfig(); err != nil {
+		n.logf("save config: %v", err)
+	}
+	if err := n.rebuildTLS(); err != nil {
+		n.logf("reload fleet roots: %v", err)
+	}
+	n.logf("re-issue grace period over; only the new fleet root is trusted")
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	if err := os.WriteFile(path+".tmp", data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(path+".tmp", path)
+}
+
+// handleRekey refuses a shared fleet key pushed by a daemon from before 0.3.23: machines with their
+// own certificates never take one again.
+func (n *Node) handleRekey(l *link, _ protocol.KeySet) {
+	n.logf("ignored a shared fleet key from %s: this fleet uses machine certificates (update vineyardd there)", l.peerID)
 }
 
 // graceTick ends a rotation grace period once it is over: the previous key stops being trusted.

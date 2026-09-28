@@ -1,227 +1,202 @@
 package mesh
 
 import (
-	"bytes"
-	"log"
+	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
-	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
 
-// keyedNode is meshNode with its own key directory (a copy of the fleet key in VINEYARD_DIR), so a
-// rotation on one daemon does not touch the others' files.
-func keyedNode(t *testing.T, id string, peers ...protocol.PeerAddr) (*Node, string, string) {
+// runOne runs a single node until the returned stop is called.
+func runOne(t *testing.T, n *Node) (stop func()) {
 	t.Helper()
-	dir := t.TempDir()
-	for _, f := range []string{config.CertFile, config.KeyFile} {
-		b, err := os.ReadFile(config.Path(f))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = n.Run(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond)
+	t.Cleanup(cancel)
+	return func() {
+		cancel()
+		<-done
 	}
-	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
-	cfg := config.New(id, id, 0, addr)
-	cfg.Listen = addr
-	cfg.Peers = peers
-	cfg.Uplink = "off"
-	n, err := New(Options{Config: cfg, Version: "test", Dir: dir, Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
+}
+
+// restart builds a fresh daemon from a stopped one's config and key directory.
+func restart(t *testing.T, n *Node) *Node {
+	t.Helper()
+	m, err := New(Options{Config: n.cfg, Version: "test", Dir: n.opts.Dir, Log: n.opts.Log, Collect: n.opts.Collect})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return n, addr, dir
+	return m
 }
 
-func keyAtOf(n *Node) int64 {
+// leafSignedBy reports whether the node's machine certificate is signed directly by root.
+func leafSignedBy(t *testing.T, n *Node, rootPEM string) bool {
+	t.Helper()
+	m, err := config.LoadMachine(n.opts.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := config.ParseCerts([]byte(rootPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.Leaf.CheckSignatureFrom(root[0]) == nil
+}
+
+func reissueOf(n *Node) *protocol.Reissue {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.cfg.KeyAt
+	return n.cfg.Reissue
 }
 
-// Rotating on atelier reaches forge at once over their link; orchard, offline at the time, still
-// connects on the old key during the grace period and is handed the new one.
-func TestRotationReachesConnectedAndLateMembers(t *testing.T) {
+func linkedAll(t *testing.T, pairs ...[2]*Node) {
+	t.Helper()
+	for _, p := range pairs {
+		waitFor(t, p[0].cfg.MachineID+" linked to "+p[1].cfg.MachineID, func() bool { return linkVia(p[0], p[1].cfg.MachineID) == "direct" })
+	}
+}
+
+// Re-issuing on atelier reaches forge at once over their link; orchard, offline at the time, gets it
+// from forge's hello when it comes back, and every one of them ends up on a certificate signed by the
+// new root, for the key it already had.
+func TestReissueReachesConnectedAndLateMembers(t *testing.T) {
 	newMeshDir(t)
-	original, _ := os.ReadFile(config.Path(config.CertFile))
-	orchard, orchardAddr, orchardDir := keyedNode(t, "orchard")
-	forge, forgeAddr, forgeDir := keyedNode(t, "forge")
-	atelier, _, _ := keyedNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
-	runNodes(t, forge, atelier)
-	atelier.setWantFleet(true)
-	waitFor(t, "atelier linked to forge", func() bool { return linkVia(atelier, "forge") == "direct" })
-
-	at, err := atelier.rotateKey(nil, time.Hour)
-	if err != nil {
-		t.Fatal(err)
+	orchard, orchardAddr := meshNode(t, "orchard")
+	forge, forgeAddr := meshNode(t, "forge", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	atelier, atelierAddr := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr}, protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	orchard.cfg.AddPeer(protocol.PeerAddr{MachineID: "atelier", Addr: atelierAddr})
+	stopOrchard := runOne(t, orchard)
+	runOne(t, forge)
+	runOne(t, atelier)
+	for _, n := range []*Node{atelier, forge, orchard} {
+		n.setWantFleet(true)
 	}
-	waitFor(t, "forge to take the new key", func() bool { return keyAtOf(forge) == at })
-	if b, _ := os.ReadFile(filepath.Join(forgeDir, config.CertFile)); bytes.Equal(b, original) {
-		t.Fatal("forge's fleet.crt was not replaced")
-	}
-
-	runNodes(t, orchard) // was offline during the rotation; still on the original key
-	waitFor(t, "orchard to connect on the old key and be handed the new one", func() bool { return keyAtOf(orchard) == at })
-	if b, _ := os.ReadFile(filepath.Join(orchardDir, config.CertFile)); bytes.Equal(b, original) {
-		t.Fatal("orchard's fleet.crt was not replaced")
-	}
-	// Two machines that both rotated (one of them late) connect with the new key.
+	linkedAll(t, [2]*Node{atelier, forge}, [2]*Node{atelier, orchard}, [2]*Node{forge, orchard}, [2]*Node{orchard, atelier})
 	orchard.mu.Lock()
-	orchard.peers["forge"] = &peerState{id: "forge", addr: forgeAddr, addrs: []string{forgeAddr}}
+	keyBefore := config.KeyFingerprint(orchard.me.Leaf)
 	orchard.mu.Unlock()
-	orchard.setWantFleet(true)
-	waitFor(t, "orchard and forge linked", func() bool { return linkVia(orchard, "forge") == "direct" })
-}
+	stopOrchard()
 
-// Once the grace period is over, a machine still on the previous key is refused.
-func TestAfterGraceThePreviousKeyIsRefused(t *testing.T) {
-	newMeshDir(t)
-	orchard, _, _ := keyedNode(t, "orchard")
-	atelier, atelierAddr, atelierDir := keyedNode(t, "atelier")
 	if _, err := atelier.rotateKey(nil, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	atelier.mu.Lock()
-	atelier.cfg.PrevUntil = time.Now().Add(-time.Second).UnixMilli()
-	atelier.mu.Unlock()
-	atelier.graceTick()
-	if _, err := os.Stat(filepath.Join(atelierDir, config.PrevCertFile)); err == nil {
-		t.Fatal("previous certificate kept after grace")
+	r := reissueOf(atelier)
+	if r == nil || len(r.Chains) != 3 {
+		t.Fatalf("re-issue: %+v", r)
 	}
-	runNodes(t, orchard, atelier)
-	orchard.mu.Lock()
-	orchard.peers["atelier"] = &peerState{id: "atelier", addr: atelierAddr, addrs: []string{atelierAddr}}
-	orchard.mu.Unlock()
+	waitFor(t, "forge to take the re-issue", func() bool { return reissueOf(forge) != nil })
+	if !leafSignedBy(t, forge, r.Root) || !leafSignedBy(t, atelier, r.Root) {
+		t.Fatal("connected members are not on the new root")
+	}
+	roots, _ := config.Roots(forge.opts.Dir)
+	if len(roots) != 2 {
+		t.Fatalf("forge trusts %d roots during grace, want 2", len(roots))
+	}
+
+	orchard = restart(t, orchard)
+	runOne(t, orchard)
 	orchard.setWantFleet(true)
-	waitFor(t, "orchard's dial to fail", func() bool {
-		orchard.mu.Lock()
-		defer orchard.mu.Unlock()
-		p := orchard.peers["atelier"]
-		return p.lastErr != "" && p.link == nil
-	})
-	if keyAtOf(orchard) != 0 {
-		t.Fatal("a machine past grace was handed the new key")
+	waitFor(t, "orchard to catch up", func() bool { return reissueOf(orchard) != nil })
+	if !leafSignedBy(t, orchard, r.Root) {
+		t.Fatal("orchard is not on the new root")
+	}
+	orchard.mu.Lock()
+	keyAfter := config.KeyFingerprint(orchard.me.Leaf)
+	orchard.mu.Unlock()
+	if keyAfter != keyBefore {
+		t.Fatal("re-issue changed orchard's key; it must only re-sign the key it had")
 	}
 }
 
-// An excluded machine is removed from the fleet and never handed the new key.
-func TestRotationExcludesTheLostMachine(t *testing.T) {
+// After the grace period only the new root is trusted, so a machine still on a certificate under the
+// old one (anything minted with the pre-0.3.23 shared key, say) is refused.
+func TestAfterReissueGraceTheOldRootIsRefused(t *testing.T) {
 	newMeshDir(t)
-	forge, forgeAddr, _ := keyedNode(t, "forge")
-	atelier, _, _ := keyedNode(t, "atelier", protocol.PeerAddr{MachineID: "forge", Addr: forgeAddr})
-	runNodes(t, forge, atelier)
+	orchard, orchardAddr := meshNode(t, "orchard")
+	atelier, atelierAddr := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	orchard.cfg.AddPeer(protocol.PeerAddr{MachineID: "atelier", Addr: atelierAddr})
+	stopOrchard := runOne(t, orchard)
+	runOne(t, atelier)
 	atelier.setWantFleet(true)
-	waitFor(t, "atelier linked to forge", func() bool { return linkVia(atelier, "forge") == "direct" })
-	if _, err := atelier.rotateKey([]string{"forge"}, time.Hour); err != nil {
+	linkedAll(t, [2]*Node{atelier, orchard})
+	stopOrchard()
+
+	if _, err := atelier.rotateKey(nil, 200*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
+	atelier.reissueTick()
+	roots, _ := config.Roots(atelier.opts.Dir)
+	if len(roots) != 1 {
+		t.Fatalf("atelier still trusts %d roots after the grace period", len(roots))
+	}
+	orchard = restart(t, orchard) // never saw the re-issue: still under the old root
+	runOne(t, orchard)
+	orchard.setWantFleet(true)
+	time.Sleep(1500 * time.Millisecond)
+	if linkVia(atelier, "orchard") != "" || linkVia(orchard, "atelier") != "" {
+		t.Fatal("a machine under the old root was let in after the grace period")
+	}
+}
+
+// Machines left out of a re-issue are removed first, their keys revoked, and get no certificate.
+func TestReissueExcludesTheLostMachine(t *testing.T) {
+	newMeshDir(t)
+	orchard, orchardAddr := meshNode(t, "orchard")
+	atelier, _ := meshNode(t, "atelier", protocol.PeerAddr{MachineID: "orchard", Addr: orchardAddr})
+	runNodes(t, orchard, atelier)
+	atelier.setWantFleet(true)
+	linkedAll(t, [2]*Node{atelier, orchard})
+	orchard.mu.Lock()
+	lost := config.KeyFingerprint(orchard.me.Leaf)
+	orchard.mu.Unlock()
+	if _, err := atelier.rotateKey([]string{"orchard"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	r := reissueOf(atelier)
+	for _, c := range r.Chains {
+		if c.MachineID == "orchard" {
+			t.Fatal("the excluded machine was issued a certificate")
+		}
+	}
 	atelier.mu.Lock()
-	removed := atelier.cfg.IsRemoved("forge")
+	defer atelier.mu.Unlock()
+	if !atelier.cfg.IsRemoved("orchard") || !atelier.revokedLocked()[lost] {
+		t.Fatal("the excluded machine is not removed and revoked")
+	}
+}
+
+// A re-issue must come from a member whose key is on record: a made-up one is refused and changes
+// nothing.
+func TestReissueFromAStrangerIsRefused(t *testing.T) {
+	newMeshDir(t)
+	atelier, _ := meshNode(t, "atelier")
+	stranger, _ := meshNode(t, "stranger") // a valid fleet certificate, but atelier has never met it
+	if _, err := stranger.rotateKey(nil, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	r := *reissueOf(stranger)
+	if err := atelier.applyReissue(r, false); err == nil {
+		t.Fatal("a re-issue signed by an unknown machine was accepted")
+	}
+	r.Signer = string(atelier.me.ChainPEM()) // claim atelier signed it: the signature no longer matches
+	atelier.mu.Lock()
+	atelier.cfg.MemberKeys = map[string]config.MemberKey{"atelier": {Key: config.KeyFingerprint(atelier.me.Leaf)}}
 	atelier.mu.Unlock()
-	if !removed || keyAtOf(forge) != 0 {
-		t.Fatalf("forge removed=%v keyAt=%d", removed, keyAtOf(forge))
+	if err := atelier.applyReissue(r, false); err == nil {
+		t.Fatal("a re-issue with a forged signer was accepted")
 	}
-}
-
-// A machine that was not a member when the key was rotated (a thief who renamed an excluded laptop)
-// connects on the old key during grace but is never handed the new one.
-func TestRotationDoesNotHandTheKeyToStrangers(t *testing.T) {
-	newMeshDir(t)
-	atelier, atelierAddr, _ := keyedNode(t, "atelier")
-	if _, err := atelier.rotateKey([]string{"forge"}, time.Hour); err != nil {
-		t.Fatal(err)
+	roots, _ := config.Roots(atelier.opts.Dir)
+	if len(roots) != 1 || reissueOf(atelier) != nil {
+		t.Fatal("a refused re-issue changed the trusted roots")
 	}
-	thief, _, _ := keyedNode(t, "forge-renamed")
-	runNodes(t, atelier, thief)
-	thief.mu.Lock()
-	thief.peers["atelier"] = &peerState{id: "atelier", addr: atelierAddr, addrs: []string{atelierAddr}}
-	thief.mu.Unlock()
-	thief.setWantFleet(true)
-	waitFor(t, "the thief to connect on the old key", func() bool { return linkVia(thief, "atelier") == "direct" })
-	time.Sleep(500 * time.Millisecond)
-	if keyAtOf(thief) != 0 {
-		t.Fatal("a machine outside the rotation's member list was handed the new key")
+	if _, err := os.Stat(filepath.Join(atelier.opts.Dir, config.KeyFile)); err != nil {
+		t.Fatal("refusing a re-issue should not touch the legacy key")
 	}
-}
-
-// A pushed key set that is not signed by a key we trust is refused before anything is written.
-func TestMadeUpKeySetIsRefused(t *testing.T) {
-	newMeshDir(t)
-	victim, _, dir := keyedNode(t, "atelier")
-	before, _ := os.ReadFile(filepath.Join(dir, config.CertFile))
-	// A key set from an unrelated fleet: its cross certificate chains to that fleet's key, not ours.
-	other := t.TempDir()
-	t.Setenv("VINEYARD_DIR", other)
-	if err := config.GenerateFleetCert(); err != nil {
-		t.Fatal(err)
-	}
-	oc, _ := os.ReadFile(filepath.Join(other, config.CertFile))
-	ok, _ := os.ReadFile(filepath.Join(other, config.KeyFile))
-	cert, key, cross, err := config.NewFleetKey(oc, ok, time.Now().UnixMilli())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ks := protocol.KeySet{Cert: string(cert), Key: string(key), Cross: string(cross), KeyAt: time.Now().UnixMilli(), PrevUntil: time.Now().Add(time.Hour).UnixMilli()}
-	if err := victim.validateKeySet(ks); err == nil {
-		t.Fatal("a key set from another fleet validated")
-	}
-	victim.handleRekey(&link{role: "peer", peerID: "mallory"}, ks)
-	after, _ := os.ReadFile(filepath.Join(dir, config.CertFile))
-	if !bytes.Equal(before, after) || keyAtOf(victim) != 0 {
-		t.Fatal("a refused key set was installed")
-	}
-	bad := ks
-	bad.Key = "not a key"
-	if victim.validateKeySet(bad) == nil {
-		t.Fatal("a malformed key set validated")
-	}
-}
-
-// Rotating again inside a grace period: a machine left on the middle key and one still on the
-// original key both still connect to the newest, and catch up to it.
-func TestOverlappingRotationsKeepEveryGraceKeyWorking(t *testing.T) {
-	newMeshDir(t)
-	a, aAddr, _ := keyedNode(t, "atelier")
-	middle, _, _ := keyedNode(t, "forge")
-	oldest, _, _ := keyedNode(t, "orchard")
-	a.mu.Lock()
-	a.peers["forge"] = &peerState{id: "forge"}
-	a.peers["orchard"] = &peerState{id: "orchard"}
-	a.mu.Unlock()
-	k2, err := a.rotateKey(nil, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ks2, err := a.keySet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := middle.validateKeySet(ks2); err != nil {
-		t.Fatal(err)
-	}
-	if err := middle.installKeySet(ks2); err != nil { // forge took K2, then went offline
-		t.Fatal(err)
-	}
-	time.Sleep(5 * time.Millisecond)
-	k3, err := a.rotateKey(nil, time.Hour)
-	if err != nil || k3 <= k2 {
-		t.Fatal(err)
-	}
-	runNodes(t, a, middle, oldest)
-	for _, n := range []*Node{middle, oldest} {
-		n.mu.Lock()
-		n.peers["atelier"] = &peerState{id: "atelier", addr: aAddr, addrs: []string{aAddr}}
-		n.mu.Unlock()
-		n.setWantFleet(true)
-	}
-	waitFor(t, "forge (on K2) to reach K3", func() bool { return keyAtOf(middle) == k3 })
-	waitFor(t, "orchard (on K1) to reach K3", func() bool { return keyAtOf(oldest) == k3 })
 }

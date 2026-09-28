@@ -243,8 +243,28 @@ export class Flows {
 
   async remove(m: MachineView): Promise<void> {
     if (m.local) return toast('This machine is always shown. Uninstall its daemon with "vineyardd uninstall".', 'info');
-    if (!(await confirm(`Remove ${m.name} from the fleet?`, 'Every member drops it and refuses its connections. It can rejoin with an invite code.', 'Remove', true))) return;
-    await this.api.request('removepeer', undefined, { machineId: m.id, addr: '' }, 10_000);
+    // Its key is revoked, and with it the certificates it signed for machines that joined through it.
+    let descendants: string[] = [];
+    try {
+      descendants = (await this.api.request<{ machines: string[] }>('descendants', undefined, { machineId: m.id, addr: '' }, 10_000)).machines ?? [];
+    } catch {
+      descendants = [];
+    }
+    const names = descendants.map((id) => this.store.machine(id)?.name ?? id).join(', ');
+    let keep: string[] = [];
+    if (descendants.length) {
+      const r = await dialog({
+        title: `Remove ${m.name} from the fleet?`,
+        message: `${names} joined through ${m.name}, so removing it revokes them too, unless this machine vouches for them.`,
+        buttons: [
+          { label: `Keep ${descendants.length === 1 ? 'it' : 'them'}`, value: 'keep', primary: true },
+          { label: `Remove ${descendants.length === 1 ? 'it' : 'them'} too`, value: 'all', destructive: true },
+        ],
+      });
+      if (!r.button) return;
+      keep = r.button === 'keep' ? descendants : [];
+    } else if (!(await confirm(`Remove ${m.name} from the fleet?`, 'Its key is revoked on every machine. It can rejoin with an invite code from VS Code.', 'Remove', true))) return;
+    await this.api.request('removepeer', undefined, { machineId: m.id, addr: '', keep }, 15_000);
     toast(`${m.name} removed.`, 'ok');
     this.navigate(R.home);
   }

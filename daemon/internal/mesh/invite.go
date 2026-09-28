@@ -11,9 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
 
@@ -164,7 +166,29 @@ func (n *Node) handleJoin(l *link) {
 		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "invalid or expired invite"})
 		return
 	}
-	ks, err := n.keySet()
+	// The joiner sends its own public key; we certify it with ours. No private key leaves here.
+	n.mu.Lock()
+	me := n.me
+	n.mu.Unlock()
+	if j.PublicKey == "" {
+		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "this vineyardd is too old to join a fleet from 0.3.23 on; update it and use the same invite code"})
+		return
+	}
+	if me == nil {
+		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "the inviting machine has no certificate of its own yet"})
+		return
+	}
+	pub, err := config.ParsePublicKeyPEM([]byte(j.PublicKey))
+	if err != nil || j.MachineID == "" || j.MachineID == n.cfg.MachineID {
+		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "bad join request"})
+		return
+	}
+	chain, err := me.Issue(j.MachineID, pub)
+	if err != nil {
+		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "could not issue a certificate: " + err.Error()})
+		return
+	}
+	roots, err := os.ReadFile(config.PathIn(n.opts.Dir, config.CertFile))
 	if err != nil {
 		_ = l.conn.Send(protocol.Joined{T: "joined", OK: false, Error: "fleet certificate unavailable"})
 		return
@@ -178,9 +202,13 @@ func (n *Node) handleJoin(l *link) {
 		}
 	}
 	changed := false
+	if certs, err := config.ParseCerts(chain); err == nil {
+		// Remember its identity now, so it counts as vouched for by us from the start.
+		changed = n.recordMemberLocked(j.MachineID, identity{id: j.MachineID, key: config.KeyFingerprint(certs[0]), chain: chainKeys(certs), pub: certs[0].RawSubjectPublicKeyInfo})
+	}
 	added := time.Now().UnixMilli() // admitting the joiner beats any earlier removal of it
 	if j.MachineID != "" && j.Listen != "" && j.MachineID != n.cfg.MachineID {
-		changed = n.cfg.AddPeer(protocol.PeerAddr{MachineID: j.MachineID, Addr: j.Listen, Added: added})
+		changed = n.cfg.AddPeer(protocol.PeerAddr{MachineID: j.MachineID, Addr: j.Listen, Added: added}) || changed
 		if p := n.peers[j.MachineID]; p != nil {
 			addCandidates(p, j.Listen)
 		} else {
@@ -198,7 +226,7 @@ func (n *Node) handleJoin(l *link) {
 			n.logf("save config: %v", err)
 		}
 	}
-	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: ks.Cert, Key: ks.Key, Cross: ks.Cross, Prev: ks.Prev, KeyAt: ks.KeyAt, PrevUntil: ks.PrevUntil, Peers: peers, Added: added})
+	_ = l.conn.Send(protocol.Joined{T: "joined", OK: true, Cert: string(roots), Chain: string(chain), Peers: peers, Added: added})
 	n.logf("machine %s (%s) joined via invite from %s", j.MachineID, j.Name, l.conn.RemoteAddr())
 	n.broadcastPeerStatus()
 	n.reconcileSubscriptions()
@@ -206,9 +234,9 @@ func (n *Node) handleJoin(l *link) {
 	time.Sleep(200 * time.Millisecond)
 }
 
-// JoinFleet is the joiner side: dial the inviter, pin its certificate, present the token, receive
-// membership. Returns the fleet cert/key PEM and the peer list.
-func JoinFleet(inv *protocol.Invite, machineID, name, listen string) (*protocol.Joined, string, error) {
+// JoinFleet is the joiner side: dial the inviter, pin its certificate, present the token and this
+// machine's public key, receive a certificate for it signed by the inviter, the roots and the peers.
+func JoinFleet(inv *protocol.Invite, machineID, name, listen, publicKeyPEM string) (*protocol.Joined, string, error) {
 	var lastErr error
 	for _, addr := range inv.Addrs {
 		tcfg := &tls.Config{
@@ -230,7 +258,7 @@ func JoinFleet(inv *protocol.Invite, machineID, name, listen string) (*protocol.
 			continue
 		}
 		c := NewConn(raw)
-		if err := c.Send(protocol.Join{T: "join", Token: inv.Token, MachineID: machineID, Name: name, Listen: listen}); err != nil {
+		if err := c.Send(protocol.Join{T: "join", Token: inv.Token, MachineID: machineID, Name: name, Listen: listen, PublicKey: publicKeyPEM}); err != nil {
 			c.Close()
 			lastErr = err
 			continue

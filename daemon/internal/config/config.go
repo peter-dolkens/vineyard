@@ -75,6 +75,30 @@ type Config struct {
 	// AllowUnsignedUpgrades lets this daemon install and store vineyardd builds that carry no valid
 	// release signature: for a development machine only. It is never set over the mesh.
 	AllowUnsignedUpgrades bool `json:"allowUnsignedUpgrades,omitempty"`
+
+	// Machine identity (identity.go). LegacyUntil: until then (Unix ms) peers may still present the
+	// shared certificate from before 0.3.23; it is set when this machine migrates and cleared, with
+	// fleet.key deleted, once every member presents its own certificate or the time is up.
+	LegacyUntil int64 `json:"legacyUntil,omitempty"`
+	// MemberKeys are the identities members presented on direct, authenticated links; they are
+	// never learned second-hand. RevokedKeys are key fingerprints revoked for good. Vouches are
+	// replacement certificates this machine carries for others (see protocol.Vouch).
+	MemberKeys  map[string]MemberKey `json:"memberKeys,omitempty"`
+	RevokedKeys []string             `json:"revokedKeys,omitempty"`
+	Vouches     []protocol.Vouch     `json:"vouches,omitempty"`
+	// Reissue is the last root re-issue while its grace period runs (see protocol.Reissue).
+	Reissue *protocol.Reissue `json:"reissue,omitempty"`
+
+	dir string // where Save writes; "" is Dir()
+}
+
+// MemberKey is a member's identity as last presented: its key fingerprint, the fingerprints of the
+// keys that vouched for it (leaf first), and its public key (base64 SPKI DER) for re-vouching.
+type MemberKey struct {
+	Key   string   `json:"key"`
+	Chain []string `json:"chain,omitempty"`
+	Pub   string   `json:"pub,omitempty"`
+	Seen  int64    `json:"seen,omitempty"`
 }
 
 func (c *Config) WakePeers() bool { return c.WakePeersEnabled == nil || *c.WakePeersEnabled }
@@ -123,19 +147,26 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) Save() error {
-	if err := os.MkdirAll(Dir(), 0o700); err != nil {
+	dir := c.dir
+	if dir == "" {
+		dir = Dir()
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := Path(ConfigFile + ".tmp")
+	tmp := PathIn(dir, ConfigFile+".tmp")
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, Path(ConfigFile))
+	return os.Rename(tmp, PathIn(dir, ConfigFile))
 }
+
+// SetDir makes Save write to dir instead of Dir(): tests run several daemons in one process.
+func (c *Config) SetDir(dir string) { c.dir = dir }
 
 // MaxAddrs caps the candidates kept per machine. The list is most recently used first, so when a
 // machine moves between networks its new addresses push out the ones it has not used for longest,
@@ -321,10 +352,17 @@ func New(machineID, name string, port int, advertise string) *Config {
 }
 
 // HasFleetCert reports whether the shared certificate + key exist.
+// HasFleetCert reports whether this machine is a fleet member: it has the fleet roots and either a
+// machine identity of its own or, from before 0.3.23, the shared key.
 func HasFleetCert() bool {
-	_, e1 := os.Stat(Path(CertFile))
-	_, e2 := os.Stat(Path(KeyFile))
-	return e1 == nil && e2 == nil
+	if _, err := os.Stat(Path(CertFile)); err != nil {
+		return false
+	}
+	if HasMachine("") {
+		return true
+	}
+	_, err := os.Stat(Path(KeyFile))
+	return err == nil
 }
 
 // GenerateFleetCert creates the one self-signed certificate every fleet member shares. Trust is

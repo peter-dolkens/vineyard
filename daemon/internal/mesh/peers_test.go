@@ -133,7 +133,12 @@ func TestMachineListSpreadsThroughHello(t *testing.T) {
 		cfg.Listen = addr
 		cfg.Peers = peers
 		cfg.Uplink = "off"
-		n, err := New(Options{Config: cfg, Version: "test", Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
+		dir := t.TempDir() // each daemon migrates to a certificate of its own
+		for _, f := range []string{config.CertFile, config.KeyFile} {
+			b, _ := os.ReadFile(config.Path(f))
+			_ = os.WriteFile(dir+"/"+f, b, 0o600)
+		}
+		n, err := New(Options{Config: cfg, Version: "test", Dir: dir, Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
 		if err != nil {
 			t.Fatal(err)
 		}

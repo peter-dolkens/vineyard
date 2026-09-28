@@ -3,8 +3,12 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -52,6 +56,8 @@ Usage:
   vineyardd rotate-key [--exclude ID ...] [--grace 336h]
         Replace the fleet key everywhere: the new key reaches connected members now and others when
         they next connect within the grace period. Excluded machines are removed and never get it.
+  vineyardd keygen       Make this machine's own key (if it has none) and print its public half, for a
+        member to certify (Add Machine over SSH does this; the private key never leaves).
   vineyardd web [--listen :7735] [--allow-host NAME ...] [--dev DIR]
         Serve the mobile web app in the foreground and print a pairing code. The daemon serves it
         itself when VS Code's vineyard.webApp setting is on. Plain HTTP: securing it is up to you.
@@ -92,6 +98,8 @@ func main() {
 		err = cmdRotateKey(os.Args[2:])
 	case "join":
 		err = cmdJoin(os.Args[2:])
+	case "keygen":
+		err = cmdKeygen()
 	case "web":
 		err = cmdWeb(os.Args[2:])
 	case "version", "--version", "-v":
@@ -140,10 +148,12 @@ func cmdInit(args []string) error {
 		return err
 	}
 	if !config.HasFleetCert() {
-		if err := config.GenerateFleetCert(); err != nil {
+		// A new fleet: a root signs this machine's certificate and is thrown away, so no machine holds
+		// a key that could mint identities. Later machines join with an invite from any member.
+		if err := config.NewFleet("", c.MachineID); err != nil {
 			return err
 		}
-		fmt.Println("generated fleet certificate", config.Path(config.CertFile))
+		fmt.Println("started a new fleet; this machine's certificate is", config.Path(config.MachineCertFile))
 	}
 	fmt.Printf("wrote %s (machine %s, listen %s)\n", config.Path(config.ConfigFile), c.MachineID, c.Listen)
 	return nil
@@ -386,12 +396,23 @@ func cmdStatus(args []string) error {
 			fmt.Printf("%s: nobody can connect to it; keeps an uplink to %s\n", entries[id].Snapshot.Name, up)
 		}
 	}
-	if cfg.KeyAt > 0 {
-		fmt.Printf("fleet key rotated %s", time.UnixMilli(cfg.KeyAt).Format(time.DateTime))
-		if cfg.PrevUntil > time.Now().UnixMilli() {
-			fmt.Printf("; the previous key is accepted until %s", time.UnixMilli(cfg.PrevUntil).Format(time.DateTime))
+	if m, err := config.LoadMachine(""); err == nil {
+		by := "the fleet root"
+		if len(m.Chain) > 1 {
+			by = config.CertMachineID(m.Chain[1])
 		}
-		fmt.Println()
+		fmt.Printf("identity: this machine's own certificate (key %s), vouched for by %s\n", config.KeyFingerprint(m.Leaf), by)
+	} else {
+		fmt.Println("identity: the shared fleet certificate from before 0.3.23 (restart the daemon to migrate)")
+	}
+	if cfg.LegacyUntil > time.Now().UnixMilli() {
+		fmt.Printf("migration: peers may still present the shared certificate until %s; fleet.key is deleted once every member has its own\n", time.UnixMilli(cfg.LegacyUntil).Format(time.DateTime))
+	}
+	if r := cfg.Reissue; r != nil && r.Until > time.Now().UnixMilli() {
+		fmt.Printf("re-issue: certificates re-issued %s; the previous root is accepted until %s\n", time.UnixMilli(r.At).Format(time.DateTime), time.UnixMilli(r.Until).Format(time.DateTime))
+	}
+	if len(cfg.RevokedKeys) > 0 {
+		fmt.Printf("revoked keys: %d\n", len(cfg.RevokedKeys))
 	}
 	if len(peers) > 0 {
 		fmt.Println()
@@ -542,16 +563,33 @@ func cmdJoin(args []string) error {
 		return err
 	}
 	c := config.New(*machineID, *name, *port, *advertise)
-	joined, via, err := mesh.JoinFleet(inv, c.MachineID, c.Name, c.Advertise)
+	// This machine's own key: only its public half travels, and the inviter certifies it.
+	key, keyPEM, err := config.NewMachineKey()
+	if err != nil {
+		return err
+	}
+	pubPEM, err := config.PublicKeyPEM(&key.PublicKey)
+	if err != nil {
+		return err
+	}
+	joined, via, err := mesh.JoinFleet(inv, c.MachineID, c.Name, c.Advertise, string(pubPEM))
 	if err != nil {
 		return fmt.Errorf("join via %s failed: %w", inv.Name, err)
 	}
-	// The key set includes the rotation bridge certificates while a grace period runs.
-	if err := config.InstallKeys("", []byte(joined.Cert), []byte(joined.Key), []byte(joined.Cross), []byte(joined.Prev)); err != nil {
+	if joined.Chain == "" {
+		return fmt.Errorf("%s runs a vineyardd older than this one, which would hand out the shared fleet key; update it first", inv.Name)
+	}
+	if err := os.MkdirAll(config.Dir(), 0o700); err != nil {
 		return err
 	}
+	if err := os.WriteFile(config.Path(config.CertFile), []byte(joined.Cert), 0o600); err != nil {
+		return err
+	}
+	if err := config.WriteMachine("", keyPEM, []byte(joined.Chain)); err != nil {
+		return err
+	}
+	_ = config.RetireFleetKey("") // a --force rejoin must not keep an old shared key around
 	c.Added = joined.Added
-	c.KeyAt, c.PrevUntil = joined.KeyAt, joined.PrevUntil
 	for _, p := range joined.Peers {
 		c.AddPeer(p)
 	}
@@ -610,4 +648,44 @@ func cmdWeb(args []string) error {
 	defer stop()
 	<-ctx.Done()
 	return r.Set("", nil)
+}
+
+// cmdKeygen makes this machine's key if it has none and prints the public key, for Add Machine over
+// SSH: the setting-up machine certifies it and copies back only certificates.
+func cmdKeygen() error {
+	keyPath := config.Path(config.MachineKeyFile)
+	var pub any
+	if b, err := os.ReadFile(keyPath); err == nil {
+		k, err := parseECKey(b)
+		if err != nil {
+			return fmt.Errorf("%s: %w", keyPath, err)
+		}
+		pub = &k.PublicKey
+	} else {
+		key, keyPEM, err := config.NewMachineKey()
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(config.Dir(), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+			return err
+		}
+		pub = &key.PublicKey
+	}
+	out, err := config.PublicKeyPEM(pub)
+	if err != nil {
+		return err
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+func parseECKey(b []byte) (*ecdsa.PrivateKey, error) {
+	blk, _ := pem.Decode(b)
+	if blk == nil {
+		return nil, errors.New("not PEM")
+	}
+	return x509.ParseECPrivateKey(blk.Bytes)
 }

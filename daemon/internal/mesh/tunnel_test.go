@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -15,8 +16,9 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
 )
 
-// meshNode builds a daemon listening on loopback. All nodes in a test share VINEYARD_DIR, and so the
-// fleet certificate; call newMeshDir first.
+// meshNode builds a daemon listening on loopback. Nodes start from the fleet created by newMeshDir
+// (the shared key from before 0.3.23) in a key directory of their own, so each migrates to its own
+// machine certificate as a real daemon would.
 func meshNode(t *testing.T, id string, peers ...protocol.PeerAddr) (*Node, string) {
 	t.Helper()
 	addr := "127.0.0.1:" + strconv.Itoa(freePort(t))
@@ -24,7 +26,17 @@ func meshNode(t *testing.T, id string, peers ...protocol.PeerAddr) (*Node, strin
 	cfg.Listen = addr
 	cfg.Peers = peers
 	cfg.Uplink = "off" // tests that want uplinks turn them on
-	n, err := New(Options{Config: cfg, Version: "test", Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
+	dir := t.TempDir()
+	for _, f := range []string{config.CertFile, config.KeyFile} {
+		b, err := os.ReadFile(config.Path(f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, f), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := New(Options{Config: cfg, Version: "test", Dir: dir, Log: log.New(os.Stderr, id+" ", 0), Collect: func() model.Snapshot { return model.Snapshot{} }})
 	if err != nil {
 		t.Fatal(err)
 	}

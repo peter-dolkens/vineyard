@@ -90,6 +90,8 @@ type link struct {
 	uplink     bool
 	lastPing   time.Time
 	onRegister func() // called once register has accepted the link (uplink.go waits on it)
+	// ident is who the far end is, from its certificate chain (identity.go), once admitted.
+	ident identity
 }
 
 type peerState struct {
@@ -138,6 +140,12 @@ func (pr pendingReq) fail(msg string) {
 type Node struct {
 	opts Options
 	cfg  *config.Config
+	// me is this machine's own identity (machine.key / machine.crt), nil on a machine still on the
+	// shared certificate. Read under mu.
+	me *config.Machine
+	// pendingVouch is a new certificate for us that a member sent ahead of a removal: installed only
+	// once our own chain is actually revoked, so no member can re-parent us on a whim.
+	pendingVouch *protocol.Vouch
 	// serverTLS is the listener's configuration; it hands each handshake the current strict or
 	// lenient one. The three below change when a key rotation lands or its grace period ends, so
 	// they are read under mu (see client, strict, rebuildTLS in rotate.go).
@@ -173,12 +181,16 @@ type Node struct {
 }
 
 func New(opts Options) (*Node, error) {
+	if opts.Log == nil {
+		opts.Log = log.Default()
+	}
+	if opts.Dir != "" {
+		opts.Config.SetDir(opts.Dir) // a daemon with its own key directory keeps its config there too
+	}
+	migrateIdentity(opts.Config, opts.Dir, opts.Log.Printf)
 	srv, cli, err := fleetTLS(opts.Dir, opts.Config.PrevUntil)
 	if err != nil {
 		return nil, fmt.Errorf("load fleet certificate: %w", err)
-	}
-	if opts.Log == nil {
-		opts.Log = log.Default()
 	}
 	n := &Node{
 		opts:      opts,
@@ -193,6 +205,11 @@ func New(opts Options) (*Node, error) {
 		wake:      make(chan struct{}, 1),
 	}
 	n.setTLSLocked(srv, cli)
+	if config.HasMachine(opts.Dir) {
+		if n.me, err = config.LoadMachine(opts.Dir); err != nil {
+			return nil, fmt.Errorf("load machine certificate: %w", err)
+		}
+	}
 	// Closed by default: only while an invite is outstanding may a client connect without a certificate.
 	n.serverTLS = &tls.Config{
 		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
@@ -259,6 +276,7 @@ func (n *Node) acceptLoop(ctx context.Context, ln net.Listener) {
 // acceptOne completes the TLS handshake and routes the connection: authenticated peers/viewers go
 // to serve, certificate-less connections may only attempt a join.
 func (n *Node) acceptOne(raw net.Conn) {
+	var revokedConn net.Conn
 	tc, ok := raw.(*tls.Conn)
 	if !ok {
 		raw.Close()
@@ -274,6 +292,15 @@ func (n *Node) acceptOne(raw net.Conn) {
 		n.handleJoin(&link{conn: NewConn(raw), outbound: false})
 		return
 	}
+	// Relay requests and probes are served before any hello, so check the identity here too: a
+	// revoked machine gets nothing, not even a relay.
+	if _, err := n.allowed(tc); err != nil && !errors.Is(err, errRevoked) {
+		n.logf("%s: refused: %v", tc.RemoteAddr(), err)
+		raw.Close()
+		return
+	} else if err != nil {
+		revokedConn = tc // an ordinary link may still be offered a vouch in serveFirst
+	}
 	// The first line says what this connection is: a hello for an ordinary link, or one of the relay
 	// messages in tunnel.go.
 	rd := bufio.NewReaderSize(tc, firstLineMax)
@@ -284,6 +311,11 @@ func (n *Node) acceptOne(raw net.Conn) {
 	}
 	var t protocol.Tunnel
 	_ = json.Unmarshal(first, &t)
+	if revokedConn != nil && t.T != "hello" {
+		n.logf("%s: refused %s: %v", tc.RemoteAddr(), t.T, errRevoked)
+		raw.Close()
+		return
+	}
 	switch t.T {
 	case "tunnel":
 		n.handleTunnel(tc, rd, t)
@@ -468,12 +500,20 @@ func (n *Node) selfAddrs() []string {
 
 // hello must be called without n.mu held.
 func (n *Node) hello(role string) protocol.Hello {
+	revoked, vouches, reissue := n.identityGossip()
 	return protocol.Hello{
 		T: "hello", Role: role, MachineID: n.cfg.MachineID, Name: n.cfg.Name,
 		Version: n.opts.Version, Protocol: protocol.Version, Listen: n.cfg.Advertise, Addrs: n.selfAddrs(),
 		Peers: n.knownPeers(), Uplinks: n.uplinks(), Removed: n.removals(), Added: n.cfg.Added,
-		KeyAt: n.keyAt(),
+		KeyAt: n.keyAt(), RevokedKeys: revoked, Vouches: vouches, Reissue: reissue,
 	}
+}
+
+// identityGossip is what every hello passes on about identities: revoked keys and vouches.
+func (n *Node) identityGossip() ([]string, []protocol.Vouch, *protocol.Reissue) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.cfg.RevokedKeys), slices.Clone(n.cfg.Vouches), n.cfg.Reissue
 }
 
 // saveConfig writes config.json under mu, so it never races a change to the config in memory.
@@ -506,9 +546,11 @@ func (n *Node) removals() []protocol.Removal {
 // applyRemovalLocked takes a removal (ours or a peer's) and, if it stands, drops the machine: its
 // link, its peer state, and its entry in the view. Returns true if anything changed.
 func (n *Node) applyRemovalLocked(r protocol.Removal) bool {
+	revoked := n.revokeKeysLocked(r.Keys)
 	if !n.cfg.ApplyRemoval(r) {
-		return false
+		return revoked
 	}
+	delete(n.cfg.MemberKeys, r.MachineID)
 	if p := n.peers[r.MachineID]; p != nil {
 		if p.link != nil {
 			p.link.conn.Close()
@@ -627,6 +669,13 @@ func (n *Node) serveFirst(l *link, first []byte) {
 	// Handshake.
 	var h protocol.Hello
 	if json.Unmarshal(first, &h) != nil || h.T != "hello" {
+		// A member refusing our revoked chain may answer with a vouch instead: a new certificate for
+		// our key. Take it; the next connection presents it.
+		var v protocol.VouchMsg
+		if json.Unmarshal(first, &v) == nil && v.T == "vouch" && v.Vouch.MachineID == n.cfg.MachineID {
+			n.handleVouchMsg(v.Vouch, true) // a member refused our chain as revoked: take the way back in
+			return
+		}
 		n.logf("%s: expected hello", l.conn.RemoteAddr())
 		return
 	}
@@ -636,6 +685,10 @@ func (n *Node) serveFirst(l *link, first []byte) {
 	}
 	if h.MachineID == n.cfg.MachineID && h.Role == "peer" {
 		n.logf("%s: rejected peer claiming our own machine id %q", l.conn.RemoteAddr(), h.MachineID)
+		return
+	}
+	if err := n.admit(l, h); err != nil {
+		n.logf("%s (%s %q): refused: %v", l.conn.RemoteAddr(), h.Role, h.MachineID, err)
 		return
 	}
 	if !l.outbound {
@@ -747,6 +800,19 @@ func (n *Node) register(l *link, h protocol.Hello) {
 			removedAny, persist = true, true
 		}
 	}
+	if n.revokeKeysLocked(h.RevokedKeys) {
+		persist = true
+	}
+	vouched, mine := n.mergeVouchesLocked(h.Vouches)
+	if vouched {
+		persist = true
+	}
+	if mine != nil && !n.ownChainRevokedLocked() {
+		n.pendingVouch, mine = mine, nil // not needed until our chain is revoked (see handleVouchMsg)
+	}
+	if n.recordMemberLocked(l.peerID, l.ident) {
+		persist = true
+	}
 	probe = append(probe, learnedProbe...)
 	if persist {
 		if err := n.cfg.Save(); err != nil {
@@ -795,9 +861,22 @@ func (n *Node) register(l *link, h protocol.Hello) {
 	if removedAny {
 		n.refreshViewers()
 	}
-	if n.keyAt() > h.KeyAt {
-		go n.sendRekey(l) // it missed a rotation (offline at the time); this is its catch-up
+	if h.Reissue != nil {
+		r := *h.Reissue
+		go func() {
+			if err := n.applyReissue(r, false); err != nil {
+				n.logf("re-issue from %s refused: %v", l.peerID, err)
+			}
+		}()
 	}
+	if mine != nil {
+		go func() {
+			if err := n.installVouch(*mine); err != nil {
+				n.logf("vouch for this machine refused: %v", err)
+			}
+		}()
+	}
+	go n.maybeRetireSharedKey()
 	for _, q := range probe {
 		go n.probeDirect(q)
 	}
@@ -1126,6 +1205,10 @@ func (n *Node) maintenanceLoop(ctx context.Context) {
 		n.reconcileSubscriptions()
 		n.uplinkTick()
 		n.graceTick()
+		n.reissueTick()
+		if tick%60 == 0 {
+			n.maybeRetireSharedKey()
+		}
 		if tick%int(pingEvery/time.Second) == 0 {
 			n.pingAndReap()
 		}
@@ -1283,6 +1366,20 @@ func (n *Node) dispatch(l *link, b []byte) {
 		if json.Unmarshal(b, &m) == nil {
 			go n.handleRekey(l, m.Keys)
 		}
+	case "reissue":
+		var m protocol.ReissueMsg
+		if json.Unmarshal(b, &m) == nil && l.role == "peer" {
+			go func() {
+				if err := n.applyReissue(m.Reissue, false); err != nil {
+					n.logf("re-issue from %s refused: %v", l.peerID, err)
+				}
+			}()
+		}
+	case "vouch":
+		var m protocol.VouchMsg
+		if json.Unmarshal(b, &m) == nil && (l.role == "peer" || l.role == "") {
+			go n.handleVouchMsg(m.Vouch, false)
+		}
 	case "removed":
 		var m protocol.Removed
 		if json.Unmarshal(b, &m) != nil || l.role != "peer" {
@@ -1415,6 +1512,21 @@ func (n *Node) handleRequest(l *link, r protocol.Request) {
 		}()
 		return
 	}
+	if r.Op == "certify" {
+		// Certifying a new machine's key admits it to the fleet: only a viewer on this machine (VS Code
+		// setting it up over SSH) may ask, and never through a relay.
+		if l.role != "viewer" || (r.Target != "" && r.Target != n.cfg.MachineID) {
+			_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: false, Error: "only a viewer on this machine may certify a new machine"})
+			return
+		}
+		data, err := n.certify(r.Args)
+		if err != nil {
+			_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: false, Error: err.Error()})
+			return
+		}
+		_ = l.conn.Send(protocol.Response{T: "res", ID: r.ID, OK: true, Data: data})
+		return
+	}
 	if r.Op == "dialback" && l.role == "peer" && (r.Target == "" || r.Target == n.cfg.MachineID) {
 		go n.answerDialback(l, r) // dials out; keep this link's read loop free meanwhile
 		return
@@ -1464,10 +1576,39 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return json.Marshal(map[string]any{"code": code, "expiresInSeconds": int(inviteTTL.Seconds())})
+	case "descendants":
+		// The machines removing this one would also revoke, unless they are vouched for again.
+		var a protocol.PeerAddr
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"machines": n.descendants(a.MachineID)})
 	case "addpeer", "removepeer":
 		var a protocol.PeerAddr
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
+		}
+		// removepeer's Keep: descendants to vouch for again, so they stay in the fleet.
+		var keepArgs struct {
+			Keep []string `json:"keep"`
+		}
+		_ = json.Unmarshal(r.Args, &keepArgs)
+		var vouches []protocol.Vouch
+		if r.Op == "removepeer" {
+			n.mu.Lock()
+			key := n.cfg.MemberKeys[a.MachineID].Key
+			own := n.me != nil && key != "" && slices.Contains(chainKeys(n.me.Chain), key)
+			n.mu.Unlock()
+			if own {
+				return nil, fmt.Errorf("this machine's own certificate was vouched for by %s, so removing it from here would lock this machine out too; remove it from a machine that was not added through it", a.MachineID)
+			}
+			for _, id := range keepArgs.Keep {
+				v, err := n.vouchFor(id)
+				if err != nil {
+					return nil, fmt.Errorf("cannot keep %s: %w", id, err)
+				}
+				vouches = append(vouches, v)
+			}
 		}
 		n.mu.Lock()
 		var changed bool
@@ -1487,7 +1628,13 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			}
 		} else {
 			removal = protocol.Removal{MachineID: a.MachineID, At: time.Now().UnixMilli()}
-			changed = n.applyRemovalLocked(removal)
+			if k := n.cfg.MemberKeys[a.MachineID].Key; k != "" {
+				removal.Keys = []string{k}
+			}
+			if vc, _ := n.mergeVouchesLocked(vouches); vc {
+				changed = true
+			}
+			changed = n.applyRemovalLocked(removal) || changed
 		}
 		var peerLinks []*link
 		if r.Op == "removepeer" && changed {
@@ -1498,8 +1645,12 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			}
 		}
 		n.mu.Unlock()
-		// Tell whoever is connected now; everyone else hears it in hellos.
+		// Tell whoever is connected now; everyone else hears it in hellos. Vouches go first, so a kept
+		// machine linked to us switches certificates before its old chain is revoked.
 		for _, l := range peerLinks {
+			for _, v := range vouches {
+				_ = l.conn.Send(protocol.VouchMsg{T: "vouch", Vouch: v})
+			}
 			_ = l.conn.Send(protocol.Removed{T: "removed", Removals: []protocol.Removal{removal}})
 		}
 		if changed {
