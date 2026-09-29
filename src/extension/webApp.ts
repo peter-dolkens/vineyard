@@ -42,6 +42,7 @@ export class WebAppSync implements vscode.Disposable {
   private retryAt = new Map<string, number>();
   private timer: NodeJS.Timeout | undefined;
   private asking = false;
+  private serving: boolean | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -49,13 +50,24 @@ export class WebAppSync implements vscode.Disposable {
     private readonly log: vscode.OutputChannel,
   ) {
     this.subs.push(
-      fleet.onDidChange(() => this.schedule()),
+      fleet.onDidChange(() => {
+        this.schedule();
+        this.updateServing();
+      }),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('vineyard.webApp')) void this.settingChanged();
       }),
     );
     // Turned on elsewhere (Settings Sync, settings.json) but never confirmed here: ask once now.
     if (this.desired().on && !this.acknowledged()) void this.confirmOn();
+  }
+
+  /** vineyard.webAppServing: some machine serves the app, whichever VS Code turned it on. */
+  private updateServing(): void {
+    const serving = this.fleet.machines().some((m) => m.online && !!m.entry.snapshot.webApp?.urls?.length);
+    if (serving === this.serving) return;
+    this.serving = serving;
+    void vscode.commands.executeCommand('setContext', 'vineyard.webAppServing', serving);
   }
 
   private desired(): Desired {
@@ -138,12 +150,13 @@ export class WebAppSync implements vscode.Disposable {
 
   /** Vineyard: Pair a Phone with the Web App: a single-use code from that machine's app. */
   async pair(m: MachineView): Promise<void> {
-    if (!this.desired().on || !this.acknowledged()) {
+    const st = m.entry.snapshot.webApp;
+    // A machine already serving the app (turned on from any VS Code) can pair a phone from here.
+    if (!st?.urls?.length && (!this.desired().on || !this.acknowledged())) {
       const open = await vscode.window.showInformationMessage('The web app is off. Turn on vineyard.webApp.enabled first.', 'Open Setting');
       if (open) await vscode.commands.executeCommand('workbench.action.openSettings', 'vineyard.webApp.enabled');
       return;
     }
-    const st = m.entry.snapshot.webApp;
     if (!st?.urls?.length) throw new Error(st?.error ? `The web app on ${m.name} could not start: ${st.error}` : `The web app is not running on ${m.name} yet.`);
     const p = await this.fleet.client.request<PairCode>('webpair', m.id, undefined, 10_000);
     const code = `${p.code.slice(0, 4)}-${p.code.slice(4)}`;

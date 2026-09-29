@@ -260,7 +260,8 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const item = new vscode.TreeItem(m.name, hasChildren ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None);
     item.id = `machine:${m.id}`;
     item.iconPath = machineIcon(m);
-    item.contextValue = m.local ? 'machine-local' : m.online ? 'machine' : 'machine-offline';
+    // "-web" marks a machine serving the web app, for Pair a Phone and Web App Devices.
+    item.contextValue = (m.local ? 'machine-local' : m.online ? 'machine' : 'machine-offline') + (m.online && m.entry.snapshot.webApp?.urls?.length ? '-web' : '');
 
     const live = snap.agents.filter((a) => a.alive);
     const limit = usageWarning(snap.usage);

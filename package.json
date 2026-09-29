@@ -318,6 +318,11 @@
           "group": "2_setup@3"
         },
         {
+          "command": "vineyard.pairWebApp",
+          "when": "view == vineyard.fleet && (config.vineyard.webApp.enabled || vineyard.webAppServing)",
+          "group": "2_setup@4"
+        },
+        {
           "command": "vineyard.updateAllDaemons",
           "when": "view == vineyard.fleet",
           "group": "2_setup@4"
@@ -356,7 +361,7 @@
         },
         {
           "command": "vineyard.removeMachine",
-          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-local",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem !~ /^machine-local/",
           "group": "2_remove@1"
         },
         {
@@ -481,12 +486,12 @@
         },
         {
           "command": "vineyard.pairWebApp",
-          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline && config.vineyard.webApp.enabled",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine.*-web$/",
           "group": "1_manage@4"
         },
         {
           "command": "vineyard.webAppDevices",
-          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline && config.vineyard.webApp.enabled",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine.*-web$/",
           "group": "1_manage@5"
         }
       ],
@@ -521,11 +526,11 @@
         },
         {
           "command": "vineyard.webAppDevices",
-          "when": "config.vineyard.webApp.enabled"
+          "when": "(config.vineyard.webApp.enabled || vineyard.webAppServing)"
         },
         {
           "command": "vineyard.pairWebApp",
-          "when": "config.vineyard.webApp.enabled"
+          "when": "(config.vineyard.webApp.enabled || vineyard.webAppServing)"
         }
       ]
     },
