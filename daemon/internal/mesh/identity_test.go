@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,6 +88,30 @@ func TestKeptDescendantIsVouchedForAndStays(t *testing.T) {
 		defer orchard.mu.Unlock()
 		return len(orchard.me.Chain) > 1 && config.CertMachineID(orchard.me.Chain[1]) == "atelier"
 	})
+	// The same vouch can arrive by several paths at once; installing it again, concurrently, must
+	// leave machine.crt whole (it once raced into an empty file and a revoked certificate on the wire).
+	atelier.mu.Lock()
+	var v protocol.Vouch
+	for _, x := range atelier.cfg.Vouches {
+		if x.MachineID == "orchard" {
+			v = x
+		}
+	}
+	atelier.mu.Unlock()
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := orchard.installVouch(v); err != nil {
+				t.Errorf("installing the vouch again: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if _, err := config.LoadMachine(orchard.opts.Dir); err != nil {
+		t.Fatalf("machine.crt after concurrent installs: %v", err)
+	}
 	waitFor(t, "orchard back in with its new certificate", func() bool { return linkVia(atelier, "orchard") == "direct" })
 }
 

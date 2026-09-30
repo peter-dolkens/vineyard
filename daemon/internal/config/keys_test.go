@@ -2,7 +2,11 @@ package config
 
 import (
 	"crypto/x509"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -44,5 +48,36 @@ func TestNewFleetKeyBridgesToThePreviousKey(t *testing.T) {
 	}
 	if self.Subject.String() == prev.Subject.String() {
 		t.Fatal("generations need distinct subjects")
+	}
+}
+
+// Writers replacing one file at the same time never leave it partial or empty, nor fail each other.
+func TestWriteFileAtomicConcurrent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "machine.crt")
+	want := map[string]bool{}
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := range 16 {
+		data := strings.Repeat(fmt.Sprintf("writer %d\n", i), 4096)
+		want[data] = true
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- WriteFileAtomic(path, []byte(data))
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !want[string(got)] {
+		t.Fatalf("file holds %d bytes that no single writer wrote (err %v)", len(got), err)
+	}
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) > 0 {
+		t.Fatalf("temporary files left behind: %v", left)
 	}
 }

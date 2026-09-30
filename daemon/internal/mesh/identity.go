@@ -335,10 +335,15 @@ func (n *Node) installVouch(v protocol.Vouch) error {
 	if err != nil {
 		return err
 	}
+	n.installMu.Lock()
+	defer n.installMu.Unlock()
 	n.mu.Lock()
 	me := n.me
 	revoked := n.revokedLocked()
 	n.mu.Unlock()
+	if me != nil && sameChain(me.Chain, certs) {
+		return nil // already installed, by another path that delivered the same vouch
+	}
 	if me == nil || config.KeyFingerprint(certs[0]) != config.KeyFingerprint(me.Leaf) {
 		return errors.New("the vouch is not for this machine's key")
 	}
@@ -373,6 +378,18 @@ func (n *Node) installVouch(v protocol.Vouch) error {
 	}
 	n.logf("installed a new certificate for this machine, vouched for by %s", config.CertMachineID(certs[min(1, len(certs)-1)]))
 	return nil
+}
+
+func sameChain(a, b []*x509.Certificate) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !a[i].Equal(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // offerVouch answers a connection refused for a revoked chain with a vouch we carry for it, if its

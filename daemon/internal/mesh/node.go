@@ -146,6 +146,10 @@ type Node struct {
 	// pendingVouch is a new certificate for us that a member sent ahead of a removal: installed only
 	// once our own chain is actually revoked, so no member can re-parent us on a whim.
 	pendingVouch *protocol.Vouch
+	// installMu serialises installing a vouch: the same one can arrive by several paths at once (the
+	// vouch message, a hello, a refused connection), and two writers replacing machine.crt together
+	// could leave it empty.
+	installMu sync.Mutex
 	// serverTLS is the listener's configuration; it hands each handshake the current strict or
 	// lenient one. The three below change when a key rotation lands or its grace period ends, so
 	// they are read under mu (see client, strict, rebuildTLS in rotate.go).

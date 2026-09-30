@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -286,15 +287,36 @@ func WriteMachine(dir string, keyPEM, chainPEM []byte) error {
 		if len(f.data) == 0 {
 			continue
 		}
-		p := PathIn(dir, f.name)
-		if err := os.WriteFile(p+".tmp", f.data, 0o600); err != nil {
-			return err
-		}
-		if err := os.Rename(p+".tmp", p); err != nil {
+		if err := WriteFileAtomic(PathIn(dir, f.name), f.data); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// WriteFileAtomic replaces path with data (mode 0600) through a temporary file of its own, so a reader
+// never sees a partial file and two writers cannot truncate each other's.
+func WriteFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o600)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+	}
+	return werr
 }
 
 // Roots are the trusted fleet roots in fleet.crt (more than one while a re-issue is under way).

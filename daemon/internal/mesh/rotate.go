@@ -323,10 +323,7 @@ func (n *Node) reissueTick() {
 }
 
 func writeFileAtomic(path string, data []byte) error {
-	if err := os.WriteFile(path+".tmp", data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(path+".tmp", path)
+	return config.WriteFileAtomic(path, data)
 }
 
 // handleRekey refuses a shared fleet key pushed by a daemon from before 0.3.23: machines with their
