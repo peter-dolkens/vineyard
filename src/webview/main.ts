@@ -292,8 +292,9 @@ document.getElementById('btnInfo')!.onclick = () => {
 };
 // One button, like the Claude Code pane's: Send when the session can take a message, Pause (interrupt
 // the turn) while a managed session is mid-turn, and Stop (end the session, asks first) once an
-// interrupt was asked for and the turn is still running. Enter always sends: a busy session reads the
-// message between tool calls.
+// interrupt was asked for and the turn is still running. Anything typed or attached turns it back to
+// Send, since a busy session reads the message between tool calls; on a phone, where Return makes a
+// new line, the button is the only way to send one. Enter always sends.
 type ButtonMode = 'send' | 'sending' | 'pause' | 'stop';
 const BUTTON: Record<ButtonMode, { icon: string; title: string }> = {
   send: { icon: 'send', title: 'Send (Enter)' },
@@ -305,8 +306,11 @@ function buttonMode(): ButtonMode {
   if (sending) return 'sending';
   if (!agent || !machine) return 'send';
   const managedLive = !!agent.managed && !agent.managed.exited && machine.online && agent.alive;
-  if (managedLive && BUSY.has(agent.state)) return interruptAt ? 'stop' : 'pause';
+  if (managedLive && BUSY.has(agent.state) && !hasDraft()) return interruptAt ? 'stop' : 'pause';
   return 'send';
+}
+function hasDraft(): boolean {
+  return !!input.value.trim() || attachments.length > 0;
 }
 function renderButton() {
   const mode = buttonMode();
@@ -350,6 +354,7 @@ input.addEventListener('keydown', (e) => {
 input.addEventListener('input', () => {
   autoGrow();
   bar.onInput(input.value); // "/" at the start opens the actions menu and filters it as you type
+  renderButton(); // a draft turns Pause back into Send
 });
 // Screenshots and files pasted into the box or dropped on the composer queue as attachments.
 wireFileInputs(input, document.querySelector<HTMLElement>('.composer-box')!, () => !input.disabled, (m) => vscode.postMessage(m), (text) => showBanner(text, 'error'));
@@ -383,6 +388,7 @@ function send() {
   input.value = '';
   autoGrow();
   bar.onInput(''); // a cleared box ends any "/" menu dismissal
+  renderButton();
 }
 
 function scrollToBottom() {
@@ -1272,6 +1278,7 @@ window.addEventListener('message', (ev) => {
       for (const id of thumbnails.keys()) if (!ids.has(id)) thumbnails.delete(id);
       attachments = items.map((it) => ({ ...it, thumb: thumbnails.get(it.id) }));
       bar.setAttachments(attachments);
+      renderButton();
       break;
     }
     case 'sending':
