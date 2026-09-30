@@ -15,6 +15,8 @@ export interface Settings extends ViewPrefs {
   transcriptLines: number;
   /** Pop a banner in the app when an agent starts waiting for you. */
   notifyAttention: boolean;
+  /** Experimental: the Claude account picker on each machine (vineyard.experimental.claudeAccounts). */
+  claudeAccounts: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -29,6 +31,7 @@ export const DEFAULTS: Settings = {
   defaultPermissionMode: '',
   transcriptLines: 400,
   notifyAttention: true,
+  claudeAccounts: false,
 };
 
 const KEY = 'vineyard.web.settings';

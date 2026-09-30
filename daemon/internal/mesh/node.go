@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/accounts"
 	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
@@ -58,6 +59,8 @@ type Options struct {
 	Managed *managed.Manager
 	// Auth relays `claude auth login` for viewers on other machines (optional).
 	Auth *auth.Manager
+	// Accounts switches the Claude account this machine is signed in as (optional, experimental).
+	Accounts *accounts.Store
 	// Dir holds the fleet key files; empty means config.Dir(). Tests give each daemon its own.
 	Dir string
 	// WebApp serves the mobile web app when the config says so (optional; see package web).
@@ -1884,6 +1887,12 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return json.RawMessage(`{"ok":true}`), nil
 		}
 		return nil, fmt.Errorf("unknown login action %q", a.Action)
+	case "accounts":
+		var a protocol.AccountsArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.handleAccounts(a)
 	case "sessions":
 		var a protocol.SessionsArgs
 		if len(r.Args) > 0 {
@@ -2211,6 +2220,78 @@ func trimErr(err error) string {
 // handleWebApp carries out the web app ops: turning it on or off as the fleet's setting says (the
 // later choice wins, so two VS Code windows with different settings cannot flip it back and forth),
 // minting a pairing code, and listing or signing out paired devices.
+// handleAccounts is the Claude account picker. Tokens never leave this machine; replies carry labels.
+func (n *Node) handleAccounts(a protocol.AccountsArgs) (json.RawMessage, error) {
+	st := n.opts.Accounts
+	if st == nil {
+		return nil, errors.New("account switching is not available on this daemon")
+	}
+	var latest *model.Usage
+	if n.opts.Managed != nil {
+		latest = n.opts.Managed.LatestUsage()
+	}
+	reply := func(list []accounts.Account, err error) (json.RawMessage, error) {
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"accounts": list})
+	}
+	switch a.Action {
+	case "list":
+		return reply(st.List(latest))
+	case "switch":
+		list, err := st.Switch(a.Key, latest)
+		if err == nil {
+			n.logf("claude account switched")
+			if n.opts.Managed != nil {
+				n.opts.Managed.ForgetUsage()
+			}
+			n.kickCollector()
+		}
+		return reply(list, err)
+	case "remove":
+		return reply(st.Remove(a.Key))
+	case "add":
+		if a.Type != "subscription" {
+			return nil, fmt.Errorf("unsupported account type %q", a.Type)
+		}
+		if n.opts.Auth == nil {
+			return nil, errors.New("sign-in relay is disabled on this daemon")
+		}
+		switch a.Step {
+		case "start":
+			// Save the signed-in account first: the sign-in replaces it in Claude Code's store.
+			if err := st.SaveCurrent(latest); err != nil {
+				return nil, err
+			}
+			id, url, err := n.opts.Auth.Start(false)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]any{"id": id, "url": url})
+		case "code":
+			msg, err := n.opts.Auth.Code(a.ID, a.Code)
+			if err != nil {
+				return nil, err
+			}
+			if n.opts.Managed != nil {
+				n.opts.Managed.ForgetUsage()
+			}
+			n.kickCollector()
+			list, err := st.List(nil)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(map[string]any{"ok": true, "message": msg, "accounts": list})
+		case "cancel":
+			n.opts.Auth.Cancel(a.ID)
+			return json.RawMessage(`{"ok":true}`), nil
+		}
+		return nil, fmt.Errorf("unknown add step %q", a.Step)
+	}
+	return nil, fmt.Errorf("unknown accounts action %q", a.Action)
+}
+
 func (n *Node) handleWebApp(r protocol.Request) (json.RawMessage, error) {
 	w := n.opts.WebApp
 	if w == nil {

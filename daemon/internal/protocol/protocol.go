@@ -401,6 +401,19 @@ type LoginArgs struct {
 	Console bool   `json:"console,omitempty"` // Anthropic Console (API billing) instead of a Claude subscription
 }
 
+// AccountsArgs drives the Claude account picker (experimental): "list" returns {accounts}; "switch"
+// and "remove" take Key and return {accounts}; "add" signs in one more account of Type (only
+// "subscription" for now) on top of the current one, which is saved first: Step "start" returns
+// {id, url}, "code" delivers the pasted code and returns {message, accounts}, "cancel" abandons it.
+type AccountsArgs struct {
+	Action string `json:"action"`
+	Key    string `json:"key,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Step   string `json:"step,omitempty"`
+	ID     string `json:"id,omitempty"`
+	Code   string `json:"code,omitempty"`
+}
+
 // RenameArgs gives a session a custom title (what /rename does in Claude Code).
 type RenameArgs struct {
 	SessionID string `json:"sessionId"`

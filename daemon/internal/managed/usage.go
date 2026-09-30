@@ -3,6 +3,7 @@ package managed
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 )
@@ -76,7 +77,7 @@ func (m *Manager) LatestUsage() *model.Usage {
 	defer m.mu.Unlock()
 	var best *model.Usage
 	for _, p := range m.procs {
-		if p.info.Usage != nil && (best == nil || p.info.Usage.At > best.At) {
+		if p.info.Usage != nil && p.info.Usage.At >= m.usageFloor && (best == nil || p.info.Usage.At > best.At) {
 			best = p.info.Usage
 		}
 	}
@@ -85,6 +86,14 @@ func (m *Manager) LatestUsage() *model.Usage {
 	}
 	cp := *best
 	return &cp
+}
+
+// ForgetUsage drops the limit reports seen so far: the machine has just switched Claude accounts,
+// and they describe the previous one.
+func (m *Manager) ForgetUsage() {
+	m.mu.Lock()
+	m.usageFloor = time.Now().UnixMilli()
+	m.mu.Unlock()
 }
 
 // accountInfo is what the initialize handshake says about who the session is signed in as.

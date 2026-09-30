@@ -5,6 +5,7 @@
 
 import type { Agent } from '../core/model.ts';
 import { agentLabel, basename, tildify } from '../core/format.ts';
+import { ACCOUNT_TYPES, accountDetail, accountExpired, accountTitle, type AccountsReply, type ClaudeAccount } from '../core/accounts.ts';
 import type { SettingsDefaults } from '../extension/sessionPrefs.ts';
 import type { Api, ServerInfo } from './api.ts';
 import type { FleetStore, MachineView } from './store.ts';
@@ -218,6 +219,96 @@ export class Flows {
           { label: 'Anthropic Console', detail: 'API usage billing', run: () => go(true) },
         ],
         undefined,
+        resolve,
+      );
+    });
+  }
+
+  /**
+   * Which Claude account a machine is signed in as (experimental): switch to one it keeps signed in,
+   * add one more, or forget one. Only labels travel; the tokens stay on that machine.
+   */
+  async accounts(m: MachineView): Promise<void> {
+    if (!settings().claudeAccounts) throw new Error('Switching Claude accounts is experimental: turn it on in Settings first.');
+    if (!m.online) throw new Error(`${m.name} is offline`);
+    const { accounts } = await this.api.request<AccountsReply>('accounts', m.id, { action: 'list' }, 30_000);
+    const others = accounts.filter((a) => !a.active);
+    await new Promise<void>((resolve, reject) => {
+      const go = (p: Promise<void>) => p.then(resolve, reject);
+      actionSheet(
+        `Claude account on ${m.name}`,
+        [
+          ...accounts.map((a) => ({
+            label: accountTitle(a),
+            detail: [a.active ? 'Signed in now' : '', accountDetail(a)].filter(Boolean).join(' · ') || undefined,
+            icon: a.active ? 'check' : accountExpired(a) ? 'warning' : 'account',
+            disabled: a.active,
+            run: () => go(accountExpired(a) ? this.addAccount(m) : this.switchAccount(m, a)),
+          })),
+          { label: 'Add account…', icon: 'add', run: () => go(this.addAccount(m)) },
+          ...(others.length ? [{ label: 'Forget an account…', icon: 'trash', destructive: true, run: () => go(this.forgetAccount(m, others)) }] : []),
+        ],
+        accounts.length ? 'Running sessions switch on their next turn.' : 'No account saved on this machine yet.',
+        resolve,
+      );
+    });
+  }
+
+  private async switchAccount(m: MachineView, a: ClaudeAccount): Promise<void> {
+    await this.api.request<AccountsReply>('accounts', m.id, { action: 'switch', key: a.key }, 30_000);
+    toast(`Claude on ${m.name} is now signed in as ${accountTitle(a)}.`, 'ok');
+    this.refresh();
+  }
+
+  private forgetAccount(m: MachineView, others: ClaudeAccount[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      actionSheet(
+        'Forget which account?',
+        others.map((a) => ({
+          label: accountTitle(a),
+          detail: accountDetail(a) || undefined,
+          destructive: true,
+          run: () =>
+            (async () => {
+              if (!(await confirm(`Forget ${accountTitle(a)}?`, `Its saved sign-in is deleted from ${m.name}; switching back means signing in again. Nothing is signed out on claude.ai.`, 'Forget', true))) return;
+              await this.api.request('accounts', m.id, { action: 'remove', key: a.key }, 30_000);
+              toast(`Forgot ${accountTitle(a)} on ${m.name}.`, 'ok');
+            })().then(resolve, reject),
+        })),
+        undefined,
+        resolve,
+      );
+    });
+  }
+
+  /** Sign in to one more account on top of the current one, which the daemon saves first. */
+  private addAccount(m: MachineView): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const go = (type: string) =>
+        (async () => {
+          const req = <T>(args: object, timeout: number) => this.api.request<T>('accounts', m.id, { action: 'add', type, ...args }, timeout);
+          const start = await req<{ id: string; url: string }>({ step: 'start' }, 60_000);
+          const body = h('div');
+          const link = h('a', 'link-btn', 'Open the sign-in page');
+          link.href = start.url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          body.append(link);
+          const r = await dialog({ title: `Add an account on ${m.name}`, message: 'Sign in as the account to add, then paste the code the page shows you here.', body, input: { placeholder: 'authorization code' }, buttons: [{ label: 'Submit', value: 'ok', primary: true }] });
+          if (r.button !== 'ok' || !r.text.trim()) {
+            await req({ step: 'cancel', id: start.id }, 10_000).catch(() => undefined);
+            return;
+          }
+          toast(`Signing in on ${m.name}…`);
+          const res = await req<AccountsReply & { message: string }>({ step: 'code', id: start.id, code: r.text.trim() }, 150_000);
+          const now = res.accounts.find((a) => a.active);
+          toast(now ? `Claude on ${m.name} is now signed in as ${accountTitle(now)}.` : `Claude on ${m.name}: ${res.message}`, 'ok');
+          this.refresh();
+        })().then(resolve, reject);
+      actionSheet(
+        `Add a Claude account on ${m.name}`,
+        ACCOUNT_TYPES.map((t) => ({ label: t.label, detail: t.detail, run: () => go(t.type) })),
+        'Account type',
         resolve,
       );
     });

@@ -23,6 +23,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/accounts"
 	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
@@ -208,6 +209,7 @@ func cmdRun() error {
 		ClaudeDir: collector.ClaudeDir,
 		Managed:   mgr,
 		Auth:      authMgr,
+		Accounts:  accounts.New(config.Dir()),
 		WebApp:    webApp,
 		Collect: func() model.Snapshot {
 			r := collector.Collect()

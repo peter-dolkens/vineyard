@@ -33,7 +33,7 @@ var embedded embed.FS
 // minting invite codes (which admit a new machine to the fleet) stay with VS Code and the CLI.
 var allowedOps = map[string]bool{
 	"transcript": true, "send": true, "spawn": true, "takeover": true, "respond": true,
-	"interrupt": true, "stop": true, "stoptask": true, "configure": true, "login": true,
+	"interrupt": true, "stop": true, "stoptask": true, "configure": true, "login": true, "accounts": true,
 	"rename": true, "wake": true, "sessions": true, "kill": true, "probe": true,
 	"removepeer": true, "descendants": true, "version": true, "ping": true,
 }

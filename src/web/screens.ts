@@ -450,6 +450,7 @@ export class MachineScreen extends Screen {
         m.online && { key: 'new', title: 'New agent…', action: true, onTap: () => flows.newAgent(m) },
         m.online && { key: 'history', title: 'Resume a past session…', action: true, onTap: () => navigate(R.history(m.id)) },
         m.online && { key: 'login', title: 'Sign in to Claude…', action: true, onTap: () => flows.run(flows.login(m)) },
+        m.online && settings().claudeAccounts && { key: 'accounts', title: 'Switch Claude account…', action: true, onTap: () => flows.run(flows.accounts(m)) },
         !m.online && { key: 'wake', title: 'Wake machine', action: true, onTap: () => flows.run(flows.wake(m)) },
         m.local && info?.log && { key: 'log', title: 'Daemon log', onTap: () => navigate(R.log(m.id)) },
         m.local && info?.restart && { key: 'restart', title: 'Restart daemon', destructive: true, onTap: () => flows.run(flows.restartDaemon(m)) },
@@ -865,7 +866,7 @@ export class SettingsScreen extends Screen {
     };
   }
 
-  private toggle(key: 'showHistorical' | 'showExited' | 'showFinishedSubagents' | 'notifyAttention', title: string): Row {
+  private toggle(key: 'showHistorical' | 'showExited' | 'showFinishedSubagents' | 'notifyAttention' | 'claudeAccounts', title: string): Row {
     return { key, title, toggle: { on: settings()[key], onChange: (on) => updateSettings({ [key]: on }) } };
   }
 
@@ -953,6 +954,12 @@ export class SettingsScreen extends Screen {
           ]),
           this.toggle('notifyAttention', 'Banner when an agent needs you'),
         ],
+      },
+      {
+        key: 'experimental',
+        header: 'Experimental',
+        footer: 'Claude accounts: switch the account a machine’s Claude is signed in as, from its screen. Accounts signed in there stay saved on that machine.',
+        rows: [this.toggle('claudeAccounts', 'Claude accounts')],
       },
       {
         key: 'about',

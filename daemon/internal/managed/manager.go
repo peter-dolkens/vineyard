@@ -79,6 +79,8 @@ type Manager struct {
 	procs    map[string]*proc
 	log      *log.Logger
 	onChange func()
+	// usageFloor hides limit reports older than the last account switch (epoch ms).
+	usageFloor int64
 	// ClaudeBin overrides binary discovery.
 	ClaudeBin string
 }

@@ -246,6 +246,12 @@
         "icon": "$(key)"
       },
       {
+        "command": "vineyard.switchAccount",
+        "title": "Switch Claude Account on Machine…",
+        "category": "Vineyard",
+        "icon": "$(account)"
+      },
+      {
         "command": "vineyard.renameSession",
         "title": "Rename Session…",
         "category": "Vineyard",
@@ -470,6 +476,11 @@
           "group": "1_manage@0"
         },
         {
+          "command": "vineyard.switchAccount",
+          "when": "config.vineyard.experimental.claudeAccounts && view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
+          "group": "1_manage@1"
+        },
+        {
           "command": "vineyard.renameSession",
           "when": "view == vineyard.fleet && viewItem =~ /^agent/",
           "group": "1_act@3"
@@ -496,6 +507,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "vineyard.switchAccount",
+          "when": "config.vineyard.experimental.claudeAccounts"
+        },
         {
           "command": "vineyard.openWorkspace",
           "when": "false"
@@ -716,6 +731,15 @@
           "default": [],
           "scope": "application",
           "markdownDescription": "Machine names or ids that serve the web app when `#vineyard.webApp.enabled#` is on. Empty: every machine in the fleet."
+        },
+        "vineyard.experimental.claudeAccounts": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "tags": [
+            "experimental"
+          ],
+          "markdownDescription": "**Experimental.** Switch the Claude subscription account a machine is signed in as, from *Switch Claude Account on Machine…* on the machine. Every account signed in there is kept on that machine (in its keychain on macOS, otherwise in `~/.vineyard/claude-accounts.json`), so switching back needs no new sign-in. Sessions, transcripts and memory stay as they are; running sessions pick up the new account on their own."
         }
       }
     }

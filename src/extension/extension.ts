@@ -11,6 +11,7 @@ import { ChatPanels } from './chatPanel.ts';
 import { SessionPrefStore, type SettingsDefaults } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
 import { WebAppSync } from './webApp.ts';
+import { switchAccount } from './accounts.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 import { subagentAsAgent } from '../core/subagents.ts';
 
@@ -438,6 +439,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const res = await fleet.client.request<{ ok: boolean; message: string }>('login', machine.id, { action: 'code', id: start.id, code: code.trim() }, 150_000);
     void vscode.window.showInformationMessage(`Claude on ${machine.name}: ${res.message}`);
+    fleet.refreshAll();
+  });
+
+  cmd('vineyard.switchAccount', async (node?: Node) => {
+    const machine = node?.machine ?? (await machineOf(undefined));
+    if (machine) await switchAccount(fleet.client, machine);
     fleet.refreshAll();
   });
 
