@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relativeTime, shortModel, tokens, basename, tildify, describeVia } from '../src/core/format.ts';
+import { basename, describeVia, planLabel, relativeTime, shortModel, tildify, tokens } from '../src/core/format.ts';
 
 test('shortModel', () => {
   assert.equal(shortModel('claude-fable-5-1'), 'Fable 5.1');
@@ -31,4 +31,10 @@ test('describeVia names relays and reporters', () => {
   assert.equal(describeVia('reported:forge.local', nameOf), 'reported by forge');
   assert.equal(describeVia('direct'), 'direct');
   assert.equal(describeVia(undefined), '');
+});
+
+test('plan labels carry one "Claude"', () => {
+  assert.equal(planLabel('Claude Team'), 'Claude Team');
+  assert.equal(planLabel('Team'), 'Claude Team');
+  assert.equal(planLabel('Max'), 'Claude Max');
 });

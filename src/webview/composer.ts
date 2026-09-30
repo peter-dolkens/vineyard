@@ -9,7 +9,7 @@
 import type { BackgroundTask, CommandInfo, ModelInfo, Subagent, Usage } from '../core/model.ts';
 import { resetsIn, usageRows, usageWarning, usageWarningKey } from '../core/usage.ts';
 import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
-import { duration, shortModel, tokens as fmtTokens } from '../core/format.ts';
+import { duration, planLabel, shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { subagentActive } from '../core/subagents.ts';
 import { GROUP, MODES, buildActions, cacheClock, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action, type CacheClockInput } from '../core/composer.ts';
@@ -592,7 +592,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     if (acct?.account || acct?.accountOrg || acct?.accountPlan) {
       row('Email', acct.account);
       row('Organization', acct.accountOrg);
-      row('Plan', acct.accountPlan ? `Claude ${acct.accountPlan}` : undefined);
+      row('Plan', acct.accountPlan ? planLabel(acct.accountPlan) : undefined);
       pop.append(grid);
     } else {
       pop.append(el('div', 'pop-note', 'Who the session is signed in as is known for sessions started by Vineyard.'));

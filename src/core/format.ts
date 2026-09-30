@@ -31,6 +31,11 @@ export function tokens(n: number | undefined): string {
 }
 
 /** "claude-fable-5-1" → "Fable 5.1"; "claude-opus-4-1-20250805" → "Opus 4.1". */
+/** "Claude Team" for a plan Claude Code reports as "Team" or as "Claude Team". */
+export function planLabel(plan: string): string {
+  return /^claude\b/i.test(plan.trim()) ? plan.trim() : `Claude ${plan.trim()}`;
+}
+
 export function shortModel(model: string | undefined): string {
   if (!model) return '';
   const m = model.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/\[.*\]$/, '');

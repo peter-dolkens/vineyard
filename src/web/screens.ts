@@ -4,9 +4,9 @@
  * the store while it is on top; the rows it lists are patched in place (ui.ts).
  */
 
-import type { Agent, Usage } from '../core/model.ts';
+import type { Agent, Snapshot, Usage } from '../core/model.ts';
 import { isBusy, needsAttention } from '../core/model.ts';
-import { STATE_LABEL, agentLabel, basename, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
+import { STATE_LABEL, agentLabel, basename, planLabel, describeVia, duration, relativeTime, shortModel, subagentLabel, tildify, tokens } from '../core/format.ts';
 import { isDelegating, shownState, shownStateLabel, subagentActive, subagentId } from '../core/subagents.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { resetsIn, usageRows, usageWarning, WARN_PERCENT } from '../core/usage.ts';
@@ -221,10 +221,32 @@ function agentRow(ctx: Ctx, m: MachineView, a: Agent, opts: { where?: boolean; i
   };
 }
 
-function usageBlock(u: Usage | undefined): HTMLElement | undefined {
+type Account = { account?: string; accountOrg?: string; accountPlan?: string };
+
+/**
+ * Who the machine's Claude is signed in as. Only sessions started by Vineyard learn it, so it comes from
+ * the one whose limit report the snapshot carries, else the most recently active one that knows.
+ */
+function machineAccount(snap: Snapshot): Account | undefined {
+  const known = snap.agents.map((a) => a.managed).filter((x): x is NonNullable<typeof x> => !!(x?.account || x?.accountOrg || x?.accountPlan));
+  const same = snap.usage?.at ? known.find((x) => x.usage?.at === snap.usage?.at) : undefined;
+  return same ?? known.sort((a, b) => (b.usage?.at ?? 0) - (a.usage?.at ?? 0))[0];
+}
+
+function usageBlock(u: Usage | undefined, acct?: Account): HTMLElement | undefined {
   const rows = usageRows(u);
-  if (!rows.length) return undefined;
+  const facts = compact<[string, string]>([
+    acct?.account ? ['Email', acct.account] : undefined,
+    acct?.accountOrg ? ['Organization', acct.accountOrg] : undefined,
+    acct?.accountPlan ? ['Plan', planLabel(acct.accountPlan)] : undefined,
+  ]);
+  if (!rows.length && !facts.length) return undefined;
   const el = h('div', 'usage');
+  if (facts.length) {
+    const grid = h('div', 'u-acct');
+    for (const [k, v] of facts) grid.append(h('span', 'k', k), h('span', 'v', v));
+    el.append(grid);
+  }
   for (const r of rows) {
     const level = r.percent >= 100 ? 'hit' : r.percent >= WARN_PERCENT ? 'warn' : '';
     const item = h('div');
@@ -416,8 +438,9 @@ export class MachineScreen extends Screen {
       }),
     });
 
-    const u = usageBlock(snap.usage);
-    if (u) sections.push({ key: 'usage', header: 'Usage', footer: snap.usage?.at ? `As of ${relativeTime(snap.usage.at)}, from a session started by Vineyard.` : undefined, block: this.usage.set(JSON.stringify(snap.usage), (el) => el.append(u)) });
+    const acct = machineAccount(snap);
+    const u = usageBlock(snap.usage, acct);
+    if (u) sections.push({ key: 'usage', header: 'Account & usage', footer: snap.usage?.at ? `As of ${relativeTime(snap.usage.at)}, from a session started by Vineyard.` : 'From a session started by Vineyard.', block: this.usage.set(JSON.stringify([snap.usage, acct?.account, acct?.accountOrg, acct?.accountPlan]), (el) => el.append(u)) });
 
     const info = this.ctx.info();
     sections.push({
