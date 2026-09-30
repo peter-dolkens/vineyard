@@ -546,7 +546,7 @@
           "type": "number",
           "default": 400,
           "minimum": 20,
-          "description": "How many trailing transcript lines to fetch when opening a transcript."
+          "description": "How many trailing transcript lines to fetch when opening a chat. Scrolling to the top loads that many more at a time."
         },
         "vineyard.hideMachinesUnseenForDays": {
           "type": "number",

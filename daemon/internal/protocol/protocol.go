@@ -265,6 +265,9 @@ type TranscriptArgs struct {
 	// Offset, when > 0, asks for only the complete lines written after this byte offset (as returned
 	// in a previous TranscriptData.Offset). Lets a viewer stream a live transcript cheaply.
 	Offset int64 `json:"offset,omitempty"`
+	// Before, when > 0, asks instead for the Lines complete lines that end before this byte offset
+	// (a previous TranscriptData.Start): older history, for a viewer scrolling back.
+	Before int64 `json:"before,omitempty"`
 }
 
 type TranscriptData struct {
@@ -274,7 +277,11 @@ type TranscriptData struct {
 	// only newer lines. Size is the file size at read time.
 	Offset int64 `json:"offset"`
 	Size   int64 `json:"size"`
-	// Truncated is true when the file shrank or was replaced since the caller's offset (re-read).
+	// Start is the byte position of the first line returned; pass it back as Before to page further
+	// back. 0 means the entries reach the start of the file. Older daemons leave it out.
+	Start int64 `json:"start"`
+	// Truncated is true when the file shrank or was replaced since the caller's offset (re-read), or
+	// since the Before it gave (nothing is returned then: start over with a tail).
 	Truncated bool `json:"truncated,omitempty"`
 }
 

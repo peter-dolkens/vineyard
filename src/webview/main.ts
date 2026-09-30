@@ -98,6 +98,14 @@ const seen = new Set<string>();
 const toolRows = new Map<string, HTMLElement>(); // tool_use_id → details row
 const toolNames = new Map<string, string>();
 let currentTurn: HTMLElement | undefined;
+/** Every transcript entry shown, oldest first: drawn again whole when an older page arrives. */
+let log: Entry[] = [];
+/** The transcript goes back further than `log`; the next page is asked for near the top. */
+let hasOlder = false;
+let olderAskedAt: number | undefined;
+/** The entry being drawn: its rows are stamped with it, so a redraw can find them again. */
+let stampKey: string | undefined;
+let stampSeq = 0;
 /** Messages sent from here that the transcript has not shown the agent reading yet. */
 const echoes: HTMLElement[] = [];
 let pinned = true;
@@ -148,7 +156,7 @@ app.innerHTML = `
 </header>
 <section class="info" id="info" hidden></section>
 <div class="banner" id="banner" hidden></div>
-<main id="log" class="log"><div id="turns"></div><div id="ticker" class="ticker" hidden></div></main>
+<main id="log" class="log"><button id="older" class="older" hidden></button><div id="turns"></div><div id="ticker" class="ticker" hidden></div></main>
 <button id="jump" class="jump" hidden><i class="codicon codicon-arrow-down"></i> New messages</button>
 <section id="cards" class="cards"></section>
 <footer class="composer">
@@ -164,6 +172,7 @@ app.innerHTML = `
 
 const logEl = document.getElementById('log')!;
 const turnsEl = document.getElementById('turns')!;
+const olderEl = document.getElementById('older') as HTMLButtonElement;
 const tickerEl = document.getElementById('ticker')!;
 const infoEl = document.getElementById('info')!;
 const cardsEl = document.getElementById('cards')!;
@@ -363,7 +372,89 @@ wireFileInputs(input, document.querySelector<HTMLElement>('.composer-box')!, () 
 logEl.addEventListener('scroll', () => {
   pinned = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
   if (pinned) jump.hidden = true;
+  maybeLoadOlder();
 });
+olderEl.onclick = () => askOlder();
+
+/** Near the top (or when the log does not fill the view): fetch the page before what is shown. */
+function maybeLoadOlder() {
+  if (hasOlder && logEl.scrollTop < 400) askOlder();
+}
+
+function askOlder() {
+  // One page at a time; asked again only if the host never answered (it was reloading, say).
+  if (!hasOlder || (olderAskedAt && Date.now() - olderAskedAt < 15_000)) return;
+  olderAskedAt = Date.now();
+  syncOlder();
+  vscode.postMessage({ type: 'older' });
+}
+
+function syncOlder() {
+  olderEl.hidden = !hasOlder;
+  olderEl.textContent = olderAskedAt ? 'Loading earlier messages…' : 'Load earlier messages';
+}
+
+/** Draw an entry and keep it in `log`. */
+function show(e: Entry) {
+  log.push(e);
+  stampKey = typeof e.uuid === 'string' ? e.uuid : undefined;
+  stampSeq = 0;
+  try {
+    renderEntry(e);
+  } finally {
+    stampKey = undefined;
+  }
+}
+
+/**
+ * Put an older page before everything shown. The whole log is drawn again in order, so turns, tool
+ * results and the stats join up across the seam; what was open stays open, and the row at the top of
+ * the view stays where it was.
+ */
+function prependOlder(entries: Entry[], more: boolean) {
+  olderAskedAt = undefined;
+  if (entries.length) {
+    const viewTop = logEl.getBoundingClientRect().top;
+    const fromBottom = logEl.scrollHeight - logEl.scrollTop;
+    // Rows in view, top first: a lone tool result there joins its call's row once that call arrives.
+    const anchors: { key: string; offset: number }[] = [];
+    const open = new Map<string, number[]>();
+    for (const row of turnsEl.querySelectorAll<HTMLElement>('[data-k]')) {
+      const r = row.getBoundingClientRect();
+      if (anchors.length < 8 && row.classList.contains('ev') && r.bottom > viewTop) anchors.push({ key: row.dataset.k!, offset: r.top - viewTop });
+      const idx = [...row.querySelectorAll('details')].flatMap((d, i) => (d.open ? [i] : []));
+      if (row.classList.contains('expanded')) idx.push(-1);
+      if (idx.length) open.set(row.dataset.k!, idx);
+    }
+    const all = [...entries, ...log];
+    const held = echoes.splice(0); // unread echoes wait at the foot, whatever older prompts say
+    resetLog();
+    echoes.push(...held);
+    for (const e of all) show(e);
+    keepEchoesLast();
+    const find = (k: string) => turnsEl.querySelector<HTMLElement>(`[data-k="${CSS.escape(k)}"]`);
+    for (const [k, idx] of open) {
+      const row = find(k);
+      if (!row) continue;
+      const ds = row.querySelectorAll('details');
+      for (const i of idx) {
+        if (i < 0) row.classList.add('expanded');
+        else if (ds[i]) ds[i]!.open = true;
+      }
+    }
+    hasOlder = more; // before measuring: the button above the log moves everything below it
+    syncOlder();
+    const anchor = anchors.find((a) => find(a.key));
+    if (pinned) scrollToBottom();
+    else if (anchor) logEl.scrollTop += find(anchor.key)!.getBoundingClientRect().top - logEl.getBoundingClientRect().top - anchor.offset;
+    else logEl.scrollTop = logEl.scrollHeight - fromBottom;
+    if (!infoEl.hidden) renderInfo();
+    bar.render(agent, machine, barStats());
+  }
+  hasOlder = more;
+  syncOlder();
+  maybeLoadOlder();
+}
 
 function resetLog() {
   seen.clear();
@@ -373,6 +464,10 @@ function resetLog() {
   currentTurn = undefined;
   Object.assign(stats, { input: 0, cacheRead: 0, cacheCreate: 0, output: 0, lastCacheRead: 0, lastCacheCreate: 0, lastInput: 0, calls: 0, toolCalls: 0, turns: 0, cacheUsage: undefined, cacheRequestAt: undefined, cacheRespondedAt: undefined, cacheTtlMs: undefined, compactedAt: undefined });
   stats.subagents.clear();
+  log = [];
+  hasOlder = false;
+  olderAskedAt = undefined;
+  syncOlder();
   syncHistoryButton();
 }
 
@@ -506,6 +601,7 @@ function iconFor(tool: string): HTMLElement {
 /** Every event sits on the railway: a row with a coloured marker in the left margin. */
 function rail(kind: string, node: HTMLElement, time?: string): HTMLElement {
   const row = el('div', `ev ev-${kind}`);
+  if (stampKey) row.dataset.k = `${stampKey}:${stampSeq++}`;
   const marker = el('span', 'marker');
   if (time) marker.title = time;
   row.appendChild(marker);
@@ -590,6 +686,7 @@ function startTurn(promptText: string, time: string, cross: boolean, images: str
   clearEchoes(promptText);
   const turn = el('section', 'turn');
   const sticky = el('div', 'turn-prompt');
+  if (stampKey) sticky.dataset.k = `${stampKey}:${stampSeq++}`;
   const bubble = el('div', 'bubble' + (cross ? ' cross' : ''));
   if (promptText) bubble.appendChild(md(promptText, true));
   if (images.length) bubble.appendChild(promptImages(images));
@@ -1306,11 +1403,19 @@ window.addEventListener('message', (ev) => {
       break;
     case 'entries':
       if (m.reset) resetLog();
-      for (const e of m.entries) renderEntry(e);
+      for (const e of m.entries) show(e);
       keepEchoesLast();
       if (!infoEl.hidden) renderInfo();
       bar.render(agent, machine, barStats()); // cache and subagent pills follow the transcript
       afterAppend();
+      if (m.reset) {
+        hasOlder = !!m.more;
+        syncOlder();
+        maybeLoadOlder();
+      }
+      break;
+    case 'older':
+      prependOlder(m.entries, !!m.more);
       break;
     case 'status':
       showBanner(m.text, m.kind);

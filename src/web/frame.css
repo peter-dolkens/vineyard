@@ -26,6 +26,7 @@ button.icon .codicon { font-size: 20px; }
 .title-edit { font-size: 16px; max-width: none; }
 
 .banner { font-size: 13px; padding: 8px 14px; }
+.older { font-size: 13px; min-height: 36px; color: var(--blue); }
 .log { padding: 10px 12px 8px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .turn { padding-left: 18px; }
 .turn::before { left: 5px; }

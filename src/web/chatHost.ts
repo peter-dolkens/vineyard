@@ -9,6 +9,7 @@ import type { Agent, Attachment, Usage } from '../core/model.ts';
 import { agentLabel } from '../core/format.ts';
 import { attachmentMediaType, attachmentProblem } from '../core/attachments.ts';
 import { subagentId } from '../core/subagents.ts';
+import { TranscriptFeed } from '../core/transcriptFeed.ts';
 import type { SettingsDefaults } from '../extension/sessionPrefs.ts';
 import type { Api, ServerInfo } from './api.ts';
 import type { FleetStore, MachineView } from './store.ts';
@@ -17,14 +18,6 @@ import { confirm, localId } from './ui.ts';
 
 const HELP_URL = 'https://github.com/peter-dolkens/vineyard#readme';
 const ISSUES_URL = 'https://github.com/peter-dolkens/vineyard/issues/new';
-
-interface TranscriptData {
-  path: string;
-  entries: Record<string, unknown>[];
-  offset: number;
-  size: number;
-  truncated?: boolean;
-}
 
 interface PendingAttachment extends Attachment {
   id: string;
@@ -52,6 +45,7 @@ type FromFrame =
   | { type: 'takeOver' }
   | { type: 'openTerminal' }
   | { type: 'reload' }
+  | { type: 'older' }
   | { type: 'attach' }
   | { type: 'attachFiles'; files: PickedFile[] }
   | { type: 'removeAttachment'; id: string }
@@ -75,9 +69,7 @@ export interface ChatDeps {
 }
 
 export class ChatHost {
-  private offset = 0;
-  private fetching = false;
-  private pendingFetch = false;
+  private feed = this.newFeed();
   private lastActivity = 0;
   private lastAgentJson = '';
   private ready = false;
@@ -160,42 +152,38 @@ export class ChatHost {
     }
   }
 
-  /** Fetch transcript lines written since the last offset (or the tail when starting over). */
+  private newFeed(): TranscriptFeed {
+    return new TranscriptFeed({
+      read: (args) => {
+        const a = this.agent;
+        const m = this.machine;
+        if (!a || !m) return Promise.reject(new Error('This session is no longer in the fleet.'));
+        return this.deps.api.request('transcript', m.id, { sessionId: a.sessionId, path: a.transcriptPath || undefined, cwd: a.workspacePath, ...args }, 30_000);
+      },
+      post: (m) => this.post(m),
+      lines: () => settings().transcriptLines,
+      error: (text) => this.status(text, 'error'),
+      later: (fn) => setTimeout(fn, 250),
+    });
+  }
+
+  /** Fetch transcript lines written since the last read (or the tail when starting over). */
   private async fetch(reset: boolean): Promise<void> {
     if (this.disposed || !this.agent || !this.machine) return;
     if (!this.machine.online) {
       this.status(`${this.machine.name} is offline; showing what was last seen.`, 'info');
       return;
     }
-    if (this.fetching) {
-      this.pendingFetch = true;
-      return;
-    }
-    this.fetching = true;
-    try {
-      const a = this.agent;
-      const data = await this.deps.api.request<TranscriptData>('transcript', this.machine.id, { sessionId: a.sessionId, path: a.transcriptPath || undefined, cwd: a.workspacePath, lines: settings().transcriptLines, offset: reset ? 0 : this.offset }, 30_000);
-      const startOver = reset || !!data.truncated || this.offset === 0;
-      this.offset = data.offset;
-      if (data.entries.length || startOver) this.post({ type: 'entries', entries: data.entries, reset: startOver });
-      if (data.size > data.offset) this.pendingFetch = true; // more arrived while we read
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (!/no transcript/i.test(msg)) this.status(msg, 'error');
-    } finally {
-      this.fetching = false;
-      if (this.pendingFetch && !this.disposed) {
-        this.pendingFetch = false;
-        setTimeout(() => void this.fetch(false), 250);
-      }
-    }
+    await this.feed.fetch(reset);
   }
 
   private async onMessage(m: FromFrame): Promise<void> {
     if (m.type === 'ready') {
       this.ready = true;
       this.initSent = false;
-      this.offset = 0;
+      // A reloaded frame starts from nothing: a feed of its own, so no read for the old one lands in it.
+      this.feed.dispose();
+      this.feed = this.newFeed();
       if (this.agent) this.sendInit();
       else if (this.deps.store.loaded) this.status('This session is not in the fleet (any more).', 'info');
       return;
@@ -207,8 +195,10 @@ export class ChatHost {
     try {
       switch (m.type) {
         case 'reload':
-          this.offset = 0;
           await this.fetch(true);
+          break;
+        case 'older':
+          if (machine.online) await this.feed.older();
           break;
         case 'send': {
           const text = m.text.trim();
@@ -375,6 +365,7 @@ export class ChatHost {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.feed.dispose();
     window.removeEventListener('message', this.onWindowMessage);
     this.unsubscribe();
   }

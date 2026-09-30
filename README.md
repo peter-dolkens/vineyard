@@ -69,7 +69,8 @@ makes it work; the daemons talk only to each other, and only while you are looki
   Each row opens its transcript; each running row has a **Stop** button.
 * **A transcript built for long sessions**: the current prompt stays pinned while you scroll, thinking
   is collapsed, tool calls fold to one line with IN/OUT blocks for shell commands, and an activity
-  ticker shows what the agent is doing while it is busy.
+  ticker shows what the agent is doing while it is busy. It opens on the last 400 lines and loads
+  earlier ones as you scroll to the top.
 * **Account & usage** in the / menu, with a bar per limit window, and a dismissable banner from 80 %
   that behaves like the pane's.
 

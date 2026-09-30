@@ -2021,18 +2021,27 @@ func (n *Node) readTranscript(a protocol.TranscriptArgs) (json.RawMessage, error
 		lines = 400
 	}
 	var raw [][]byte
-	var offset, size int64
+	var start, offset, size int64
 	truncated := false
-	if a.Offset > 0 {
+	switch {
+	case a.Before > 0:
+		raw, start, offset, size, err = claude.ReadBefore(abs, a.Before, lines, 8<<20)
+		if errors.Is(err, claude.ErrNotLineStart) {
+			raw, truncated, err = nil, true, nil // replaced since: the viewer starts over
+		}
+	case a.Offset > 0:
+		start = a.Offset
 		raw, offset, size, err = claude.ReadFrom(abs, a.Offset, 8<<20)
 		if err == nil && size < a.Offset {
 			// File shrank or was replaced: start over with a tail.
 			truncated = true
-			raw, offset, err = claude.TailWithOffset(abs, lines, 8<<20)
+			raw, start, offset, _, err = claude.ReadBefore(abs, -1, lines, 8<<20)
 			size = offset
 		}
-	} else {
-		raw, offset, err = claude.TailWithOffset(abs, lines, 8<<20)
+	default:
+		// The tail stops at the last complete line, so a line being written now comes with the
+		// next ReadFrom instead of being cut in two.
+		raw, start, offset, _, err = claude.ReadBefore(abs, -1, lines, 8<<20)
 		size = offset
 	}
 	if err != nil {
@@ -2041,7 +2050,7 @@ func (n *Node) readTranscript(a protocol.TranscriptArgs) (json.RawMessage, error
 		}
 		return nil, err
 	}
-	out := protocol.TranscriptData{Path: abs, Entries: make([]json.RawMessage, 0, len(raw)), Offset: offset, Size: size, Truncated: truncated}
+	out := protocol.TranscriptData{Path: abs, Entries: make([]json.RawMessage, 0, len(raw)), Offset: offset, Size: size, Start: start, Truncated: truncated}
 	for _, ln := range raw {
 		if json.Valid(ln) {
 			out.Entries = append(out.Entries, json.RawMessage(ln))

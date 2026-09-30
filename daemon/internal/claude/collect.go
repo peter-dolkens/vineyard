@@ -400,19 +400,6 @@ func ReadFrom(path string, from int64, maxBytes int64) (lines [][]byte, next int
 	return lines, next, size, nil
 }
 
-// TailWithOffset is TailLines plus the end-of-file offset so callers can continue with ReadFrom.
-func TailWithOffset(path string, n int, maxBytes int64) ([][]byte, int64, error) {
-	lines, err := TailLines(path, n, maxBytes)
-	if err != nil {
-		return nil, 0, err
-	}
-	st, err := os.Stat(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	return lines, st.Size(), nil
-}
-
 // hardwareAddrs lists the MAC addresses of up, non-loopback interfaces that carry an IPv4 address
 // (so virtual and idle interfaces do not get magic packets they can never act on).
 func hardwareAddrs() []string {

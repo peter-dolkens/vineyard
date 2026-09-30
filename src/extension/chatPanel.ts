@@ -11,6 +11,7 @@ import type { FleetService, MachineView } from './fleet.ts';
 import type { SessionPrefStore, SettingsDefaults } from './sessionPrefs.ts';
 import { agentLabel, basename } from '../core/format.ts';
 import { attachmentMediaType, attachmentProblem } from '../core/attachments.ts';
+import { TranscriptFeed, type FeedMessage } from '../core/transcriptFeed.ts';
 
 const HELP_URL = 'https://github.com/peter-dolkens/vineyard#readme';
 const ISSUES_URL = 'https://github.com/peter-dolkens/vineyard/issues/new';
@@ -21,19 +22,11 @@ interface PendingAttachment extends Attachment {
   size: number;
 }
 
-interface TranscriptData {
-  path: string;
-  entries: Record<string, unknown>[];
-  offset: number;
-  size: number;
-  truncated?: boolean;
-}
-
 type ToWebview =
   | { type: 'init'; agent: Agent; machine: { id: string; name: string; online: boolean; usage?: Usage }; localName: string; extVersion?: string }
   | { type: 'attachments'; items: { id: string; name: string; mediaType: string; size: number }[] }
   | { type: 'agent'; agent: Agent; machine: { id: string; name: string; online: boolean; usage?: Usage } }
-  | { type: 'entries'; entries: Record<string, unknown>[]; reset: boolean }
+  | FeedMessage
   | { type: 'status'; text: string; kind: 'info' | 'error' | 'ok' }
   | { type: 'sending'; busy: boolean }
   | { type: 'sendFailed' }
@@ -55,6 +48,8 @@ type FromWebview =
   | { type: 'takeOver' }
   | { type: 'openTerminal' }
   | { type: 'reload' }
+  /** Scrolled to the top: the page of transcript before what is shown. */
+  | { type: 'older' }
   | { type: 'attach' }
   /** Files pasted or dropped into the chat, readied by webview/files.ts. */
   | { type: 'attachFiles'; files: { id?: string; name: string; buffer: ArrayBuffer | ArrayBufferView }[] }
@@ -69,9 +64,7 @@ type FromWebview =
   | { type: 'stopTask'; taskId: string };
 
 class ChatPanel {
-  private offset = 0;
-  private fetching = false;
-  private pendingFetch = false;
+  private readonly feed: TranscriptFeed;
   private lastActivity = 0;
   private lastAgentJson = '';
   private disposed = false;
@@ -89,6 +82,13 @@ class ChatPanel {
     private readonly extVersion: string | undefined,
     private readonly onDispose: () => void,
   ) {
+    this.feed = new TranscriptFeed({
+      read: (args) => this.fleet.client.request('transcript', this.machine.id, { sessionId: this.agent.sessionId, path: this.agent.transcriptPath || undefined, cwd: this.agent.workspacePath, ...args }, 30_000),
+      post: (m) => this.post(m),
+      lines: () => vscode.workspace.getConfiguration('vineyard').get<number>('transcriptLines', 400),
+      error: (text) => this.post({ type: 'status', text, kind: 'error' }),
+      later: (fn) => setTimeout(fn, 250),
+    });
     panel.webview.html = this.html();
     this.subs.push(
       panel.onDidDispose(() => this.dispose()),
@@ -130,41 +130,14 @@ class ChatPanel {
     }
   }
 
-  /** Fetch new transcript lines since the last offset (or the tail when starting over). */
+  /** Fetch new transcript lines since the last read (or the tail when starting over). */
   private async fetch(reset: boolean): Promise<void> {
     if (this.disposed) return;
     if (!this.machine.online) {
       this.post({ type: 'status', text: `${this.machine.name} is offline; showing what was last seen.`, kind: 'info' });
       return;
     }
-    if (this.fetching) {
-      this.pendingFetch = true;
-      return;
-    }
-    this.fetching = true;
-    try {
-      const lines = vscode.workspace.getConfiguration('vineyard').get<number>('transcriptLines', 400);
-      const data = await this.fleet.client.request<TranscriptData>(
-        'transcript',
-        this.machine.id,
-        { sessionId: this.agent.sessionId, path: this.agent.transcriptPath || undefined, cwd: this.agent.workspacePath, lines, offset: reset ? 0 : this.offset },
-        30_000,
-      );
-      const startOver = reset || data.truncated || this.offset === 0;
-      this.offset = data.offset;
-      if (data.entries.length || startOver) this.post({ type: 'entries', entries: data.entries, reset: startOver });
-      // More may have been appended while we read; loop until caught up.
-      if (data.size > data.offset) this.pendingFetch = true;
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (!/no transcript/i.test(msg)) this.post({ type: 'status', text: msg, kind: 'error' });
-    } finally {
-      this.fetching = false;
-      if (this.pendingFetch) {
-        this.pendingFetch = false;
-        setTimeout(() => void this.fetch(false), 250);
-      }
-    }
+    await this.feed.fetch(reset);
   }
 
   private async onMessage(m: FromWebview): Promise<void> {
@@ -176,8 +149,10 @@ class ChatPanel {
           await this.fetch(true);
           break;
         case 'reload':
-          this.offset = 0;
           await this.fetch(true);
+          break;
+        case 'older':
+          if (this.machine.online) await this.feed.older();
           break;
         case 'send': {
           const text = m.text.trim();
@@ -383,6 +358,7 @@ class ChatPanel {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.feed.dispose();
     for (const s of this.subs) s.dispose();
     this.onDispose();
   }
