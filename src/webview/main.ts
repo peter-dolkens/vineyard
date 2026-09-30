@@ -98,6 +98,8 @@ const seen = new Set<string>();
 const toolRows = new Map<string, HTMLElement>(); // tool_use_id → details row
 const toolNames = new Map<string, string>();
 let currentTurn: HTMLElement | undefined;
+/** Messages sent from here that the transcript has not shown the agent reading yet. */
+const echoes: HTMLElement[] = [];
 let pinned = true;
 let sending = false;
 /** Set when the composer button asked for an interrupt; while the turn is still running it offers Stop instead. */
@@ -284,7 +286,7 @@ titleEdit.onblur = () => endRename(true);
 const btnHistory = document.getElementById('btnHistory')!;
 btnHistory.onclick = () => vscode.postMessage({ type: 'action', id: 'history' });
 function syncHistoryButton() {
-  btnHistory.hidden = agent?.kind === 'subagent' || stats.turns > 0 || !!turnsEl.querySelector('[data-echo]');
+  btnHistory.hidden = agent?.kind === 'subagent' || stats.turns > 0 || echoes.length > 0;
 }
 document.getElementById('btnInfo')!.onclick = () => {
   infoEl.hidden = !infoEl.hidden;
@@ -521,21 +523,30 @@ function turnFor(): HTMLElement {
 
 // ---- transcript rendering -------------------------------------------------------------------------
 
+/** A message in the middle of a turn: the same bubble as a turn's prompt, on the rail where it lands. */
+function userRow(text: string, meta: string, cross = false, images: string[] = []): HTMLElement {
+  const bubble = el('div', 'bubble' + (cross ? ' cross' : ''));
+  if (text) bubble.appendChild(md(text, true));
+  if (images.length) bubble.appendChild(promptImages(images));
+  const row = rail('user', bubble);
+  row.appendChild(el('div', 'meta', meta));
+  return row;
+}
+
 /**
- * Show what was just sent straight away. The row stays (marked "queued") until the transcript shows
- * the agent picking it up: a busy agent only reads messages between tool calls or at the end of its
- * turn, which can be minutes later.
+ * Show what was just sent straight away, dimmed until the transcript shows the agent reading it: a
+ * busy agent only reads messages between tool calls or at the end of its turn, which can be minutes
+ * later. It stays at the foot of the log until then.
  */
 function appendLocalEcho(text: string, files: AttachmentChip[] = []) {
   const images = files.flatMap((f) => (f.thumb ? [f.thumb] : []));
   const others = files.length - images.length;
-  const bubble = el('div', 'bubble', text || (others ? `(${others} file${others === 1 ? '' : 's'})` : undefined));
-  if (images.length) bubble.appendChild(promptImages(images));
-  const row = rail('user', bubble);
+  // An idle managed session reads it at once; anything else (mid-turn, asking, observed) may take a while.
+  const waiting = !agent?.managed || agent.managed.exited || !['idle', 'done'].includes(agent.state);
+  const row = userRow(text || (others ? `(${others} file${others === 1 ? '' : 's'})` : ''), waiting ? 'waiting · the agent reads it between tool calls or when idle' : 'sent', false, images);
   row.classList.add('echo');
   row.dataset.echo = text.replace(/\s+/g, ' ').trim();
-  const meta = el('div', 'meta echo-meta', agent?.managed && !agent.managed.exited ? 'sent' : 'queued · read between tool calls or when idle');
-  row.appendChild(meta);
+  echoes.push(row);
   turnFor().appendChild(row);
   syncHistoryButton();
   afterAppend();
@@ -545,9 +556,18 @@ function appendLocalEcho(text: string, files: AttachmentChip[] = []) {
  * alone has no text to match: the next prompt in the transcript takes it. */
 function clearEchoes(matching?: string) {
   const norm = matching?.replace(/\s+/g, ' ').trim();
-  for (const e of turnsEl.querySelectorAll<HTMLElement>('[data-echo]')) {
-    if (norm === undefined || !e.dataset.echo || norm.includes(e.dataset.echo)) e.remove();
+  for (let i = echoes.length - 1; i >= 0; i--) {
+    const e = echoes[i]!;
+    if (norm === undefined || !e.dataset.echo || norm.includes(e.dataset.echo)) {
+      e.remove();
+      echoes.splice(i, 1);
+    }
   }
+}
+
+/** Unread echoes follow whatever the agent does meanwhile, and outlive a reload of the log. */
+function keepEchoesLast() {
+  for (const e of echoes) turnFor().appendChild(e);
 }
 
 /** Images sent with a prompt, as thumbnails; a click opens one full size. */
@@ -605,6 +625,10 @@ function renderEntry(e: Entry) {
       const msg = typeof e.content === 'string' ? e.content : e.error?.formatted ?? e.error?.message ?? 'error';
       turnFor().appendChild(rail('error', el('div', 'sys error', msg), time));
     }
+    return;
+  }
+  if (type === 'attachment') {
+    if (e.attachment?.type === 'queued_command' && !side) renderQueuedPrompt(e.attachment, time);
     return;
   }
   if (type !== 'user' && type !== 'assistant') return;
@@ -736,6 +760,24 @@ function renderEntry(e: Entry) {
         break;
     }
   }
+}
+
+/**
+ * A message sent while the agent was mid-turn. Claude records it when the agent reads it, as a
+ * queued_command attachment rather than a prompt, so it lands inside the running turn. Background
+ * task notifications travel the same way and are not messages.
+ */
+function renderQueuedPrompt(att: any, time: string) {
+  if (att.commandMode && att.commandMode !== 'prompt') return;
+  const blocks: any[] = Array.isArray(att.prompt) ? att.prompt : typeof att.prompt === 'string' ? [{ type: 'text', text: att.prompt }] : [];
+  const t = blocks.map((b) => (b.type === 'text' ? String(b.text ?? '') : '')).join('\n').trim();
+  if (/^<task-notification>/.test(t)) return;
+  const images = blocks.flatMap((b) => (b.type === 'image' && b.source?.type === 'base64' && /^image\/(png|jpeg|gif|webp)$/.test(b.source.media_type) ? [`data:${b.source.media_type};base64,${b.source.data}`] : []));
+  if (!t && !images.length) return;
+  const cross = /^<cross-session-message\b/.test(t);
+  const clean = cross ? t.replace(/<\/?cross-session-message[^>]*>/g, '').trim() : t;
+  clearEchoes(clean);
+  turnFor().appendChild(userRow(clean, `${cross ? 'via message · ' : ''}read mid-turn · ${time}`, cross, images));
 }
 
 function ioBlock(label: string, text: string, cls: string): HTMLElement {
@@ -1265,6 +1307,7 @@ window.addEventListener('message', (ev) => {
     case 'entries':
       if (m.reset) resetLog();
       for (const e of m.entries) renderEntry(e);
+      keepEchoesLast();
       if (!infoEl.hidden) renderInfo();
       bar.render(agent, machine, barStats()); // cache and subagent pills follow the transcript
       afterAppend();

@@ -164,9 +164,14 @@ body.subagent-view #input, body.subagent-view #btnSend, body.subagent-view #btnA
 .ev-side > .marker { border-color: var(--vscode-charts-purple, #b180d7); }
 .ev-system > .marker { border-color: var(--vscode-descriptionForeground); border-style: dashed; }
 .ev-user > .marker { border-color: var(--vscode-focusBorder); background: var(--vscode-focusBorder); }
-.ev.echo { opacity: 0.55; }
-.ev.echo .bubble { margin-left: auto; max-width: 85%; white-space: pre-wrap; }
-.ev.echo .echo-meta { font-size: 10px; opacity: 0.6; text-align: right; margin-top: 2px; }
+/* a message inside a turn (read mid-turn, or sent and not read yet): a turn prompt's bubble, not sticky */
+.ev-user > .marker { top: 10px; }
+.ev-user > .bubble { background: var(--vscode-input-background); border: 1px solid var(--vscode-focusBorder); border-radius: 10px; padding: 8px 12px; }
+.ev-user > .bubble.cross { border-style: dashed; }
+.ev-user > .meta { font-size: 10px; opacity: 0.5; margin-top: 3px; }
+/* sent from here, not read by the agent yet: dimmed, its dot hollow */
+.ev.echo { opacity: 0.5; }
+.ev.echo > .marker { background: var(--vscode-editor-background); }
 .card.auth { border-color: var(--vscode-charts-orange, #d18616); }
 
 /* sticky prompt at the head of each turn */
