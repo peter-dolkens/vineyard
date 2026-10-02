@@ -89,7 +89,10 @@ details.thinking .md { padding: 4px 12px 10px; opacity: 0.8; font-size: 12px; }
 .jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 110px; z-index: 2; border-radius: 14px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
 
 /* cards */
-.cards { padding: 0 12px; display: flex; flex-direction: column; gap: 8px; }
+/* A tall card (several questions, a long permission) scrolls in its own box rather than running off
+   the bottom of a short window; the log keeps the rest. */
+.cards { padding: 0 12px; display: flex; flex-direction: column; gap: 8px; flex: 0 1 auto; min-height: 0; max-height: 75%; overflow-y: auto; overscroll-behavior: contain; }
+.cards > .card { flex-shrink: 0; }
 .card { border: 1px solid var(--vscode-editorWarning-foreground); border-radius: 8px; padding: 10px 12px; background: var(--vscode-sideBar-background); display: flex; flex-direction: column; gap: 8px; }
 .card.notice { border-color: var(--vscode-panel-border, rgba(128,128,128,.3)); }
 .card.busy { opacity: 0.5; pointer-events: none; }
