@@ -619,7 +619,7 @@ function turnFor(): HTMLElement {
 
 // ---- transcript rendering -------------------------------------------------------------------------
 
-/** A message in the middle of a turn: the same bubble as a turn's prompt, on the rail where it lands. */
+/** A message the agent has not read yet: a turn prompt's bubble, on the rail at the foot of the log. */
 function userRow(text: string, meta: string, cross = false, images: string[] = []): HTMLElement {
   const bubble = el('div', 'bubble' + (cross ? ' cross' : ''));
   if (text) bubble.appendChild(md(text, true));
@@ -682,7 +682,7 @@ function promptImages(srcs: string[]): HTMLElement {
   return row;
 }
 
-function startTurn(promptText: string, time: string, cross: boolean, images: string[] = []) {
+function startTurn(promptText: string, time: string, cross: boolean, images: string[] = [], note?: string) {
   clearEchoes(promptText);
   const turn = el('section', 'turn');
   const sticky = el('div', 'turn-prompt');
@@ -693,7 +693,7 @@ function startTurn(promptText: string, time: string, cross: boolean, images: str
   const marker = el('span', 'marker');
   sticky.appendChild(marker);
   sticky.appendChild(bubble);
-  sticky.appendChild(el('div', 'meta', (cross ? 'via message · ' : '') + time));
+  sticky.appendChild(el('div', 'meta', [cross && 'via message', time, note].filter(Boolean).join(' · ')));
   sticky.onclick = () => sticky.classList.toggle('expanded');
   turn.appendChild(sticky);
   turnsEl.appendChild(turn);
@@ -860,9 +860,11 @@ function renderEntry(e: Entry) {
 }
 
 /**
- * A message sent while the agent was mid-turn. Claude records it when the agent reads it, as a
- * queued_command attachment rather than a prompt, so it lands inside the running turn. Background
- * task notifications travel the same way and are not messages.
+ * A message sent while the agent was mid-turn. Claude records it as a queued_command attachment
+ * rather than a prompt, at the point the agent reads it (after the tool results it was waiting on)
+ * but stamped with when it was sent. What the agent does next answers it, so it opens a turn of its
+ * own and pins like any prompt. Background task notifications travel the same way and are not
+ * messages.
  */
 function renderQueuedPrompt(att: any, time: string) {
   if (att.commandMode && att.commandMode !== 'prompt') return;
@@ -873,8 +875,7 @@ function renderQueuedPrompt(att: any, time: string) {
   if (!t && !images.length) return;
   const cross = /^<cross-session-message\b/.test(t);
   const clean = cross ? t.replace(/<\/?cross-session-message[^>]*>/g, '').trim() : t;
-  clearEchoes(clean);
-  turnFor().appendChild(userRow(clean, `${cross ? 'via message · ' : ''}read mid-turn · ${time}`, cross, images));
+  startTurn(clean, time, cross, images, 'read mid-turn');
 }
 
 function ioBlock(label: string, text: string, cls: string): HTMLElement {
