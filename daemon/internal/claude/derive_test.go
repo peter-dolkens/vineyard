@@ -66,6 +66,31 @@ func TestDeriveStates(t *testing.T) {
 	}
 }
 
+// Only Claude Code's own API error message flags a sign-in problem; a turn that merely talks about
+// logins, or a tool searching for "login", does not.
+func TestDeriveAPIError(t *testing.T) {
+	authErr := `{"type":"assistant","timestamp":"2026-09-16T14:32:20.000Z","isApiErrorMessage":true,"error":"authentication_failed","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"Invalid API key · Please run /login"}],"stop_reason":"stop_sequence"}}`
+	loginTalk := `{"type":"assistant","timestamp":"2026-09-16T14:32:20.000Z","message":{"model":"claude-fable-5-1","role":"assistant","content":[{"type":"text","text":"The login page now returns 401 when the OAuth token is invalid."}],"stop_reason":"end_turn"}}`
+	loginGrep := `{"type":"assistant","timestamp":"2026-09-16T14:32:16.000Z","message":{"model":"claude-fable-5-1","role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"grep -rn login","description":"Find not logged in / please run /login handling"}}],"stop_reason":"tool_use"}}`
+	cases := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"auth failure", []string{userPrompt, authErr}, "authentication_failed"},
+		{"reply about logins", []string{userPrompt, loginTalk}, ""},
+		{"tool searching for login", []string{userPrompt, loginGrep}, ""},
+		{"cleared by the next turn", []string{userPrompt, authErr, answerPrompt, finalText}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := DeriveFromTranscript(parse(t, c.lines...)).APIError; got != c.want {
+				t.Fatalf("APIError = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestDeriveMetadata(t *testing.T) {
 	d := DeriveFromTranscript(parse(t, userPrompt, thinking, toolUse, toolResult, finalText, title, lastPrompt))
 	if d.Model != "claude-fable-5-1" || d.Effort != "high" || d.Title != "Do the thing" || d.LastPrompt != "do the thing" {

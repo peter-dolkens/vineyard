@@ -133,6 +133,9 @@ type Derived struct {
 	// new size. ContextAt is that entry's timestamp.
 	ContextTokens int64
 	ContextAt     int64
+	// APIError is the error kind of the API error message Claude Code wrote in place of a reply,
+	// when that is the thread's last message.
+	APIError string
 }
 
 // DeriveFromTranscript walks the tail once and decides where the conversation is. Only the main
@@ -273,6 +276,12 @@ func deriveEntries(entries []map[string]any, sidechain bool) Derived {
 
 	if last == nil {
 		return d
+	}
+	if apiErr, _ := last["isApiErrorMessage"].(bool); apiErr {
+		d.APIError = str(last["error"])
+		if d.APIError == "" {
+			d.APIError = "unknown"
+		}
 	}
 
 	for _, p := range pending {
@@ -456,6 +465,7 @@ func BuildAgent(machineID string, s RawSession, t *RawTranscript, now int64) *mo
 	}
 	a.ContextTokens = d.ContextTokens
 	a.ContextAt = d.ContextAt
+	a.APIError = d.APIError
 	a.PendingTools = d.PendingTools
 	a.LastActivityAt = max64(d.LastActivityAt, t.Mtime, regUpdated)
 

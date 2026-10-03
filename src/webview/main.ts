@@ -42,6 +42,7 @@ interface Agent {
   kind?: string;
   state: string;
   stateDetail?: string;
+  apiError?: string;
   model?: string;
   effort?: string;
   permissionMode?: string;
@@ -1015,16 +1016,17 @@ function escapeHtml(s: string): string {
 
 // ---- cards ---------------------------------------------------------------------------------------
 
-const AUTH_RE = /authenticat|oauth|not logged in|log ?in|api key|invalid.*token|401/i;
+// Claude Code's own error kinds for a turn the API refused for want of a usable sign-in. Matching on
+// these, not on words, keeps a session that merely talks about logins from asking to sign in.
+const AUTH_ERRORS = new Set(['authentication_failed', 'oauth_org_not_allowed']);
 
 function renderCards() {
   cardsEl.innerHTML = '';
   if (!agent || !machine) return;
-  const authText = [agent.stateDetail, agent.managed?.lastError].filter(Boolean).join(' ');
-  if (agent.alive && AUTH_RE.test(authText)) {
+  if (agent.alive && agent.apiError && AUTH_ERRORS.has(agent.apiError)) {
     const c = el('div', 'card auth');
     c.appendChild(el('div', 'card-title', `Claude on ${machine.name} needs to sign in`));
-    c.appendChild(el('div', 'card-text', authText.slice(0, 300)));
+    if (agent.stateDetail) c.appendChild(el('div', 'card-text', agent.stateDetail.slice(0, 300)));
     c.appendChild(el('div', 'card-hint', `Vineyard runs the sign-in on ${machine.name}, opens the page in this browser, and passes the code back. Then send your message again.`));
     const b = el('button', 'primary', `Sign in on ${machine.name} from here`);
     b.onclick = () => vscode.postMessage({ type: 'login' });

@@ -59,6 +59,7 @@ type Agent struct {
 	Version        string     `json:"version,omitempty"`
 	State          AgentState `json:"state"`
 	StateDetail    string     `json:"stateDetail,omitempty"`
+	APIError       string     `json:"apiError,omitempty"` // kind of API error the last turn ended on ("authentication_failed", ...)
 	RegistryStatus string     `json:"registryStatus,omitempty"`
 	Model          string     `json:"model,omitempty"`
 	Effort         string     `json:"effort,omitempty"`

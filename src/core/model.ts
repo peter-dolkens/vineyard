@@ -80,6 +80,8 @@ export interface Agent {
   version?: string;
   state: AgentState;
   stateDetail?: string;
+  /** The kind of API error the last turn ended on ('authentication_failed', 'rate_limit', ...). */
+  apiError?: string;
   registryStatus?: string;
   model?: string;
   effort?: string;
