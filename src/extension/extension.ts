@@ -442,6 +442,29 @@ export function activate(context: vscode.ExtensionContext): void {
     fleet.refreshAll();
   });
 
+  // Update Claude Code on a machine: its daemon runs `claude update`. That can outlast a relayed
+  // request, so the daemon answers {done:false} every 40 s and we ask again until it has finished.
+  cmd('vineyard.updateClaude', async (node?: Node) => {
+    const machine = node?.machine ?? (await machineOf(undefined));
+    if (!machine) return;
+    if (!machine.online) throw new Error(`${machine.name} is offline`);
+    type Reply = { done: boolean; message?: string; output?: string };
+    const res = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Updating Claude Code on ${machine.name}…` },
+      async () => {
+        const ask = (action: string) => fleet.client.request<Reply>('claudeupdate', machine.id, { action }, 55_000);
+        let r = await ask('start').catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(/unknown op/.test(message) ? `${machine.name}'s daemon is too old to update Claude Code; update the daemon first.` : message);
+        });
+        while (!r.done) r = await ask('wait');
+        return r;
+      },
+    );
+    log.appendLine(`[claude update on ${machine.name}]\n${res.output ?? ''}`);
+    void vscode.window.showInformationMessage(`Claude Code on ${machine.name}: ${res.message || 'update finished'}`);
+  });
+
   cmd('vineyard.switchAccount', async (node?: Node) => {
     const machine = node?.machine ?? (await machineOf(undefined));
     if (machine) await switchAccount(fleet.client, machine);

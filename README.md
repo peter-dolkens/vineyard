@@ -56,6 +56,7 @@ makes it work; the daemons talk only to each other, and only while you are looki
   transcript stays on disk either way.
 * **Sign In to Claude on Machine…** when a remote machine's login expires: the daemon runs the sign-in
   there, Vineyard opens the URL in your browser and passes the code back.
+* **Update Claude Code on Machine** runs `claude update` on that machine and shows what it said.
 * **Switch Claude Account on Machine…** (experimental, behind `vineyard.experimental.claudeAccounts`,
   or Settings › Experimental in the web app): keep several Claude subscription accounts signed in on a
   machine and swap between them, as if you had signed in again as the other one. Sessions, transcripts

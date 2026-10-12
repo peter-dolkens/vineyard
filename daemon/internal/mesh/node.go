@@ -183,6 +183,8 @@ type Node struct {
 	up          uplinkState
 	// dialFilter, when set (tests only), drops addresses this node must not be able to reach.
 	dialFilter func(addrs []string) []string
+	// ccUpdate runs `claude update` for viewers (claudeupdate.go).
+	ccUpdate claudeUpdater
 
 	wake chan struct{}
 }
@@ -1893,6 +1895,12 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return n.handleAccounts(a)
+	case "claudeupdate":
+		var a protocol.ClaudeUpdateArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.handleClaudeUpdate(a)
 	case "sessions":
 		var a protocol.SessionsArgs
 		if len(r.Args) > 0 {

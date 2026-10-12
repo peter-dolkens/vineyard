@@ -414,6 +414,13 @@ type AccountsArgs struct {
 	Code   string `json:"code,omitempty"`
 }
 
+// ClaudeUpdateArgs runs `claude update` on the target. "start" begins one (or joins the one running)
+// and "wait" keeps waiting for it; either replies {done:false} after a while so the relay does not
+// time out, and {done:true, message, output} once it has finished.
+type ClaudeUpdateArgs struct {
+	Action string `json:"action"`
+}
+
 // RenameArgs gives a session a custom title (what /rename does in Claude Code).
 type RenameArgs struct {
 	SessionID string `json:"sessionId"`

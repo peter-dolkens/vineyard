@@ -246,6 +246,12 @@
         "icon": "$(key)"
       },
       {
+        "command": "vineyard.updateClaude",
+        "title": "Update Claude Code on Machine",
+        "category": "Vineyard",
+        "icon": "$(sync)"
+      },
+      {
         "command": "vineyard.switchAccount",
         "title": "Switch Claude Account on Machine…",
         "category": "Vineyard",
@@ -472,6 +478,11 @@
         },
         {
           "command": "vineyard.login",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
+          "group": "1_manage@0"
+        },
+        {
+          "command": "vineyard.updateClaude",
           "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem != machine-offline",
           "group": "1_manage@0"
         },
