@@ -233,7 +233,7 @@ export function buildActions(c: ActionContext): Action[] {
     { id: 'mode', group: GROUP.model, label: 'Permission mode…', value: c.modeLabel, detail: notManaged, disabled: !c.managedLive },
 
     { id: 'rename', group: GROUP.session, label: 'Rename session…', disabled: !c.online || c.subagent },
-    { id: 'interrupt', group: GROUP.session, label: 'Interrupt current turn', detail: notManaged ?? (c.busy ? 'Like pressing Escape in the session.' : 'The session is not mid-turn.'), disabled: !c.managedLive || !c.busy },
+    { id: 'interrupt', group: GROUP.session, label: 'Interrupt current turn', detail: notManaged ?? (c.busy ? 'Like pressing Escape in the session: ends the turn, and any prompt it is waiting on with it.' : 'The session is not mid-turn.'), disabled: !c.managedLive || !c.busy },
     { id: 'stop', group: GROUP.session, label: c.managedLive ? 'Stop session' : 'Terminate session', detail: c.managedLive ? 'Ends cleanly; resumable later.' : 'Kills the Claude Code process; the transcript stays.', disabled: !c.online || !c.alive || c.subagent },
     { id: 'copySessionId', group: GROUP.session, label: 'Copy session ID' },
     { id: 'openWorkspace', group: GROUP.session, label: 'Open workspace in VS Code' },

@@ -62,6 +62,45 @@ type proc struct {
 	// ctxBusy: a get_context_usage request is in flight; ctxUnsupported: this Claude Code refused one.
 	ctxBusy        bool
 	ctxUnsupported bool
+	// queue holds every control_request the user still has to answer, oldest first; info.Pending
+	// mirrors its head and info.PendingMore counts the rest. Claude Code can be blocked on several at
+	// once - two subagents each asking to run a command arrive as two can_use_tool requests, neither
+	// answered (verified against Claude Code 2.1.273) - and a request we drop blocks that agent for
+	// good: nothing retries it, and Escape is then the only way out.
+	queue []*model.PendingRequest
+}
+
+// push, drop and syncPending keep info.Pending on the head of the queue. All three are called with
+// m.mu held.
+func (p *proc) push(pr *model.PendingRequest) {
+	p.queue = append(p.queue, pr)
+	p.syncPending()
+}
+
+// drop removes the request with this id from anywhere in the queue and returns it, nil if the queue
+// does not hold it. Answers arrive in whatever order the user works through the cards.
+func (p *proc) drop(requestID string) *model.PendingRequest {
+	for i, pr := range p.queue {
+		if pr.RequestID == requestID {
+			p.queue = append(p.queue[:i:i], p.queue[i+1:]...)
+			p.syncPending()
+			return pr
+		}
+	}
+	return nil
+}
+
+func (p *proc) dropAll() {
+	p.queue = nil
+	p.syncPending()
+}
+
+func (p *proc) syncPending() {
+	if len(p.queue) == 0 {
+		p.info.Pending, p.info.PendingMore = nil, 0
+		return
+	}
+	p.info.Pending, p.info.PendingMore = p.queue[0], len(p.queue)-1
 }
 
 // ctlReply is Claude Code's answer to one of our control_requests: the response body on success,
@@ -220,7 +259,7 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
 	}
 	if o.Resume != "" && o.Recover != nil && len(o.Recover.Input) > 0 {
-		p.info.Pending = recoveredPending(o.Recover, time.Now().UnixMilli())
+		p.push(recoveredPending(o.Recover, time.Now().UnixMilli()))
 	}
 	m.mu.Lock()
 	m.procs[sid] = p
@@ -311,13 +350,12 @@ func (m *Manager) Respond(sid, requestID string, response json.RawMessage) error
 		return err
 	}
 	m.mu.Lock()
-	if p.info.Pending == nil || p.info.Pending.RequestID != requestID {
+	pending := p.drop(requestID)
+	if pending == nil {
 		m.mu.Unlock()
 		return fmt.Errorf("request %s is not pending", requestID)
 	}
-	recovered := p.info.Pending.Kind == model.PendingRecovered
-	pending := p.info.Pending
-	p.info.Pending = nil
+	recovered := pending.Kind == model.PendingRecovered
 	if recovered {
 		p.info.RecoveredDone = pending.ToolUseID
 	}
@@ -345,13 +383,27 @@ func (m *Manager) Respond(sid, requestID string, response json.RawMessage) error
 	return err
 }
 
-// Interrupt asks Claude to stop the current turn (like pressing Escape).
+// Interrupt asks Claude to stop the current turn (like pressing Escape). Anything it was waiting on
+// an answer for dies with the turn: Claude Code answers those tool calls itself ("The user doesn't
+// want to proceed with this tool use") and never withdraws the control_request, so the queue is
+// cleared here or its cards would outlive the turn they belong to.
 func (m *Manager) Interrupt(sid string) error {
 	p, err := m.get(sid)
 	if err != nil {
 		return err
 	}
-	return m.write(p, map[string]any{"type": "control_request", "request_id": newUUID(), "request": map[string]any{"subtype": "interrupt"}})
+	err = m.write(p, map[string]any{"type": "control_request", "request_id": newUUID(), "request": map[string]any{"subtype": "interrupt"}})
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	cleared := len(p.queue) > 0
+	p.dropAll()
+	m.mu.Unlock()
+	if cleared {
+		m.changed()
+	}
+	return nil
 }
 
 // StopTask stops one running background task of the session: a backgrounded shell command (taskID is
@@ -672,7 +724,7 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 		case "control_request":
 			if pr := parseControlRequest(env.RequestID, env.Request, time.Now().UnixMilli()); pr != nil {
 				m.mu.Lock()
-				p.info.Pending = pr
+				p.push(pr)
 				m.mu.Unlock()
 				m.changed()
 			} else {
@@ -724,10 +776,13 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				// on our own answer; this covers a server that gives up first.
 				m.mu.Lock()
 				cleared := false
-				if e := p.info.Pending; e != nil && e.Kind == model.PendingElicitation && e.Elicitation != nil &&
-					(e.Elicitation.ElicitationID == env.ElicitationID || (env.ElicitationID == "" && e.Elicitation.ServerName == env.McpServerName)) {
-					p.info.Pending = nil
-					cleared = true
+				for _, e := range p.queue {
+					if e.Kind == model.PendingElicitation && e.Elicitation != nil &&
+						(e.Elicitation.ElicitationID == env.ElicitationID || (env.ElicitationID == "" && e.Elicitation.ServerName == env.McpServerName)) {
+						p.drop(e.RequestID)
+						cleared = true
+						break
+					}
 				}
 				m.mu.Unlock()
 				if cleared {
@@ -778,7 +833,7 @@ func (m *Manager) wait(p *proc) {
 			p.info.LastError += ": " + strings.Join(p.stderr[max(0, len(p.stderr)-5):], " | ")
 		}
 	}
-	p.info.Pending = nil
+	p.dropAll()
 	m.mu.Unlock()
 	close(p.done)
 	m.log.Printf("managed: %s exited (%v)", p.info.SessionID, err)
@@ -909,10 +964,14 @@ func recoveredPending(r *RecoveredQuestion, now int64) *model.PendingRequest {
 
 func (m *Manager) clearRecovered(p *proc) {
 	m.mu.Lock()
-	cleared := p.info.Pending != nil && p.info.Pending.Kind == model.PendingRecovered
-	if cleared {
-		p.info.RecoveredDone = p.info.Pending.ToolUseID
-		p.info.Pending = nil
+	cleared := false
+	for _, pr := range p.queue {
+		if pr.Kind == model.PendingRecovered {
+			p.info.RecoveredDone = pr.ToolUseID
+			p.drop(pr.RequestID)
+			cleared = true
+			break
+		}
 	}
 	m.mu.Unlock()
 	if cleared {

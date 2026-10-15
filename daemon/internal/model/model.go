@@ -188,17 +188,21 @@ type Attachment struct {
 }
 
 type ManagedInfo struct {
-	SessionID      string          `json:"sessionId"`
-	PID            int             `json:"pid"`
-	Cwd            string          `json:"cwd"`
-	Name           string          `json:"name,omitempty"`
-	Model          string          `json:"model,omitempty"`
-	Effort         string          `json:"effort,omitempty"`
-	PermissionMode string          `json:"permissionMode,omitempty"`
-	StartedAt      int64           `json:"startedAt"`
-	Ready          bool            `json:"ready"`
-	Resumed        bool            `json:"resumed,omitempty"`
-	Pending        *PendingRequest `json:"pending,omitempty"`
+	SessionID      string `json:"sessionId"`
+	PID            int    `json:"pid"`
+	Cwd            string `json:"cwd"`
+	Name           string `json:"name,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	PermissionMode string `json:"permissionMode,omitempty"`
+	StartedAt      int64  `json:"startedAt"`
+	Ready          bool   `json:"ready"`
+	Resumed        bool   `json:"resumed,omitempty"`
+	// Pending is the request the user is being asked to answer; PendingMore counts the ones queued
+	// behind it (two subagents can ask for permission at the same time). The next one takes its place
+	// as soon as this one is answered.
+	Pending     *PendingRequest `json:"pending,omitempty"`
+	PendingMore int             `json:"pendingMore,omitempty"`
 	// RecoveredDone is the tool_use id of a recovered question that has been answered (or waved off
 	// with a prompt). The transcript keeps that AskUserQuestion dangling for a moment after the
 	// answer is sent, until Claude Code appends the prompt; Merge hides it meanwhile.

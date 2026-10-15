@@ -636,7 +636,9 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
       alive: !!agent?.alive,
       managedLive: managedLive(),
       subagent: agent?.kind === 'subagent',
-      busy: !!agent && ACTIVE.has(agent.state) && agent.state !== 'question' && agent.state !== 'permission',
+      // Mid-turn in any sense, waiting on an answer included: Escape ends the turn there too, and a
+      // session blocked on a prompt that never reached us is exactly when the interrupt is needed.
+      busy: !!agent && ACTIVE.has(agent.state),
       machineName: machine?.name ?? 'the machine',
       modelLabel: modelLabel(),
       effort: currentEffort(),

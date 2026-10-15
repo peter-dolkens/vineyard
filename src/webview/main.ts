@@ -56,7 +56,7 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; pendingMore?: number; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 interface MachineInfo {
   id: string;
@@ -113,6 +113,16 @@ let pinned = true;
 let sending = false;
 /** Set when the composer button asked for an interrupt; while the turn is still running it offers Stop instead. */
 let interruptAt: number | undefined;
+/**
+ * When the session first looked blocked on a prompt we have no card for. Claude Code is waiting on
+ * an answer (its registry says "waiting"), Vineyard holds no request to show, so nothing here can
+ * answer it and the turn never moves: an interrupt is the only way out. A few seconds' grace keeps
+ * the ordinary moment between a question appearing in the transcript and its request reaching us
+ * from looking like a hang.
+ */
+let blockedSince: number | undefined;
+let blockedTimer: number | undefined;
+const BLOCKED_GRACE_MS = 8000;
 let tickerTimer: number | undefined;
 
 // Stats derived from the transcript (for the info strip).
@@ -314,11 +324,46 @@ const BUTTON: Record<ButtonMode, { icon: string; title: string }> = {
   pause: { icon: 'debug-pause', title: 'Interrupt the current turn (like pressing Escape in the session)\nEnter still sends your message; it is read between tool calls' },
   stop: { icon: 'debug-stop', title: 'Still running after the interrupt\nClick to stop the session (asks first)' },
 };
+/**
+ * The session is waiting for an answer no card here can give: a managed session in a waiting state
+ * with no pending request of ours. It happens when a request never reached us or was answered
+ * against a turn that has moved on; the agent behind it stays blocked until the turn is interrupted.
+ */
+function blockedWithNoCard(): boolean {
+  if (!agent || !machine?.online || !agent.alive) return false;
+  if (!agent.managed || agent.managed.exited || agent.managed.pending) return false;
+  return agent.state === 'permission' || agent.state === 'question';
+}
+
+/** As above, and long enough that it is not just the moment before the request reaches us. */
+function blockedLongEnough(): boolean {
+  return blockedSince !== undefined && Date.now() - blockedSince >= BLOCKED_GRACE_MS;
+}
+
+/** Starts, keeps or clears the blocked clock, and re-renders once the grace period is up. */
+function trackBlocked(): void {
+  if (blockedTimer) {
+    clearTimeout(blockedTimer);
+    blockedTimer = undefined;
+  }
+  if (!blockedWithNoCard()) {
+    blockedSince = undefined;
+    return;
+  }
+  blockedSince ??= Date.now();
+  if (!blockedLongEnough()) {
+    blockedTimer = setTimeout(() => {
+      renderButton();
+      renderCards();
+    }, BLOCKED_GRACE_MS - (Date.now() - blockedSince)) as unknown as number;
+  }
+}
+
 function buttonMode(): ButtonMode {
   if (sending) return 'sending';
   if (!agent || !machine) return 'send';
   const managedLive = !!agent.managed && !agent.managed.exited && machine.online && agent.alive;
-  if (managedLive && BUSY.has(agent.state) && !hasDraft()) return interruptAt ? 'stop' : 'pause';
+  if (managedLive && (BUSY.has(agent.state) || blockedLongEnough()) && !hasDraft()) return interruptAt ? 'stop' : 'pause';
   return 'send';
 }
 function hasDraft(): boolean {
@@ -330,7 +375,12 @@ function renderButton() {
   btnSend.className = `send ${mode}`;
   btnSend.dataset.mode = mode;
   btnSend.innerHTML = `<i class="codicon codicon-${BUTTON[mode].icon}"></i>`;
-  btnSend.title = canSend || mode !== 'send' ? BUTTON[mode].title : 'This session cannot take messages';
+  const stuck = mode === 'pause' && !BUSY.has(agent?.state ?? '');
+  btnSend.title = stuck
+    ? 'Waiting on a prompt that never reached Vineyard\nClick to interrupt the turn; a message sent now is only read once it moves'
+    : canSend || mode !== 'send'
+      ? BUTTON[mode].title
+      : 'This session cannot take messages';
   btnSend.setAttribute('aria-label', btnSend.title.split('\n')[0]!);
   btnSend.disabled = mode === 'sending' || (mode === 'send' && !canSend);
 }
@@ -917,7 +967,8 @@ function renderHeader() {
   const managedLive = !!agent.managed && !agent.managed.exited;
   const subagent = agent.kind === 'subagent';
   const canSend = machine.online && agent.alive && !subagent;
-  if (!BUSY.has(agent.state)) interruptAt = undefined; // the turn ended: back to Send next time
+  trackBlocked();
+  if (!BUSY.has(agent.state) && !blockedWithNoCard()) interruptAt = undefined; // the turn ended: back to Send next time
   renderButton();
   input.disabled = !canSend;
   // A subagent cannot take messages: the box gives way to a note, the toolbar stays for its model,
@@ -1034,12 +1085,34 @@ function renderCards() {
     cardsEl.appendChild(c);
   }
   const pending = agent.managed && !agent.managed.exited ? agent.managed.pending : undefined;
-  if (pending?.kind === 'elicitation') {
-    cardsEl.appendChild(elicitationCard(pending));
+  if (pending) {
+    const card =
+      pending.kind === 'elicitation'
+        ? elicitationCard(pending)
+        : pending.toolName === 'AskUserQuestion'
+          ? questionCard(pending)
+          : pending.toolName === 'ExitPlanMode'
+            ? planCard(pending)
+            : permissionCard(pending);
+    // Several can be outstanding at once (two subagents asking to run a command). They are answered
+    // one card at a time, oldest first; the next takes this one's place.
+    const more = agent.managed?.pendingMore ?? 0;
+    if (more > 0) card.appendChild(el('div', 'card-hint', more === 1 ? 'One more request is waiting behind this one.' : `${more} more requests are waiting behind this one.`));
+    cardsEl.appendChild(card);
     return;
   }
-  if (pending) {
-    cardsEl.appendChild(pending.toolName === 'AskUserQuestion' ? questionCard(pending) : pending.toolName === 'ExitPlanMode' ? planCard(pending) : permissionCard(pending));
+  if (blockedLongEnough()) {
+    const c = el('div', 'card notice');
+    c.appendChild(el('div', 'card-title', 'Claude is waiting on a prompt that never reached Vineyard'));
+    c.appendChild(el('div', 'card-text', `${agent.stateDetail ?? 'It is waiting for an answer'} — there is nothing here to answer it with, so the turn cannot move on its own.`));
+    c.appendChild(el('div', 'card-hint', 'Interrupting ends the turn: the tool call it is waiting on is refused, and the session takes messages again.'));
+    const b = el('button', 'primary', 'Interrupt the turn');
+    b.onclick = () => {
+      b.setAttribute('disabled', '');
+      interrupt();
+    };
+    c.appendChild(b);
+    cardsEl.appendChild(c);
     return;
   }
   const q = agent.pendingTools.find((t) => t.name === 'AskUserQuestion');
