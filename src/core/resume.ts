@@ -8,21 +8,29 @@ import type { HostInfo } from './model.ts';
 
 /**
  * The command to type into a terminal on that machine. The settings file is named only when the
- * machine reports one: Claude Code refuses to start on a --settings path that is not there, and a
- * daemon from before the file existed reports nothing.
+ * machine reports one: Claude Code refuses to start on a --settings path that is not there, a
+ * daemon from before the file existed reports nothing, and a daemon whose file has gone missing
+ * stops reporting it.
  */
 export function resumeCommand(sessionId: string, host: HostInfo | undefined): string {
   const settings = host?.vineyardSettings;
   if (!settings) return `claude --resume ${sessionId}`;
-  return `claude --resume ${sessionId} --settings ${quoteFor(host?.os, settings)}`;
+  return `claude --resume ${sessionId} --settings ${quotePath(settings, host?.os)}`;
 }
 
+/** A path with nothing in it for any shell to act on: the usual ~/.vineyard/claude-settings.json. */
+const PLAIN = /^[A-Za-z0-9_\-./~]+$/;
+/** The same on Windows, where the drive letter and separators are the only extras. */
+const PLAIN_WINDOWS = /^[A-Za-z]:[\\/][A-Za-z0-9_\-.\\/]*$/;
+
 /**
- * One path, quoted for the shell the terminal opens on that machine: cmd.exe and PowerShell both
- * read a double-quoted path literally enough for a file name, every POSIX shell the single-quoted
- * form. A remote machine's command is quoted again on its way through ssh, which this survives.
+ * One path for the shell the terminal happens to open with. A path that needs no quoting is left
+ * bare, which every shell reads the same way; the rest are quoted for the machine's family, since
+ * cmd.exe and PowerShell understand a double-quoted path and POSIX shells a single-quoted one.
  */
-function quoteFor(os: string | undefined, path: string): string {
-  if (os === 'windows') return `"${path}"`;
+function quotePath(path: string, os: string | undefined): string {
+  const windows = os === 'windows';
+  if ((windows ? PLAIN_WINDOWS : PLAIN).test(path)) return path;
+  if (windows) return `"${path}"`;
   return `'${path.replace(/'/g, `'\\''`)}'`;
 }

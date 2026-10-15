@@ -44,3 +44,14 @@ func WriteClaudeSettings() (string, error) {
 	}
 	return path, nil
 }
+
+// EnsureClaudeSettings is WriteClaudeSettings for a caller with nowhere to put an error: the path,
+// or "" when the file is not there and cannot be put there. Since it writes what is missing, a
+// caller that asks each time it reports the path never advertises a file that has been deleted.
+func EnsureClaudeSettings() string {
+	path, err := WriteClaudeSettings()
+	if err != nil {
+		return ""
+	}
+	return path
+}

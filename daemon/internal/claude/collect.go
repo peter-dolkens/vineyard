@@ -87,9 +87,12 @@ func DefaultClaudeDir() string {
 type Collector struct {
 	ClaudeDir string
 	TailLines int
-	// VineyardSettings is the settings file Vineyard's sessions run with, reported so a client can
-	// name it when it starts a session on this machine itself (model.HostInfo.VineyardSettings).
-	VineyardSettings string
+	// VineyardSettings reports the settings file Vineyard's sessions run with, so a client can name
+	// it when it starts a session on this machine itself (model.HostInfo.VineyardSettings). It is
+	// asked on every collect, and "" (or no function at all) keeps the path out of the snapshot:
+	// Claude Code refuses to start on a --settings path that is not there, so a path that is
+	// reported has to be one that exists.
+	VineyardSettings func() string
 
 	mu       sync.Mutex
 	cwdCache map[string]cwdEntry // project dir → cwd (keyed by latest transcript path+mtime)
@@ -123,17 +126,24 @@ func NewCollector(claudeDir string, tailLines int) *Collector {
 	return &Collector{ClaudeDir: claudeDir, TailLines: tailLines, cwdCache: map[string]cwdEntry{}, tailCache: map[string]tailEntry{}, subCache: map[string]subEntry{}, taskCache: map[string][]model.BackgroundTask{}}
 }
 
+func (c *Collector) vineyardSettings() string {
+	if c.VineyardSettings == nil {
+		return ""
+	}
+	return c.VineyardSettings()
+}
+
 func (c *Collector) Collect() *Report {
 	home, _ := os.UserHomeDir()
 	hostname, _ := os.Hostname()
 	r := &Report{
 		Host: model.HostInfo{
-			Hostname:  hostname,
-			OS:        runtime.GOOS,
-			Arch:      runtime.GOARCH,
-			Home:      home,
+			Hostname:         hostname,
+			OS:               runtime.GOOS,
+			Arch:             runtime.GOARCH,
+			Home:             home,
 			ClaudeDir:        c.ClaudeDir,
-			VineyardSettings: c.VineyardSettings,
+			VineyardSettings: c.vineyardSettings(),
 			Now:              time.Now().UnixMilli(),
 			MACs:             hardwareAddrs(),
 		},

@@ -372,12 +372,17 @@ settings files, so it is the one place to put a setting that should hold for a V
 not for one the user starts by hand. Today it asks for everything there is to show, since Vineyard is
 the window on these sessions: `showThinkingSummaries`, `verbose` and `viewMode: verbose`.
 
-The daemon writes the file at startup and again before each spawn, rewriting it whenever the build's
-contents change; editing it by hand does not last. It reports the path in its snapshot
-(`host.vineyardSettings`) so *Resume in a terminal* can name the file on that machine too. Claude
-Code refuses to start on a `--settings` path that does not exist, so both the daemon and the
-extension leave the flag off rather than name a file they are not sure of — which is also what makes
-a machine running an older daemon, whose snapshot has no path in it, resume normally.
+The daemon writes the file before each spawn and again whenever it reports the path in its snapshot
+(`host.vineyardSettings`), rewriting it when the build's contents change; editing it by hand does not
+last. The path is reported so *Resume in a terminal* can name the file on that machine too.
+
+Claude Code refuses to start on a `--settings` path that does not exist, so nothing names a file it
+is not sure of: the daemon reports a path only for a file it has just written, a spawn whose file
+cannot be written runs on the user's settings alone, and a machine with no path in its snapshot —
+one running a daemon from before the file existed — is resumed by exactly the command it was before.
+Spawning passes the path as one argument, which never goes through a shell; the terminal command is
+a line of shell, so the path is left bare when nothing in it needs quoting (the usual case on every
+OS, Windows paths included) and otherwise quoted for that machine's shell family.
 
 ## Taking over a session
 
