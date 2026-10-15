@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 )
 
@@ -186,22 +187,15 @@ func loginShell() string {
 	return "/bin/bash"
 }
 
-// Spawn starts a managed session and returns its session id immediately.
-func (m *Manager) Spawn(o SpawnOptions) (string, error) {
-	if o.Cwd == "" {
-		return "", errors.New("cwd is required")
-	}
-	if st, err := os.Stat(o.Cwd); err != nil || !st.IsDir() {
-		return "", fmt.Errorf("workspace %s is not a directory", o.Cwd)
-	}
-	bin, err := FindClaude(m.ClaudeBin)
-	if err != nil {
-		return "", err
-	}
-	sid := o.Resume
+// spawnArgs is the command line for a managed session: a stream-json conversation on stdio, with
+// permission prompts coming back to us, resuming sid or starting it. settings is Vineyard's own
+// Claude Code settings file (config.ClaudeSettingsFile); it is left off when there is none to give.
+func spawnArgs(o SpawnOptions, sid, settings string) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"}
-	if sid == "" {
-		sid = newUUID()
+	if settings != "" {
+		args = append(args, "--settings", settings)
+	}
+	if o.Resume == "" {
 		args = append(args, "--session-id", sid)
 	} else {
 		args = append(args, "--resume", sid)
@@ -221,6 +215,33 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 	for _, t := range o.AllowedTools {
 		args = append(args, "--allowedTools", t)
 	}
+	return args
+}
+
+// Spawn starts a managed session and returns its session id immediately.
+func (m *Manager) Spawn(o SpawnOptions) (string, error) {
+	if o.Cwd == "" {
+		return "", errors.New("cwd is required")
+	}
+	if st, err := os.Stat(o.Cwd); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("workspace %s is not a directory", o.Cwd)
+	}
+	bin, err := FindClaude(m.ClaudeBin)
+	if err != nil {
+		return "", err
+	}
+	sid := o.Resume
+	if sid == "" {
+		sid = newUUID()
+	}
+	// The settings Vineyard's own sessions run with. Claude Code will not start on a --settings path
+	// that is not there, so a session whose file cannot be written runs on the user's settings alone.
+	settings, err := config.WriteClaudeSettings()
+	if err != nil {
+		m.log.Printf("managed: running %s without Vineyard's settings: %v", sid, err)
+		settings = ""
+	}
+	args := spawnArgs(o, sid, settings)
 
 	m.mu.Lock()
 	if p, ok := m.procs[sid]; ok && !p.info.Exited {

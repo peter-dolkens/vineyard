@@ -176,6 +176,13 @@ func cmdRun() error {
 	service.CleanStaged()      // leftovers from a previous self-upgrade
 	service.CleanDist(Version) // stored builds of versions we no longer distribute
 	collector := claude.NewCollector(cfg.ClaudeDir, cfg.TailLines)
+	// Written at startup, not just before a spawn: resuming a session in a terminal names this file
+	// too, and that happens on machines whose daemon has never started one.
+	if path, err := config.WriteClaudeSettings(); err != nil {
+		logger.Printf("claude settings: %v", err)
+	} else {
+		collector.VineyardSettings = path
+	}
 	var node *mesh.Node
 	var mgr *managed.Manager
 	if !cfg.DisableManaged {
@@ -256,6 +263,9 @@ func cmdProbe() error {
 		claudeDir = cfg.ClaudeDir
 	}
 	c := claude.NewCollector(claudeDir, 80)
+	if _, err := os.Stat(config.ClaudeSettingsPath()); err == nil { // probe reports, it does not write
+		c.VineyardSettings = config.ClaudeSettingsPath()
+	}
 	r := c.Collect()
 	agents, workspaces := claude.Interpret(machineID, r, time.Now().UnixMilli())
 	snap := model.Snapshot{MachineID: machineID, Host: r.Host, Agents: agents, Workspaces: workspaces, HasClaude: r.HasClaude, At: time.Now().UnixMilli(), DaemonVersion: Version}

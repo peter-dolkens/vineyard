@@ -286,6 +286,12 @@ export interface HostInfo {
   arch?: string;
   home?: string;
   claudeDir?: string;
+  /**
+   * The Claude Code settings file Vineyard gives the sessions it starts on that machine. Daemons
+   * from before it existed leave it out; start a session without it rather than naming a file that
+   * is not there, which Claude Code refuses to start on.
+   */
+  vineyardSettings?: string;
   now?: number;
   macs?: string[];
 }

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { DaemonClient, type DaemonConnState } from './daemonClient.ts';
 import { FleetService, type MachineView } from './fleet.ts';
 import type { Agent } from '../core/model.ts';
+import { resumeCommand } from '../core/resume.ts';
 import { FleetTree, type AgentNode, type Node } from './tree.ts';
 import { FleetStatusBar } from './statusbar.ts';
 import { Notifier } from './notify.ts';
@@ -200,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const ok = await vscode.window.showWarningMessage(`${agentLabel(a.agent)} is still running on ${a.machine.name}. Resuming it in a second place can confuse the session. Continue?`, { modal: true }, 'Resume anyway');
       if (!ok) return;
     }
-    terminalFor(a, `claude --resume ${a.agent.sessionId}`).show();
+    terminalFor(a, resumeCommand(a.agent.sessionId, a.machine.entry.snapshot.host)).show();
   });
 
   cmd('vineyard.showTranscript', async (node?: Node) => {

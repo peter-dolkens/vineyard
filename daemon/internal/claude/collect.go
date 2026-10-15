@@ -87,6 +87,9 @@ func DefaultClaudeDir() string {
 type Collector struct {
 	ClaudeDir string
 	TailLines int
+	// VineyardSettings is the settings file Vineyard's sessions run with, reported so a client can
+	// name it when it starts a session on this machine itself (model.HostInfo.VineyardSettings).
+	VineyardSettings string
 
 	mu       sync.Mutex
 	cwdCache map[string]cwdEntry // project dir → cwd (keyed by latest transcript path+mtime)
@@ -129,9 +132,10 @@ func (c *Collector) Collect() *Report {
 			OS:        runtime.GOOS,
 			Arch:      runtime.GOARCH,
 			Home:      home,
-			ClaudeDir: c.ClaudeDir,
-			Now:       time.Now().UnixMilli(),
-			MACs:      hardwareAddrs(),
+			ClaudeDir:        c.ClaudeDir,
+			VineyardSettings: c.VineyardSettings,
+			Now:              time.Now().UnixMilli(),
+			MACs:             hardwareAddrs(),
 		},
 		Transcripts: map[string]RawTranscript{},
 	}
