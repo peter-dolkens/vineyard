@@ -202,6 +202,8 @@ export interface ManagedInfo {
   ready: boolean;
   resumed?: boolean;
   pending?: PendingRequest;
+  /** How many more requests are queued behind `pending`; each takes its place as the one before it is answered. */
+  pendingMore?: number;
   /** Tool_use id of a recovered question already answered; the daemon hides its dangling tool_use until the transcript catches up. */
   recoveredDone?: string;
   turns: number;
