@@ -10,6 +10,7 @@ import { thumbnails, wireFileInputs } from './files.ts';
 import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/composer.ts';
 import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
 import { isDelegating, shownState, shownStateLabel } from '../core/subagents.ts';
+import { isNarration } from '../core/thinking.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -753,6 +754,15 @@ function startTurn(promptText: string, time: string, cross: boolean, images: str
   syncHistoryButton();
 }
 
+/** A paragraph Claude wrote, on the green rail: the same row for a text block and for narration. */
+function assistantRow(text: string, side: boolean, time: string): HTMLElement {
+  const body = el('div', 'assistant');
+  body.appendChild(md(text));
+  const row = rail(side ? 'side' : 'assistant', body, time);
+  if (side) row.appendChild(el('span', 'side-tag', 'subagent'));
+  return row;
+}
+
 function renderEntry(e: Entry) {
   const uuid = typeof e.uuid === 'string' ? e.uuid : undefined;
   if (uuid) {
@@ -829,17 +839,17 @@ function renderEntry(e: Entry) {
           startTurn(clean, time, cross, images);
           images = [];
         } else {
-          const body = el('div', 'assistant');
-          body.appendChild(md(text));
-          const row = rail(side ? 'side' : 'assistant', body, time);
-          if (side) row.appendChild(el('span', 'side-tag', 'subagent'));
-          turnFor().appendChild(row);
+          turnFor().appendChild(assistantRow(text, side, time));
         }
         break;
       }
       case 'thinking': {
         const t = String(b.thinking ?? '').trim();
         if (!t) break;
+        if (isNarration(e)) {
+          turnFor().appendChild(assistantRow(t, side, time));
+          break;
+        }
         const det = el('details', 'thinking');
         det.appendChild(el('summary', undefined, 'Thinking'));
         det.appendChild(md(t));

@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import type { Agent } from '../core/model.ts';
 import type { FleetService, MachineView } from './fleet.ts';
 import { agentLabel, shortModel, tokens } from '../core/format.ts';
+import { isNarration } from '../core/thinking.ts';
 
 export const TRANSCRIPT_SCHEME = 'vineyard-transcript';
 
@@ -134,9 +135,14 @@ export function renderTranscript(entries: Record<string, unknown>[], ctx: { mach
           out.push(type === 'user' ? b.text.trim().split('\n').map((l) => `> ${l}`).join('\n') : b.text.trim(), '');
           break;
         }
-        case 'thinking':
-          if (b.thinking?.trim()) out.push(`<details><summary>💭 thinking · ${time}</summary>\n\n${b.thinking.trim()}\n\n</details>`, '');
+        case 'thinking': {
+          const t = b.thinking?.trim();
+          if (!t) break;
+          // Narration reads as something Claude said, not as reasoning folded away. Same rule as the chat.
+          if (isNarration(e)) out.push(`### 🤖 Claude${side} · ${time}`, '', t, '');
+          else out.push(`<details><summary>💭 thinking · ${time}</summary>\n\n${t}\n\n</details>`, '');
           break;
+        }
         case 'tool_use': {
           const name = b.name ?? 'tool';
           if (b.id) toolNames.set(b.id, name);
