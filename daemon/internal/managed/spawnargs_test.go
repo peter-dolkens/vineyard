@@ -37,3 +37,32 @@ func TestSpawnArgsNewAndResume(t *testing.T) {
 		t.Errorf("a resumed session should not set --session-id: %v", resumed)
 	}
 }
+
+func TestSpawnArgsAllowBypass(t *testing.T) {
+	if args := spawnArgs(SpawnOptions{Cwd: "/w"}, "sid", ""); slices.Contains(args, "--allow-dangerously-skip-permissions") {
+		t.Errorf("bypass should not be allowed unless asked for: %v", args)
+	}
+	args := spawnArgs(SpawnOptions{Cwd: "/w", AllowBypassPermissions: true}, "sid", "")
+	if !slices.Contains(args, "--allow-dangerously-skip-permissions") {
+		t.Errorf("--allow-dangerously-skip-permissions missing from %v", args)
+	}
+	if slices.Contains(args, "--dangerously-skip-permissions") || slices.Contains(args, "--permission-mode") {
+		t.Errorf("allowing bypass should not switch it on: %v", args)
+	}
+}
+
+func TestBypassAvailable(t *testing.T) {
+	for _, c := range []struct {
+		o    SpawnOptions
+		want bool
+	}{
+		{SpawnOptions{}, false},
+		{SpawnOptions{PermissionMode: "acceptEdits"}, false},
+		{SpawnOptions{AllowBypassPermissions: true}, true},
+		{SpawnOptions{PermissionMode: "bypassPermissions"}, true},
+	} {
+		if got := bypassAvailable(c.o); got != c.want {
+			t.Errorf("bypassAvailable(%+v) = %v, want %v", c.o, got, c.want)
+		}
+	}
+}

@@ -1946,7 +1946,8 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		// Bring an observed session under this daemon: end its process, wait for it to be gone
 		// (two writers on one transcript interleave), then resume it as a managed child with no
 		// model/effort/mode overrides, so Claude Code restores the session's own. A question it was
-		// blocked on travels along and is asked again from the chat.
+		// blocked on travels along and is asked again from the chat. allowBypassPermissions is the
+		// caller's setting, as on spawn.
 		if n.opts.Managed == nil {
 			return nil, errors.New("managed sessions are disabled on this daemon")
 		}
@@ -1976,7 +1977,11 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if cwd == "" {
 			cwd = target.WorkspacePath
 		}
-		o := managed.SpawnOptions{Cwd: cwd, Resume: a.SessionID}
+		var extra struct {
+			AllowBypassPermissions bool `json:"allowBypassPermissions"`
+		}
+		_ = json.Unmarshal(r.Args, &extra)
+		o := managed.SpawnOptions{Cwd: cwd, Resume: a.SessionID, AllowBypassPermissions: extra.AllowBypassPermissions}
 		for _, pt := range target.PendingTools {
 			if pt.Name == "AskUserQuestion" && len(pt.Input) > 0 {
 				o.Recover = &managed.RecoveredQuestion{ToolUseID: pt.ID, Input: pt.Input}

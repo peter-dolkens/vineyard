@@ -73,3 +73,42 @@ func TestLiveTwoSubagentPermissions(t *testing.T) {
 	}
 	t.Fatal("both commands should have run once both requests were answered")
 }
+
+// Against the real Claude Code: switching a session to bypassPermissions is refused unless it was
+// launched allowing it. No prompt is sent, so this spends no tokens. Run with VINEYARD_CLAUDE_LIVE=1.
+func TestLiveAllowBypassPermissions(t *testing.T) {
+	if os.Getenv("VINEYARD_CLAUDE_LIVE") == "" {
+		t.Skip("set VINEYARD_CLAUDE_LIVE=1 to drive a real Claude Code")
+	}
+	if _, err := FindClaude(""); err != nil {
+		t.Skip("claude not installed")
+	}
+	m := New(nil, func() {})
+	for _, allow := range []bool{false, true} {
+		sid, err := m.Spawn(SpawnOptions{Cwd: t.TempDir(), AllowBypassPermissions: allow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := m.get(sid)
+		m.mu.Lock()
+		avail := p.info.BypassAvailable
+		m.mu.Unlock()
+		if avail != allow {
+			t.Errorf("allow=%v: BypassAvailable = %v", allow, avail)
+		}
+		err = m.SetPermissionMode(sid, "bypassPermissions")
+		t.Logf("allow=%v: set_permission_mode bypassPermissions -> %v", allow, err)
+		if allow && err != nil {
+			t.Errorf("a session launched allowing bypass should switch to it: %v", err)
+		}
+		if !allow && err == nil {
+			t.Error("a session launched without the flag should refuse bypass")
+		}
+		if allow {
+			if err := m.SetPermissionMode(sid, "default"); err != nil {
+				t.Errorf("switching back out of bypass: %v", err)
+			}
+		}
+		_ = m.Stop(sid)
+	}
+}

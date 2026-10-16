@@ -866,7 +866,7 @@ export class SettingsScreen extends Screen {
     };
   }
 
-  private toggle(key: 'showHistorical' | 'showExited' | 'showFinishedSubagents' | 'notifyAttention' | 'claudeAccounts', title: string): Row {
+  private toggle(key: 'showHistorical' | 'showExited' | 'showFinishedSubagents' | 'notifyAttention' | 'claudeAccounts' | 'allowBypassPermissions', title: string): Row {
     return { key, title, toggle: { on: settings()[key], onChange: (on) => updateSettings({ [key]: on }) } };
   }
 
@@ -933,7 +933,7 @@ export class SettingsScreen extends Screen {
       {
         key: 'chat',
         header: 'Chat',
-        footer: 'Observed sessions are ones Vineyard did not start (the Claude Code pane, a terminal). Taking one over ends its process there and resumes it under Vineyard, so questions and permission prompts can be answered here.',
+        footer: 'Observed sessions are ones Vineyard did not start (the Claude Code pane, a terminal). Taking one over ends its process there and resumes it under Vineyard, so questions and permission prompts can be answered here. Allow bypass permissions: agents started or taken over from here can be switched to Bypass permissions in the chat, which Claude Code refuses otherwise.',
         rows: [
           this.pick('observed', 'Observed sessions', [
             { value: 'observe', label: 'Watch', detail: 'Messages go in between tool calls' },
@@ -947,6 +947,7 @@ export class SettingsScreen extends Screen {
             { value: 'auto', label: 'Auto' },
             { value: 'bypassPermissions', label: 'Bypass permissions' },
           ]),
+          this.toggle('allowBypassPermissions', 'Allow bypass permissions'),
           this.pick('transcriptLines', 'Transcript lines loaded', [
             { value: 200, label: '200' },
             { value: 400, label: '400' },

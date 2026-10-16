@@ -18,6 +18,9 @@ const STATE_WORDS: Record<string, string> = {
   working: 'working', thinking: 'thinking', tool: 'running a tool', shell: 'in a shell', permission: 'waiting for permission', question: 'asking a question', idle: 'idle',
 };
 
+/** Settings' Allow bypass permissions, as the spawn and takeover args that carry it. */
+const allowBypass = () => (settings().allowBypassPermissions ? { allowBypassPermissions: true } : {});
+
 export interface SessionSummary {
   sessionId: string;
   cwd: string;
@@ -80,7 +83,7 @@ export class Flows {
       if (r.button !== 'take') return;
     }
     toast(`Taking over ${agentLabel(a)}…`);
-    const res = await this.api.request<{ sessionId: string }>('takeover', m.id, { sessionId: a.sessionId }, 30_000);
+    const res = await this.api.request<{ sessionId: string }>('takeover', m.id, { sessionId: a.sessionId, ...allowBypass() }, 30_000);
     await this.openWhenManaged(m, res.sessionId);
   }
 
@@ -121,7 +124,7 @@ export class Flows {
       remembered = { ...prefs, permissionMode: prefs.permissionMode || settings().defaultPermissionMode || undefined };
     }
     toast(resume ? 'Resuming the session…' : `Starting an agent in ${basename(cwd)}…`);
-    const res = await this.api.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', m.id, { cwd, ...remembered, resume }, 30_000);
+    const res = await this.api.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', m.id, { cwd, ...remembered, resume, ...allowBypass() }, 30_000);
     if (!resume && res.defaults) await sessionPrefs.reconcile(m.id, cwd, res.stale ?? [], res.defaults);
     await this.openWhenManaged(m, res.sessionId);
   }

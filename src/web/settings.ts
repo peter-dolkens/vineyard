@@ -12,6 +12,8 @@ export interface Settings extends ViewPrefs {
   observed: 'observe' | 'takeOver';
   /** vineyard.spawn.defaultPermissionMode; '' passes no mode. */
   defaultPermissionMode: string;
+  /** vineyard.spawn.allowBypassPermissions: sessions started from here can be switched to bypass. */
+  allowBypassPermissions: boolean;
   transcriptLines: number;
   /** Pop a banner in the app when an agent starts waiting for you. */
   notifyAttention: boolean;
@@ -29,6 +31,7 @@ export const DEFAULTS: Settings = {
   sortAgents: 'recent',
   observed: 'observe',
   defaultPermissionMode: '',
+  allowBypassPermissions: false,
   transcriptLines: 400,
   notifyAttention: true,
   claudeAccounts: false,

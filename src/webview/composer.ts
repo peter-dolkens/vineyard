@@ -12,7 +12,7 @@ import { effortOptions, modelOptions, selectedModel } from '../core/models.ts';
 import { duration, planLabel, shortModel, tokens as fmtTokens } from '../core/format.ts';
 import { clock, taskActive, taskElapsed, taskLabel, taskStateLabel } from '../core/tasks.ts';
 import { subagentActive } from '../core/subagents.ts';
-import { GROUP, MODES, buildActions, cacheClock, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, type Action, type CacheClockInput } from '../core/composer.ts';
+import { GROUP, buildActions, cacheClock, contextFor, contextGauge, effortLabel, filterActions, groupActions, modeInfo, modesFor, type Action, type CacheClockInput } from '../core/composer.ts';
 
 export interface BarAgent {
   sessionId: string;
@@ -30,7 +30,7 @@ export interface BarAgent {
   version?: string;
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; compacting?: boolean; model?: string; effort?: string; permissionMode?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; model?: string; effort?: string; permissionMode?: string; bypassAvailable?: boolean; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 export interface BarMachine {
   id: string;
@@ -436,7 +436,8 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     const list = el('div', 'pop-list');
     const cur = currentMode();
     const live = managedLive();
-    for (const m of MODES) {
+    const modes = modesFor(agent?.managed?.bypassAvailable, cur);
+    for (const m of modes) {
       const row = el('div', 'pop-item mode' + (m.value === cur ? ' selected' : '') + (live ? '' : ' readonly'));
       row.append(modeIcon(m.icon));
       const text = el('div', 'pop-text');
@@ -455,7 +456,7 @@ export function createComposerBar(host: HTMLElement, popHost: HTMLElement, deps:
     pop.append(list, el('div', 'pop-sep'), effortRow());
     const note = readOnlyNote();
     if (note) pop.append(note);
-    highlight(Math.max(0, MODES.findIndex((m) => m.value === cur)));
+    highlight(Math.max(0, modes.findIndex((m) => m.value === cur)));
   }
 
   // ---- agent map ---------------------------------------------------------------------------------
