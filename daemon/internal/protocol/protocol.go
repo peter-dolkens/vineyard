@@ -429,6 +429,17 @@ type RenameArgs struct {
 	Cwd       string `json:"cwd,omitempty"`  // used to locate the transcript when Path is empty
 }
 
+// RemoveArgs deletes Claude Code's artifacts for one session or one workspace, so neither shows up
+// in the fleet again. With SessionID (and Path, or Cwd to derive it) it is the one session: its
+// transcript, the subagent transcripts beside it and its registry entry. With Cwd alone it is the
+// whole project: every transcript Claude Code kept for that working directory. The workspace's own
+// files are never touched, and a session still running is refused.
+type RemoveArgs struct {
+	SessionID string `json:"sessionId,omitempty"`
+	Path      string `json:"path,omitempty"` // transcript path, for sessions this daemon does not manage
+	Cwd       string `json:"cwd,omitempty"`  // used to locate the transcript when Path is empty
+}
+
 // StopTaskArgs stops one running background task of a managed session ("stoptask", Claude Code's
 // stop_task control request): TaskID is the id of a backgrounded shell command as the Bash
 // tool_result reported it, or a subagent's agent id (the <id> of subagents/agent-<id>.jsonl).

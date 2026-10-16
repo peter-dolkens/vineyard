@@ -121,6 +121,18 @@
         "icon": "$(trash)"
       },
       {
+        "command": "vineyard.removeTranscripts",
+        "title": "Remove Transcripts",
+        "category": "Vineyard",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "vineyard.removeProject",
+        "title": "Remove Project",
+        "category": "Vineyard",
+        "icon": "$(trash)"
+      },
+      {
         "command": "vineyard.restartDaemon",
         "title": "Restart Daemon",
         "category": "Vineyard",
@@ -377,6 +389,16 @@
           "group": "2_remove@1"
         },
         {
+          "command": "vineyard.removeTranscripts",
+          "when": "view == vineyard.fleet && viewItem =~ /^agent-exited/",
+          "group": "3_remove@1"
+        },
+        {
+          "command": "vineyard.removeProject",
+          "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
+          "group": "3_remove@1"
+        },
+        {
           "command": "vineyard.openWorkspace",
           "when": "view == vineyard.fleet && viewItem =~ /^workspace/",
           "group": "inline@1"
@@ -536,6 +558,14 @@
         },
         {
           "command": "vineyard.removeMachine",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.removeTranscripts",
+          "when": "false"
+        },
+        {
+          "command": "vineyard.removeProject",
           "when": "false"
         },
         {

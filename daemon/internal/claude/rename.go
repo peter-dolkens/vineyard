@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -16,13 +15,9 @@ func AppendCustomTitle(claudeDir, path, sessionID, title string) error {
 	if title == "" {
 		return errors.New("title is empty")
 	}
-	projects := filepath.Join(claudeDir, "projects")
-	abs, err := filepath.Abs(path)
+	abs, err := insideProjects(claudeDir, path)
 	if err != nil {
 		return err
-	}
-	if rel, err := filepath.Rel(projects, abs); err != nil || strings.HasPrefix(rel, "..") || !strings.HasSuffix(abs, ".jsonl") {
-		return errors.New("transcript path must be inside the Claude projects directory")
 	}
 	if _, err := os.Stat(abs); err != nil {
 		return err

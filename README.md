@@ -62,6 +62,10 @@ makes it work; the daemons talk only to each other, and only while you are looki
   machine and swap between them, as if you had signed in again as the other one. Sessions, transcripts
   and memory stay put. Saved sign-ins stay on that machine, in its keychain on macOS.
 * **Rename** a session by clicking its title; Claude Code shows the new name too.
+* **Remove Transcripts** on a finished session, or **Remove Project** on a workspace, clears out what
+  Claude Code left behind on that machine — transcripts, subagent transcripts, saved tool results and
+  the registry entry that keeps an exited session listed — so it stops showing up. Your code is not
+  touched, and neither is the project's `memory/`. A session still running is refused.
 
 ## A chat that keeps up with Claude Code
 
