@@ -57,7 +57,7 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; pendingMore?: number; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; pendingMore?: number; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; bypassAvailable?: boolean; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
 }
 interface MachineInfo {
   id: string;

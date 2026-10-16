@@ -164,6 +164,15 @@ export const MODES: ModeInfo[] = [
   { value: 'bypassPermissions', label: 'Bypass permissions', description: 'Nothing is asked. Every tool runs.', icon: 'unlock' },
 ];
 
+/**
+ * The modes a session's picker offers. Claude Code refuses bypassPermissions unless the session was
+ * launched allowing it (vineyard.spawn.allowBypassPermissions), so it is left out otherwise; a session
+ * already in that mode still lists it, so the picker shows where it is.
+ */
+export function modesFor(bypassAvailable: boolean | undefined, current: string): ModeInfo[] {
+  return bypassAvailable || current === 'bypassPermissions' ? MODES : MODES.filter((m) => m.value !== 'bypassPermissions');
+}
+
 export function modeInfo(value: string | undefined): ModeInfo {
   return MODES.find((m) => m.value === value) ?? { value: value || 'default', label: value || 'Manual', description: '', icon: 'shield' };
 }

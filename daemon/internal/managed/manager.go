@@ -37,6 +37,11 @@ type SpawnOptions struct {
 	Resume         string   `json:"resume,omitempty"` // existing session id to continue
 	Name           string   `json:"name,omitempty"`
 	AllowedTools   []string `json:"allowedTools,omitempty"`
+	// AllowBypassPermissions launches the session with --allow-dangerously-skip-permissions, so the
+	// chat can switch it to bypassPermissions later. Without it Claude Code refuses that switch
+	// ("the session was not launched with --dangerously-skip-permissions"); the flag alone leaves the
+	// session in its usual mode (verified against Claude Code 2.1.301).
+	AllowBypassPermissions bool `json:"allowBypassPermissions,omitempty"`
 	// Recover is the AskUserQuestion the session was blocked on when it was taken over (its
 	// transcript's dangling tool_use). The question is shown again as a pending request of kind
 	// PendingRecovered and the answer goes in as a user message, since there is no control_request
@@ -209,6 +214,9 @@ func spawnArgs(o SpawnOptions, sid, settings string) []string {
 	if o.PermissionMode != "" {
 		args = append(args, "--permission-mode", o.PermissionMode)
 	}
+	if o.AllowBypassPermissions {
+		args = append(args, "--allow-dangerously-skip-permissions")
+	}
 	if o.Name != "" {
 		args = append(args, "--name", o.Name)
 	}
@@ -216,6 +224,13 @@ func spawnArgs(o SpawnOptions, sid, settings string) []string {
 		args = append(args, "--allowedTools", t)
 	}
 	return args
+}
+
+// bypassAvailable reports whether a session launched with o can be switched to bypassPermissions:
+// it was given the allow flag, or it starts in that mode (Claude Code then lets it leave the mode and
+// come back).
+func bypassAvailable(o SpawnOptions) bool {
+	return o.AllowBypassPermissions || o.PermissionMode == "bypassPermissions"
 }
 
 // Spawn starts a managed session and returns its session id immediately.
@@ -277,7 +292,7 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 	}
 	p := &proc{
 		cmd: cmd, stdin: stdin, done: make(chan struct{}), ctl: map[string]chan ctlReply{},
-		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, Name: o.Name, Resumed: o.Resume != ""},
+		info: model.ManagedInfo{SessionID: sid, PID: cmd.Process.Pid, Cwd: o.Cwd, StartedAt: time.Now().UnixMilli(), Model: o.Model, Effort: o.Effort, PermissionMode: o.PermissionMode, BypassAvailable: bypassAvailable(o), Name: o.Name, Resumed: o.Resume != ""},
 	}
 	if o.Resume != "" && o.Recover != nil && len(o.Recover.Input) > 0 {
 		p.push(recoveredPending(o.Recover, time.Now().UnixMilli()))
@@ -763,6 +778,9 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				if env.PermissionMode != "" {
 					p.info.PermissionMode = env.PermissionMode
 				}
+				if env.PermissionMode == "bypassPermissions" {
+					p.info.BypassAvailable = true // Claude Code only enters it when the session may
+				}
 				p.info.Ready = true
 				m.mu.Unlock()
 				m.changed()
@@ -775,6 +793,9 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				if env.PermissionMode != "" {
 					p.info.PermissionMode = env.PermissionMode
 					changed = true
+				}
+				if env.PermissionMode == "bypassPermissions" {
+					p.info.BypassAvailable = true
 				}
 				compacting := env.Status != nil && *env.Status == "compacting"
 				if p.setCompacting(compacting, time.Now().UnixMilli()) {

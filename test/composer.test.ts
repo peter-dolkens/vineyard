@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CACHE_TTL_1H_MS, CACHE_TTL_5M_MS, buildActions, cacheClock, cacheTtlMs, contextFor, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, type ActionContext } from '../src/core/composer.ts';
+import { CACHE_TTL_1H_MS, CACHE_TTL_5M_MS, buildActions, cacheClock, cacheTtlMs, contextFor, contextGauge, contextWindow, effortLabel, filterActions, groupActions, modeInfo, modesFor, type ActionContext } from '../src/core/composer.ts';
 
 test('context window follows the [1m] suffix', () => {
   assert.equal(contextWindow('claude-opus-5-5[1m]'), 1_000_000);
@@ -105,6 +105,15 @@ test('mode and effort labels', () => {
   assert.equal(modeInfo('weird').label, 'weird');
   assert.equal(effortLabel('xhigh'), 'Extra high');
   assert.equal(effortLabel(''), 'Default');
+});
+
+test('bypass is only offered to sessions that can take it', () => {
+  const values = (avail: boolean | undefined, cur: string) => modesFor(avail, cur).map((m) => m.value);
+  assert.ok(!values(undefined, 'default').includes('bypassPermissions'));
+  assert.ok(!values(false, 'acceptEdits').includes('bypassPermissions'));
+  assert.deepEqual(values(true, 'default'), ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+  // A session already in bypass (an older daemon reports no flag) still shows where it is.
+  assert.ok(values(undefined, 'bypassPermissions').includes('bypassPermissions'));
 });
 
 const base: ActionContext = {

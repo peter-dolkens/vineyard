@@ -202,7 +202,7 @@ Works in Vineyard today, for managed sessions at least.
 | Sign in (OAuth, console, third-party env) | Yes | Yes | Relayed across machines. |
 | Model picker | Partial | Yes | Managed: the session's own model list with per-model effort levels. Observed: read-only pill. |
 | Reasoning effort slider | Partial | Yes | Managed: changes the running session, remembered per workspace. Observed: read-only. |
-| Permission mode (Manual, Auto, Plan, Edit automatically, Bypass) | Partial | Yes | Managed: switch in place, bypass confirmed. Observed: read-only. |
+| Permission mode (Manual, Auto, Plan, Edit automatically, Bypass) | Partial | Yes | Managed: switch in place; Bypass is offered once *Allow Bypass Permissions* is on (Claude Code refuses it otherwise) and asks first. Observed: read-only. |
 | Context window indicator, auto-compact | Partial | Yes | Donut follows the transcript for free; managed sessions get the real window size and spin while compacting. Observed: window inferred from the model id. |
 | Agent map: subagents, status, elapsed, tokens, transcripts, stop | Partial | Yes | Full map for both; Stop buttons on running rows for managed sessions. |
 | Background tasks with Stop | Partial | Yes | Kind, state and elapsed for any session; Stop per running task for managed sessions. |
