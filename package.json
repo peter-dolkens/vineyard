@@ -385,7 +385,7 @@
         },
         {
           "command": "vineyard.removeMachine",
-          "when": "view == vineyard.fleet && viewItem =~ /^machine/ && viewItem !~ /^machine-local/",
+          "when": "view == vineyard.fleet && viewItem =~ /^machine(?!-local)/",
           "group": "2_remove@1"
         },
         {
