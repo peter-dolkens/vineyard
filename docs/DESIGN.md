@@ -364,6 +364,26 @@ is embedded in the binary, built from `src/web` by esbuild into `daemon/internal
 | Lifetime | independent | child of the daemon; ends if the daemon restarts |
 | Becoming managed | *Take Over Session*: process ended, same session resumed as a daemon child; a pending question is asked again in the chat | — |
 
+## The settings Vineyard's sessions run with
+
+`~/.vineyard/claude-settings.json` is Vineyard's own Claude Code settings file. Every session
+Vineyard starts gets it as `--settings`, which Claude Code lays over the user, project and local
+settings files, so it is the one place to put a setting that should hold for a Vineyard session and
+not for one the user starts by hand. Today it asks for everything there is to show, since Vineyard is
+the window on these sessions: `showThinkingSummaries`, `verbose` and `viewMode: verbose`.
+
+The daemon writes the file before each spawn and again whenever it reports the path in its snapshot
+(`host.vineyardSettings`), rewriting it when the build's contents change; editing it by hand does not
+last. The path is reported so *Resume in a terminal* can name the file on that machine too.
+
+Claude Code refuses to start on a `--settings` path that does not exist, so nothing names a file it
+is not sure of: the daemon reports a path only for a file it has just written, a spawn whose file
+cannot be written runs on the user's settings alone, and a machine with no path in its snapshot —
+one running a daemon from before the file existed — is resumed by exactly the command it was before.
+Spawning passes the path as one argument, which never goes through a shell; the terminal command is
+a line of shell, so the path is left bare when nothing in it needs quoting (the usual case on every
+OS, Windows paths included) and otherwise quoted for that machine's shell family.
+
 ## Taking over a session
 
 Observed sessions (started outside Vineyard) cannot have their permission prompts or questions
