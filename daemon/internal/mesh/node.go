@@ -1862,6 +1862,35 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		}
 		n.kickCollector()
 		return json.RawMessage(`{"ok":true}`), nil
+	case "remove":
+		// Clear Claude Code's artifacts for one exited session, or for a whole workspace, so they
+		// stop showing up in the fleet. The workspace's own files are not touched.
+		var a protocol.RemoveArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if err := n.refuseIfRunning(a); err != nil {
+			return nil, err
+		}
+		var rem claude.Removed
+		var err error
+		if a.SessionID != "" {
+			path := a.Path
+			if path == "" {
+				if a.Cwd == "" {
+					return nil, errors.New("path or cwd is required")
+				}
+				path = filepath.Join(n.opts.ClaudeDir, "projects", claude.EncodeProjectDir(a.Cwd), a.SessionID+".jsonl")
+			}
+			rem, err = claude.RemoveSession(n.opts.ClaudeDir, path, a.SessionID)
+		} else {
+			rem, err = claude.RemoveProject(n.opts.ClaudeDir, a.Cwd)
+		}
+		if err != nil {
+			return nil, err
+		}
+		n.kickCollector()
+		return json.Marshal(rem)
 	case "login":
 		if n.opts.Auth == nil {
 			return nil, errors.New("sign-in relay is disabled on this daemon")
@@ -2014,6 +2043,37 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		return n.readTranscript(a)
 	}
 	return nil, fmt.Errorf("unknown op %q", r.Op)
+}
+
+// refuseIfRunning stops a removal that would delete the artifacts of a session Claude Code is still
+// writing to. The claude package checks the registry on disk as well; this catches the live sessions
+// the snapshot already knows about, and names them.
+func (n *Node) refuseIfRunning(a protocol.RemoveArgs) error {
+	if a.SessionID == "" && a.Cwd == "" {
+		return errors.New("sessionId or cwd is required")
+	}
+	if a.SessionID != "" && n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
+		return fmt.Errorf("session %s is running under Vineyard; stop it first", a.SessionID)
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	e, ok := n.store[n.cfg.MachineID]
+	if !ok {
+		return nil
+	}
+	for _, ag := range e.Snapshot.Agents {
+		if !ag.Alive {
+			continue
+		}
+		if a.SessionID != "" && ag.SessionID != a.SessionID {
+			continue
+		}
+		if a.SessionID == "" && ag.WorkspacePath != a.Cwd {
+			continue
+		}
+		return fmt.Errorf("session %s is still running in %s; stop it first", ag.SessionID, ag.WorkspacePath)
+	}
+	return nil
 }
 
 func (n *Node) readTranscript(a protocol.TranscriptArgs) (json.RawMessage, error) {

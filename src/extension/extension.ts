@@ -523,6 +523,59 @@ export function activate(context: vscode.ExtensionContext): void {
     await fleet.client.request('rename', a.machine.id, { sessionId: a.agent.sessionId, title: title.trim(), path: a.agent.transcriptPath || undefined, cwd: a.agent.workspacePath }, 20_000);
   });
 
+  // Clearing out what Claude Code left behind. A session's removal takes its transcript, the
+  // subagent transcripts beside it and the registry entry that keeps an exited session in the tree;
+  // a project's takes that for every session in one workspace. Neither touches the workspace itself.
+  interface Removed {
+    transcripts: number;
+    subagents: number;
+    bytes: number;
+  }
+  const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const removedText = (r: Removed): string => {
+    const size = r.bytes >= 1_000_000 ? `${(r.bytes / 1_000_000).toFixed(1)} MB` : `${Math.round(r.bytes / 1000)} kB`;
+    const parts = [plural(r.transcripts, 'transcript')];
+    if (r.subagents) parts.push(plural(r.subagents, 'subagent transcript'));
+    return `${parts.join(' and ')}, ${size}`;
+  };
+
+  cmd('vineyard.removeTranscripts', async (node?: Node) => {
+    const a = await agentOf(node);
+    if (!a) return;
+    sessionOnly(a, 'remove the transcripts of');
+    if (a.agent.alive) throw new Error(`${agentLabel(a.agent)} is still running; stop it before removing its transcripts.`);
+    const ok = await vscode.window.showWarningMessage(
+      `Remove the transcripts of ${agentLabel(a.agent)}?`,
+      {
+        modal: true,
+        detail: `Deletes the session's transcript and any subagent transcripts on ${a.machine.name}, and drops it from the fleet. It cannot be resumed or read afterwards, and this cannot be undone. Its workspace is untouched.`,
+      },
+      'Remove Transcripts',
+    );
+    if (!ok) return;
+    const r = await fleet.client.request<Removed>('remove', a.machine.id, { sessionId: a.agent.sessionId, path: a.agent.transcriptPath || undefined, cwd: a.agent.workspacePath }, 20_000);
+    void vscode.window.showInformationMessage(`Removed ${removedText(r)}.`);
+  });
+
+  cmd('vineyard.removeProject', async (node?: Node) => {
+    if (node?.kind !== 'workspace') return;
+    const { machine, workspace } = node;
+    const name = basename(workspace.path);
+    const live = workspace.agents.filter((x) => x.alive).length;
+    if (live) throw new Error(`${plural(live, 'session')} still running in ${name}; stop ${live === 1 ? 'it' : 'them'} first.`);
+    const ok = await vscode.window.showWarningMessage(
+      `Remove Claude Code's history for ${name}?`,
+      {
+        modal: true,
+        detail: `Deletes every transcript Claude Code kept for ${workspace.path} on ${machine.name}, so the workspace stops showing up in Vineyard. None of its past sessions can be resumed afterwards, and this cannot be undone. The folder and its files are untouched.`,
+      },
+      'Remove Project',
+    );
+    if (!ok) return;
+    const r = await fleet.client.request<Removed>('remove', machine.id, { cwd: workspace.path }, 60_000);
+    void vscode.window.showInformationMessage(`Removed ${removedText(r)} for ${name}.`);
+  });
+
   cmd('vineyard.copySessionId', async (node?: Node) => {
     const a = await agentOf(node);
     if (a) await vscode.env.clipboard.writeText(a.agent.sessionId);
