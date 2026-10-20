@@ -2,7 +2,7 @@
   "name": "vineyard",
   "displayName": "Vineyard",
   "description": "Tend your AI agents across machines: see every Claude Code session on every box, what it is doing, and when it needs you.",
-  "version": "0.3.33",
+  "version": "0.3.34",
   "publisher": "peter-dolkens",
   "author": "peter-dolkens",
   "license": "MIT",
@@ -759,7 +759,7 @@
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "markdownDescription": "**Agent tool: list and find fleet machines.** Sessions Vineyard starts get `list_machines` and `find_machines`: every machine's OS, the common programs it has (git, gh, docker, \u2026) and whether it is online, and which machines have a given program. Fleet-wide; read-only. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
+          "markdownDescription": "**Agent tool: list and find fleet machines.** Sessions Vineyard starts get `list_machines` and `find_machines`: every machine's OS, the common programs it has (git, gh, docker, …) and whether it is online, and which machines have a given program. Fleet-wide; read-only. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
         },
         "vineyard.agentTools.listWorkspaces": {
           "type": "boolean",
