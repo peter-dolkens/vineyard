@@ -195,9 +195,12 @@ type ManagedInfo struct {
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
-	StartedAt      int64  `json:"startedAt"`
-	Ready          bool   `json:"ready"`
-	Resumed        bool   `json:"resumed,omitempty"`
+	// BypassAvailable is set when the session can be switched to bypassPermissions: it was launched
+	// with --allow-dangerously-skip-permissions or in that mode. Claude Code refuses the switch otherwise.
+	BypassAvailable bool  `json:"bypassAvailable,omitempty"`
+	StartedAt       int64 `json:"startedAt"`
+	Ready           bool  `json:"ready"`
+	Resumed         bool  `json:"resumed,omitempty"`
 	// Pending is the request the user is being asked to answer; PendingMore counts the ones queued
 	// behind it (two subagents can ask for permission at the same time). The next one takes its place
 	// as soon as this one is answered.

@@ -251,10 +251,13 @@ export function activate(context: vscode.ExtensionContext): void {
     // No --name: a named session is treated by Claude Code as titled by the user, so it never
     // generates the AI title the pane shows after the first prompt. Left unnamed, Claude Code writes
     // an ai-title line a few seconds in (and again every turn), which the daemon already reads.
-    const res = await fleet.client.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', machine.id, { cwd, ...remembered, resume }, 30_000);
+    const res = await fleet.client.request<{ sessionId: string; defaults?: SettingsDefaults; stale?: string[] | null }>('spawn', machine.id, { cwd, ...remembered, resume, ...allowBypass() }, 30_000);
     if (!resume && res.defaults) await sessionPrefs.reconcile(machine.id, cwd, res.stale ?? [], res.defaults);
     openWhenManaged(machine, res.sessionId);
   };
+
+  /** vineyard.spawn.allowBypassPermissions, as the spawn and takeover args that carry it. */
+  const allowBypass = () => (vscode.workspace.getConfiguration('vineyard').get<boolean>('spawn.allowBypassPermissions', false) ? { allowBypassPermissions: true } : {});
 
   /** Wait briefly for a just-spawned session to report as managed, then open its chat. */
   const openWhenManaged = (machine: MachineView, sessionId: string) => {
@@ -302,7 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
     }
-    const res = await fleet.client.request<{ sessionId: string; recovered?: boolean }>('takeover', a.machine.id, { sessionId: a.agent.sessionId }, 30_000);
+    const res = await fleet.client.request<{ sessionId: string; recovered?: boolean }>('takeover', a.machine.id, { sessionId: a.agent.sessionId, ...allowBypass() }, 30_000);
     openWhenManaged(a.machine, res.sessionId);
   };
 

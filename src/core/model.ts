@@ -198,6 +198,8 @@ export interface ManagedInfo {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /** The session can be switched to bypassPermissions: it was launched allowing it, or in that mode. */
+  bypassAvailable?: boolean;
   startedAt: number;
   ready: boolean;
   resumed?: boolean;
