@@ -12,6 +12,7 @@ import { ChatPanels } from './chatPanel.ts';
 import { SessionPrefStore, type SettingsDefaults } from './sessionPrefs.ts';
 import { Updater } from './updater.ts';
 import { WebAppSync } from './webApp.ts';
+import { AgentToolsSync } from './agentTools.ts';
 import { switchAccount } from './accounts.ts';
 import { agentLabel, basename, relativeTime, shortModel, tildify } from '../core/format.ts';
 import { subagentAsAgent } from '../core/subagents.ts';
@@ -35,8 +36,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const notifier = new Notifier(fleet, (id) => chats.isActive(id));
   const updater = new Updater(context, client, fleet, setup, log);
   const webApp = new WebAppSync(context, fleet, log);
+  const agentTools = new AgentToolsSync(context, fleet, log);
 
-  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, webApp, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
+  context.subscriptions.push(log, client, fleet, view, statusBar, notifier, chats, updater, webApp, agentTools, vscode.workspace.registerTextDocumentContentProvider(TRANSCRIPT_SCHEME, transcripts));
 
   const describe = (state: DaemonConnState) => {
     const s = fleet.summary();

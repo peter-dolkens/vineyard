@@ -24,7 +24,9 @@ import (
 	"time"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/accounts"
+	"github.com/peter-dolkens/vineyard/daemon/internal/agenttools"
 	"github.com/peter-dolkens/vineyard/daemon/internal/auth"
+	"github.com/peter-dolkens/vineyard/daemon/internal/caps"
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
 	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
@@ -62,6 +64,9 @@ Usage:
   vineyardd web [--listen :7735] [--allow-host NAME ...] [--dev DIR]
         Serve the mobile web app in the foreground and print a pairing code. The daemon serves it
         itself when VS Code's vineyard.webApp setting is on. Plain HTTP: securing it is up to you.
+  vineyardd mcp [--session ID]
+        The MCP server that gives Vineyard's sessions their agent tools, over stdio. The daemon names
+        it in the sessions it starts when vineyard.agentTools turns any tool on.
   vineyardd version
 
 Environment: VINEYARD_DIR overrides ~/.vineyard.
@@ -103,6 +108,8 @@ func main() {
 		err = cmdKeygen()
 	case "web":
 		err = cmdWeb(os.Args[2:])
+	case "mcp":
+		err = cmdMCP(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(Version)
 	case "help", "-h", "--help":
@@ -192,6 +199,16 @@ func cmdRun() error {
 			}
 		})
 		mgr.ClaudeBin = cfg.ClaudeBin
+		exe, err := os.Executable()
+		if err != nil {
+			logger.Printf("agent tools: cannot name this binary for sessions: %v", err)
+		}
+		mgr.ExtraArgs = func(sessionID string) []string {
+			if node == nil {
+				return nil
+			}
+			return agenttools.SpawnArgs(exe, config.Dir(), sessionID, node.AgentTools())
+		}
 	}
 	authMgr := auth.New(logger)
 	authMgr.ClaudeBin = cfg.ClaudeBin
@@ -220,6 +237,7 @@ func cmdRun() error {
 		WebApp:    webApp,
 		Collect: func() model.Snapshot {
 			r := collector.Collect()
+			r.Host.Tools = caps.KnownTools()
 			agents, workspaces := claude.Interpret(cfg.MachineID, r, time.Now().UnixMilli())
 			var usage *model.Usage
 			if mgr != nil {
@@ -663,6 +681,42 @@ func cmdWeb(args []string) error {
 	defer stop()
 	<-ctx.Done()
 	return r.Set("", nil)
+}
+
+// cmdMCP serves the agent tools to one Claude Code session over stdio. Its stdout is the MCP
+// channel, so anything it logs goes to stderr, which Claude Code keeps in its MCP log.
+func cmdMCP(args []string) error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	session := fs.String("session", "", "the Claude Code session this server runs for")
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	logger := log.New(os.Stderr, "vineyard mcp: ", log.LstdFlags)
+	name := "mcp"
+	if *session != "" {
+		name = "mcp-" + (*session)[:min(8, len(*session))]
+	}
+	srv := agenttools.New(agenttools.Options{
+		Machine: cfg.MachineID,
+		Session: *session,
+		Version: Version,
+		Dial:    func() (*mesh.Conn, error) { return dialLocalViewer(cfg, name) },
+		Enabled: func() []string {
+			c, err := config.Load()
+			if err != nil {
+				return nil
+			}
+			return c.AgentTools
+		},
+		TranscriptDir: agenttools.TranscriptDir(config.Dir()),
+		Log:           logger,
+	})
+	return srv.Serve(os.Stdin, os.Stdout)
 }
 
 // cmdKeygen makes this machine's key if it has none and prints the public key, for Add Machine over

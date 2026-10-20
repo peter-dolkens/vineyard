@@ -113,6 +113,25 @@ updates, adding machines, creating invite codes and rotating the fleet key stay 
 CLI. The app keeps the fleet as quiet as VS Code does: it attaches to its daemon only while a paired
 page is open and in front.
 
+## Tools for your agents
+
+The sessions Vineyard starts can be given tools that see and use the fleet, each behind a
+`vineyard.agentTools.*` setting, all off by default:
+
+* **`listMachines`**: which machines there are, their OS and the common programs each one has, and
+  which machines have a program you name (`find_machines ["docker", "gh"]`).
+* **`listWorkspaces`** and **`listSessions`**: the project folders, and what every live session is
+  doing.
+* **`fetchTranscripts`**: download any session's transcript to `~/.vineyard/transcripts`. The agent
+  gets back the path and a condensed Markdown copy, not the whole transcript in its context.
+* **`driveAgents`**: start an agent on another machine or message a running one, and get its reply
+  back in your agent's own conversation when that turn ends. Messages are marked as coming from an
+  agent, chains stop at 3 hops, a machine accepts them only while its own setting is on, and
+  permission prompts on the far side are still yours to answer.
+
+The tools come from an MCP server built into the daemon. Claude Code loads one only when the
+conversation needs it, so tools that go unused cost a few lines of context.
+
 ## Quiet, private, yours
 
 * **No hub, no cloud, no account.** One static Go binary per machine, talking to its peers over

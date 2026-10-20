@@ -294,6 +294,8 @@ export interface HostInfo {
   vineyardSettings?: string;
   now?: number;
   macs?: string[];
+  /** Programs from the daemon's fixed list (git, gh, docker, …, iis) found on the login shell's PATH. */
+  tools?: string[];
 }
 
 export interface Snapshot {
@@ -313,6 +315,14 @@ export interface Snapshot {
   usage?: Usage;
   /** The machine's web app; sent even while off by daemons that have one (older ones leave it out). */
   webApp?: WebAppStatus;
+  /** Which agent tools the machine gives the sessions it starts; older daemons leave it out. */
+  agentTools?: AgentToolsStatus;
+}
+
+/** `tools` are the agent tools in force on a machine (see src/core/agentTools.ts), `at` when chosen. */
+export interface AgentToolsStatus {
+  tools: string[];
+  at?: number;
 }
 
 /**

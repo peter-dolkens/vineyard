@@ -174,9 +174,11 @@ all use the shown state. Background shell tasks do not count.
 
 ```
 daemon/                 Go module: vineyardd
-  cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join | web
+  cmd/vineyardd         CLI: init | run | install | uninstall | restart | status | probe | peer | invite | join | web | mcp
   internal/claude       collector (reads ~/.claude), state derivation (+ tests), cross-session message sender
   internal/managed      daemon-spawned sessions over stream-json: prompts, permission prompts, questions
+  internal/agenttools   `vineyardd mcp`: the agent tools' MCP server, a viewer of the local daemon
+  internal/caps         which programs a machine has on its login shell's PATH
   internal/mesh         TLS, framing, demand-driven peer subscriptions, viewer fan-out, request relay, invites
   internal/web          `vineyardd web`: the mobile web app's server and its viewer link to the local daemon
   internal/service      launchd / systemd / Task Scheduler installers (Windows needs no elevation: XML logon task, then HKCU Run key)
@@ -289,7 +291,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `rekey {keys}` | pre-0.3.23 peer→peer | a shared key set; ignored from 0.3.23 |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*) |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*), `agenttools {tools, at}`, `hascap {names}`, `agenthops {sessionId}`, and `origin` on `send` / `spawn` (see *Agent tools*) |
 | `join {token, machineId, listen, publicKey}` / `joined {cert, chain, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active: the roots and the joiner's certificate chain |
 | `tunnel` / `tunnel-in` / `tunnel-callback` / `tunnel-accept`, `tunnel-ok` / `tunnel-fail` | requester→relay→target | one-hop relay setup; first line of a fresh connection (callback travels on an existing link) |
 
@@ -383,6 +385,74 @@ one running a daemon from before the file existed — is resumed by exactly the 
 Spawning passes the path as one argument, which never goes through a shell; the terminal command is
 a line of shell, so the path is left bare when nothing in it needs quoting (the usual case on every
 OS, Windows paths included) and otherwise quoted for that machine's shell family.
+
+## Agent tools: the `vineyard` MCP server
+
+A session Vineyard starts can be given tools that see and use the fleet: which machines there are
+and what they can run, their workspaces and sessions, other sessions' transcripts, and other agents
+to start and talk to. They come from an MCP server built into the daemon binary, `vineyardd mcp`,
+and every tool is off until a fleet setting turns it on.
+
+* **Turned on by VS Code settings.** `vineyard.agentTools.*` (all off by default) are fleet-wide,
+  sent like the web app's: `req agenttools {tools, at}` to each online machine whose snapshot
+  `agentTools` differs, the later `at` winning. The daemon keeps the list in config.json
+  (`agentTools`, `agentToolsAt`) and reports it in its snapshot.
+
+  | Setting | Tools |
+  | --- | --- |
+  | `listMachines` | `list_machines`, `find_machines` |
+  | `listWorkspaces` | `list_workspaces` |
+  | `listSessions` | `list_sessions` |
+  | `fetchTranscripts` | `fetch_transcript` |
+  | `driveAgents` | `start_agent`, `message_agent`, `await_agent` |
+
+* **Registered at spawn, loaded on demand.** When a machine has any tool turned on, every session
+  its daemon starts or resumes gets `--mcp-config` naming `vineyardd mcp --session <id>`. Claude Code
+  defers MCP tools: only their names sit in context, and a tool's schema is fetched (ToolSearch) the
+  first time the conversation needs it, so an unused server costs a few lines. The server's
+  `instructions` say when to reach for the tools. The server reads the setting from config.json on
+  every `tools/list` and checks it every few seconds; a change sends `notifications/tools/list_changed`,
+  which costs the session its prompt cache once, and only when someone changes a setting. A machine
+  with every tool off registers nothing, so turning the first one on reaches new and resumed sessions,
+  not running ones. Sessions started by hand get none of this.
+* **Pre-approved when read-only.** The listing tools, `fetch_transcript` and `await_agent` are passed
+  as `--allowedTools`, with `Read` on the transcript folder. `start_agent` and `message_agent` are
+  not: each one is a permission prompt unless the session's mode says otherwise.
+* **A viewer, only while used.** The server is a client of the local daemon like `vineyardd status`:
+  loopback, this machine's certificate, `hello {role: viewer}`. It connects on the first tool call and
+  closes the link a minute after the last one, unless it is still waiting for a reply (below). While it
+  is connected the daemon is watching, exactly as when VS Code is open.
+* **Transcripts are downloaded, not read into context.** `fetch_transcript` pulls the whole file over
+  the mesh (the `transcript` op, paged back from the tail with `before`), writes it to
+  `~/.vineyard/transcripts/<machine>/<session>.jsonl` beside a condensed `.md` (prompts, replies and
+  one line per tool call), and returns the two paths, sizes and a line or two of summary. Fetching
+  again only asks for what was written since (`offset`). The session reads the files with its own
+  tools, the `.md` first.
+* **Capabilities.** Each snapshot's `host.tools` lists which of a fixed set of programs (git, gh,
+  docker, node, go, python3, dotnet, az, kubectl, pwsh, zsh and more; `iis` on Windows) the machine
+  has, found once at start through the user's login shell, since a service's own `PATH` misses most
+  of them. `find_machines {capabilities}` answers from that and asks the online machines about any
+  other name (`req hascap {names}`). A name is only ever looked up on `PATH`; it is never run, and
+  must match `[A-Za-z0-9._+-]{1,64}`.
+* **Driving another agent.** `start_agent` (the `spawn` op) and `message_agent` (`send`) carry an
+  `origin {machine, session, hops}`. The receiving daemon refuses them unless its own setting allows
+  `driveAgents`, refuses more than 3 hops (A drives B drives C drives D is the limit; the sender's
+  daemon reports its session's hops with `req agenthops`), and wraps the text in a
+  `<vineyard-agent-message>` block that says it came from another agent and not the user, so a
+  prompt never passes as the user's own. The reply is the target's last assistant text when its turn
+  ends:
+  * **Pushed back.** The sender's server watches the target's snapshot. When the target stops
+    working and its transcript has a finished turn after the message, the server sends its own
+    session a `<vineyard-agent-reply>` message (the `send` op to itself), the way a background task
+    reports back. Nothing polls and no tool call is held open. Replies are cut at 8 000 characters;
+    `fetch_transcript` has the rest.
+  * **Awaited.** `await_agent {timeout}` blocks until the same thing, for a step that needs the answer
+    before going on; a reply it returns is not pushed as well.
+  * **Status, not just text.** A reply says `done`, `question` (the target asked an AskUserQuestion),
+    `permission` (it is blocked on a permission prompt), `exited` or `error`. Permission prompts on
+    the target are a person's to answer, in Vineyard, never the driving agent's.
+  * Detection relies on the target being a managed session or one whose transcript ends its turns
+    normally; a watch is given up after two hours, and with the sender's session.
 
 ## Taking over a session
 
