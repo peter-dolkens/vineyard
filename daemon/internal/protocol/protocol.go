@@ -335,6 +335,41 @@ type SendArgs struct {
 	// Attachments ride along with the prompt: image blocks and inlined files for a managed session,
 	// inlined text only over the cross-session inbox (images are refused there).
 	Attachments []model.Attachment `json:"attachments,omitempty"`
+	// Origin is set when another agent sent this through Vineyard's tools (see AgentOrigin).
+	Origin *AgentOrigin `json:"origin,omitempty"`
+}
+
+// AgentOrigin names the agent behind a send or spawn made with Vineyard's agent tools: the machine
+// and session it runs as, and how many agent-to-agent hops the message has made (1 when the sender
+// was itself prompted by a person). The receiving daemon refuses it unless its own agentTools allow
+// driving, refuses too many hops, and marks the text as coming from an agent, not the user.
+type AgentOrigin struct {
+	Machine string `json:"machine"`
+	Session string `json:"session,omitempty"`
+	Hops    int    `json:"hops"`
+}
+
+// OriginArgs is the part of spawn's arguments that says another agent asked for it.
+type OriginArgs struct {
+	Origin *AgentOrigin `json:"origin,omitempty"`
+}
+
+// AgentToolsArgs sets which Vineyard tools a machine gives its sessions ("agenttools"); At is when
+// the setting was chosen, and a daemon keeps the later of two choices.
+type AgentToolsArgs struct {
+	Tools []string `json:"tools"`
+	At    int64    `json:"at"`
+}
+
+// HasCapArgs asks a machine whether it has these programs on its login shell's PATH ("hascap").
+type HasCapArgs struct {
+	Names []string `json:"names"`
+}
+
+// AgentHopsArgs asks how many agent-to-agent hops brought the latest message into a session
+// ("agenthops"), so a message it sends on carries one more.
+type AgentHopsArgs struct {
+	SessionID string `json:"sessionId"`
 }
 
 // UpgradeArgs streams a new vineyardd binary to the target machine in base64 chunks. The first chunk

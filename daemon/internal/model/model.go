@@ -282,6 +282,9 @@ type HostInfo struct {
 	// that does not see it starts sessions without those settings rather than naming a missing file.
 	VineyardSettings string `json:"vineyardSettings,omitempty"`
 	Now              int64  `json:"now,omitempty"`
+	// Tools are the programs from a fixed list (caps.Known) this machine has on its login shell's
+	// PATH, so a fleet listing can say where docker or gh is without asking every machine.
+	Tools []string `json:"tools,omitempty"`
 	// MACs are the hardware addresses of this machine's active interfaces, so peers can send
 	// Wake-on-LAN when it sleeps.
 	MACs []string `json:"macs,omitempty"`
@@ -307,6 +310,24 @@ type Snapshot struct {
 	// WebApp is the state of this machine's web app (vineyardd web), sent by daemons that have one
 	// even while it is off, so a viewer can tell them from older daemons.
 	WebApp *WebAppStatus `json:"webApp,omitempty"`
+	// AgentTools is which Vineyard tools this machine gives the sessions it starts, and when that was
+	// chosen, sent even when none are on so a viewer can tell this daemon from an older one.
+	AgentTools *AgentToolsStatus `json:"agentTools,omitempty"`
+}
+
+// The tools a fleet setting can give Vineyard's sessions, one per vineyard.agentTools setting.
+const (
+	AgentToolMachines    = "machines"    // list_machines, find_machines
+	AgentToolWorkspaces  = "workspaces"  // list_workspaces
+	AgentToolSessions    = "sessions"    // list_sessions
+	AgentToolTranscripts = "transcripts" // fetch_transcript
+	AgentToolDrive       = "drive"       // start_agent, message_agent, await_agent
+)
+
+// AgentToolsStatus: Tools is the list in force (model.AgentTool*), At when it was chosen (Unix ms).
+type AgentToolsStatus struct {
+	Tools []string `json:"tools"`
+	At    int64    `json:"at,omitempty"`
 }
 
 // WebAppStatus: Listen is where it is meant to serve ("" = off), URLs where it answers while running,

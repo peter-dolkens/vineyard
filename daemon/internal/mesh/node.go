@@ -185,6 +185,9 @@ type Node struct {
 	dialFilter func(addrs []string) []string
 	// ccUpdate runs `claude update` for viewers (claudeupdate.go).
 	ccUpdate claudeUpdater
+	// agentHops is, per session, how many agent-to-agent hops brought its latest agent message
+	// (agenttools.go). Memory only: a restart forgets it, and the session's next send counts from 1.
+	agentHops map[string]int
 
 	wake chan struct{}
 }
@@ -1322,6 +1325,7 @@ func (n *Node) collectSelf(force bool) {
 		snap.Uplink = n.up.link.peerID
 	}
 	webAt := n.cfg.WebAppAt
+	snap.AgentTools = n.agentToolsStatusLocked()
 	n.mu.Unlock()
 	if n.opts.WebApp != nil {
 		st := n.opts.WebApp.Status()
@@ -1678,7 +1682,17 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &a); err != nil {
 			return nil, err
 		}
+		if a.Origin != nil {
+			text, err := n.acceptAgentOrigin(a.Origin, a.Text)
+			if err != nil {
+				return nil, err
+			}
+			a.Text = text
+		}
 		if n.opts.Managed != nil && n.opts.Managed.Has(a.SessionID) {
+			if a.Origin != nil {
+				n.noteAgentHops(a.SessionID, a.Origin.Hops)
+			}
 			if err := n.opts.Managed.SendWithAttachments(a.SessionID, a.Text, a.Attachments); err != nil {
 				return nil, err
 			}
@@ -1692,6 +1706,9 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		id, err := claude.SendToSession(n.opts.ClaudeDir, a.SessionID, text)
 		if err != nil {
 			return nil, err
+		}
+		if a.Origin != nil {
+			n.noteAgentHops(a.SessionID, a.Origin.Hops)
 		}
 		n.kickCollector()
 		return json.Marshal(map[string]any{"msgId": id})
@@ -1707,6 +1724,20 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		if err := json.Unmarshal(r.Args, &b); err != nil {
 			return nil, err
 		}
+		var oa protocol.OriginArgs
+		if err := json.Unmarshal(r.Args, &oa); err != nil {
+			return nil, err
+		}
+		if oa.Origin != nil {
+			if o.Resume != "" {
+				return nil, errors.New("an agent may start new sessions, not resume existing ones")
+			}
+			text, err := n.acceptAgentOrigin(oa.Origin, o.Prompt)
+			if err != nil {
+				return nil, err
+			}
+			o.Prompt = text
+		}
 		// A remembered choice gives way to a settings default changed since it was made; the reply
 		// says which, so the extension can forget them.
 		defaults := claude.SettingsDefaults(n.opts.ClaudeDir, o.Cwd)
@@ -1714,6 +1745,9 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		sid, err := n.opts.Managed.Spawn(o)
 		if err != nil {
 			return nil, err
+		}
+		if oa.Origin != nil {
+			n.noteAgentHops(sid, oa.Origin.Hops)
 		}
 		n.kickCollector()
 		return json.Marshal(map[string]any{"sessionId": sid, "defaults": defaults, "stale": stale})
@@ -2033,6 +2067,24 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 		n.logf("killed session %s (pid %d) on request", a.SessionID, pid)
 		time.AfterFunc(1500*time.Millisecond, n.kickCollector)
 		return json.Marshal(map[string]any{"pid": pid})
+	case "agenttools":
+		var a protocol.AgentToolsArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.setAgentTools(a)
+	case "hascap":
+		var a protocol.HasCapArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return hasCap(a)
+	case "agenthops":
+		var a protocol.AgentHopsArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]int{"hops": n.agentHopsOf(a.SessionID)})
 	case "transcript":
 		var a protocol.TranscriptArgs
 		if len(r.Args) > 0 {

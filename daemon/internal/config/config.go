@@ -72,6 +72,12 @@ type Config struct {
 	WebAppAt int64  `json:"webAppAt,omitempty"`
 	// WebAppHosts are extra Host names the web app answers to (a reverse proxy's, a VPN name).
 	WebAppHosts []string `json:"webAppHosts,omitempty"`
+	// AgentTools are the Vineyard tools (model.AgentTool*) this machine gives the sessions it starts,
+	// through the `vineyardd mcp` server; empty (the default) gives none. VS Code's
+	// vineyard.agentTools settings set it over the mesh ("agenttools" op), stamping AgentToolsAt so
+	// the latest choice wins, as for WebApp.
+	AgentTools   []string `json:"agentTools,omitempty"`
+	AgentToolsAt int64    `json:"agentToolsAt,omitempty"`
 	// AllowUnsignedUpgrades lets this daemon install and store vineyardd builds that carry no valid
 	// release signature: for a development machine only. It is never set over the mesh.
 	AllowUnsignedUpgrades bool `json:"allowUnsignedUpgrades,omitempty"`

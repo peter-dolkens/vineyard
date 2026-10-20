@@ -123,6 +123,9 @@ type Manager struct {
 	usageFloor int64
 	// ClaudeBin overrides binary discovery.
 	ClaudeBin string
+	// ExtraArgs, when set, adds to each session's command line: the agent tools' MCP server and the
+	// tools it pre-approves (see agenttools.SpawnArgs), given the session id.
+	ExtraArgs func(sessionID string) []string
 }
 
 func New(logger *log.Logger, onChange func()) *Manager {
@@ -242,6 +245,9 @@ func (m *Manager) Spawn(o SpawnOptions) (string, error) {
 		settings = ""
 	}
 	args := spawnArgs(o, sid, settings)
+	if m.ExtraArgs != nil {
+		args = append(args, m.ExtraArgs(sid)...)
+	}
 
 	m.mu.Lock()
 	if p, ok := m.procs[sid]; ok && !p.info.Exited {
