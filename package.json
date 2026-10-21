@@ -785,6 +785,12 @@
           "scope": "application",
           "markdownDescription": "**Agent tool: start and message agents on other machines.** Sessions Vineyard starts get `start_agent`, `message_agent` and `await_agent`: an agent can hand work to an agent on any machine and gets its reply back in its own conversation. A machine accepts this only while the setting is on there too. Messages are marked as coming from an agent, chains are limited to 3 hops, the two sending tools ask permission in the usual way, and permission prompts on the other machine stay yours to answer. Fleet-wide. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
         },
+        "vineyard.agentTools.sendFiles": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "**Agent tool: send files to sessions.** Sessions Vineyard starts get `send_file`, which copies a file (up to 256 MB, checksum verified) to a live session on any machine. It lands in `~/.vineyard/received/<session>/` there, never in the workspace, and the session is told where, marked as coming from an agent. A machine accepts files only while this setting is on there too. The tool reads the file itself, so a file Claude Code's own rules would not let the session read can still be sent; the tool asks permission each time unless the session's mode skips prompts. Fleet-wide. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
+        },
         "vineyard.webApp.enabled": {
           "type": "boolean",
           "default": false,

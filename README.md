@@ -128,6 +128,8 @@ The sessions Vineyard starts can be given tools that see and use the fleet, each
   back in your agent's own conversation when that turn ends. Messages are marked as coming from an
   agent, chains stop at 3 hops, a machine accepts them only while its own setting is on, and
   permission prompts on the far side are still yours to answer.
+* **`sendFiles`**: send a file to a live session on any machine. It lands in
+  `~/.vineyard/received/<session>/` there, never in the workspace, and the session is told where.
 
 The tools come from an MCP server built into the daemon. Claude Code loads one only when the
 conversation needs it, so tools that go unused cost a few lines of context.

@@ -125,6 +125,18 @@ var allTools = []*tool{
 		run: (*Server).messageAgent,
 	},
 	{
+		name: "send_file", setting: model.AgentToolFiles, title: "Send a file to a session",
+		description: "Copies one file from this machine to a live session on any fleet machine (up to 256 MB, checksum verified). It lands in ~/.vineyard/received/<session>/ on that machine, never inside its workspace, and the session is told the path, with your message if you give one, marked as coming from you (an agent). Its reply arrives like message_agent's. To send a folder, archive it first.",
+		schema: obj(map[string]any{
+			"machine":    str("Machine id or name."),
+			"session_id": str("The session to send it to (list_sessions shows them)."),
+			"path":       str("Absolute path of the file on this machine."),
+			"message":    str("What the session should do with it (optional)."),
+			"notify":     map[string]any{"type": "boolean", "description": "Deliver its reply into this conversation when the turn ends (default true)."},
+		}, "machine", "session_id", "path"),
+		run: (*Server).sendFile,
+	},
+	{
 		name: "await_agent", setting: model.AgentToolDrive, title: "Wait for an agent's reply", readOnly: true,
 		description: "Waits until a session you started or messaged finishes its turn, and returns its reply and status: done, question (it asked something), permission (blocked on a permission prompt the user must answer in Vineyard), exited or error. For a session you have not messaged, returns its latest reply once it is not busy. A reply returned here is not delivered as a message too.",
 		schema: obj(map[string]any{

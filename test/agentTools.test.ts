@@ -4,8 +4,8 @@ import { shouldSendTools, wantedTools } from '../src/core/agentTools.ts';
 
 test('settings map to the daemon tool groups, sorted', () => {
   assert.deepEqual(wantedTools(() => false), []);
-  const on = new Set(['driveAgents', 'listMachines']);
-  assert.deepEqual(wantedTools((s) => on.has(s)), ['drive', 'machines']);
+  const on = new Set(['driveAgents', 'listMachines', 'sendFiles']);
+  assert.deepEqual(wantedTools((s) => on.has(s)), ['drive', 'files', 'machines']);
 });
 
 test('only a newer, different choice is sent', () => {

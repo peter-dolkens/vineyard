@@ -325,6 +325,7 @@ const (
 	AgentToolSessions    = "sessions"    // list_sessions
 	AgentToolTranscripts = "transcripts" // fetch_transcript
 	AgentToolDrive       = "drive"       // start_agent, message_agent, await_agent
+	AgentToolFiles       = "files"       // send_file
 )
 
 // AgentToolsStatus: Tools is the list in force (model.AgentTool*), At when it was chosen (Unix ms).

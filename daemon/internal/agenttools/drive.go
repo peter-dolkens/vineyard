@@ -1,9 +1,15 @@
 package agenttools
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +28,8 @@ const (
 	replyLimit = 8000
 	// tailLines is how much of a transcript's end is read to find a reply.
 	tailLines = 400
+	// maxSendFile matches the receiving daemon's limit (mesh.MaxPutFile).
+	maxSendFile = 256 << 20
 )
 
 // Reply is what an agent said when its turn ended, or why it stopped.
@@ -527,4 +535,114 @@ func (s *Server) awaitAgent(args json.RawMessage) (any, error) {
 			return Reply{Machine: name, SessionID: a.SessionID, Status: "timeout", Detail: "still working"}, nil
 		}
 	}
+}
+
+// putChunk is how much of a file goes in one putfile request (base64 makes it about 700 KB).
+const putChunk = 512 << 10
+
+func (s *Server) sendFile(args json.RawMessage) (any, error) {
+	var a struct {
+		Machine   string `json:"machine"`
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+		Message   string `json:"message"`
+		Notify    *bool  `json:"notify"`
+	}
+	if err := decode(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Machine == "" || a.SessionID == "" || a.Path == "" {
+		return nil, errors.New("machine, session_id and path are required")
+	}
+	if !filepath.IsAbs(a.Path) {
+		return nil, errors.New("path must be absolute")
+	}
+	st, err := os.Stat(a.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (send one file; archive a folder first)", a.Path)
+	}
+	if st.Size() > maxSendFile {
+		return nil, fmt.Errorf("%s is %d MB; files up to %d MB can be sent", a.Path, st.Size()>>20, maxSendFile>>20)
+	}
+	e, err := s.client.Entry(a.Machine)
+	if err != nil {
+		return nil, err
+	}
+	if !e.Online {
+		return nil, fmt.Errorf("%s is offline", e.Snapshot.Name)
+	}
+	if e.Snapshot.MachineID == s.o.Machine && a.SessionID == s.o.Session {
+		return nil, errors.New("that is this session")
+	}
+	var live bool
+	for _, ag := range e.Snapshot.Agents {
+		if ag.SessionID == a.SessionID && ag.Alive {
+			live = true
+		}
+	}
+	if !live {
+		return nil, fmt.Errorf("no live session %s on %s (list_sessions shows them)", a.SessionID, e.Snapshot.Name)
+	}
+	id, name, targs, err := s.locate(e.Snapshot.MachineID, a.SessionID, "")
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(a.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	size, err := io.Copy(h, f)
+	if err != nil {
+		return nil, err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	var baseline int64
+	tail := targs
+	tail.Lines = 1
+	if d, err := s.readTranscript(id, tail); err == nil {
+		baseline = d.Offset
+	}
+
+	put := protocol.PutFileArgs{ID: newID() + newID(), SessionID: a.SessionID, Name: filepath.Base(a.Path), Size: size, SHA256: sum, Note: a.Message, Origin: s.origin()}
+	buf := make([]byte, putChunk)
+	var res protocol.PutFileResult
+	for {
+		k, rerr := io.ReadFull(f, buf)
+		if rerr != nil && rerr != io.ErrUnexpectedEOF && rerr != io.EOF {
+			return nil, rerr
+		}
+		put.Data = base64.StdEncoding.EncodeToString(buf[:k])
+		put.Done = put.Offset+int64(k) >= size
+		raw, err := s.client.Request(id, "putfile", put, 60*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("send %s to %s: %w", put.Name, name, err)
+		}
+		if err := json.Unmarshal(raw, &res); err != nil {
+			return nil, err
+		}
+		put.Offset += int64(k)
+		if put.Done {
+			break
+		}
+	}
+	out := map[string]any{"machine": name, "sessionId": a.SessionID, "remotePath": res.Path, "bytes": size, "sha256": sum}
+	if !res.Delivered {
+		out["delivered"] = false
+		out["note"] = "The file is on " + name + " but the session was not told: " + res.DeliverError
+		return out, nil
+	}
+	notify := boolOr(a.Notify, true)
+	s.watches.start(id, name, a.SessionID, targs, baseline, true, notify)
+	out["delivered"] = true
+	out["reply"] = strings.Replace(replyNote(notify, s.o.Session != ""), "Started.", "Sent, and the session was told where it is.", 1)
+	return out, nil
 }

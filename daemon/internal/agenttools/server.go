@@ -27,7 +27,7 @@ var pollSettings = 3 * time.Second
 const instructions = `This session runs inside a Vineyard fleet: Vineyard watches and runs Claude Code sessions across the user's machines. ` +
 	`Use these tools when the work involves other machines or other agents: to find a machine that has some program (find_machines), ` +
 	`see what other sessions are doing, read another session's transcript (fetch_transcript saves it to a file and tells you the path), ` +
-	`or hand work to an agent on another machine and get its reply (start_agent / message_agent; the reply arrives as a message in this conversation, or use await_agent). ` +
+	`or hand work to an agent on another machine and get its reply (start_agent / message_agent; the reply arrives as a message in this conversation, or use await_agent), or send a session a file (send_file). ` +
 	`Messages you send to other agents are labelled as coming from you, not from the user.`
 
 // Options configures a server.

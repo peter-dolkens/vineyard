@@ -14,6 +14,7 @@ export const AGENT_TOOL_SETTINGS: Record<string, string> = {
   listSessions: 'sessions',
   fetchTranscripts: 'transcripts',
   driveAgents: 'drive',
+  sendFiles: 'files',
 };
 
 /** The tool groups that settings turn on, sorted as the daemon reports them. */

@@ -354,6 +354,32 @@ type OriginArgs struct {
 	Origin *AgentOrigin `json:"origin,omitempty"`
 }
 
+// PutFileArgs sends a file to a machine in chunks ("putfile"), for a session there: it lands in
+// ~/.vineyard/received/<session>/ and, on the last chunk, the session is told where. ID names the
+// transfer (the sender's choice); every chunk carries the whole file's Name, Size and SHA256, and
+// must continue exactly where the last one ended. Origin is set when an agent sent it.
+type PutFileArgs struct {
+	ID        string       `json:"id"`
+	SessionID string       `json:"sessionId"`
+	Name      string       `json:"name"`
+	Size      int64        `json:"size"`
+	SHA256    string       `json:"sha256"`
+	Offset    int64        `json:"offset"`
+	Data      string       `json:"data,omitempty"` // base64
+	Done      bool         `json:"done,omitempty"`
+	Note      string       `json:"note,omitempty"` // said to the session with the file's path
+	Origin    *AgentOrigin `json:"origin,omitempty"`
+}
+
+// PutFileResult: Received is how many bytes are in so far; on the last chunk Path is where the file
+// is on that machine, and Delivered whether the session was told (DeliverError why not).
+type PutFileResult struct {
+	Received     int64  `json:"received"`
+	Path         string `json:"path,omitempty"`
+	Delivered    bool   `json:"delivered,omitempty"`
+	DeliverError string `json:"deliverError,omitempty"`
+}
+
 // AgentToolsArgs sets which Vineyard tools a machine gives its sessions ("agenttools"); At is when
 // the setting was chosen, and a daemon keeps the later of two choices.
 type AgentToolsArgs struct {
