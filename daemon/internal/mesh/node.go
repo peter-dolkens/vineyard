@@ -188,6 +188,8 @@ type Node struct {
 	// agentHops is, per session, how many agent-to-agent hops brought its latest agent message
 	// (agenttools.go). Memory only: a restart forgets it, and the session's next send counts from 1.
 	agentHops map[string]int
+	// puts are files being sent to this machine's sessions (files.go).
+	puts putFiles
 
 	wake chan struct{}
 }
@@ -2084,6 +2086,12 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return hasCap(a)
+	case "putfile":
+		var a protocol.PutFileArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.putFile(a)
 	case "agenthops":
 		var a protocol.AgentHopsArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {

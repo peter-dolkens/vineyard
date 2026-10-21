@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -127,7 +128,10 @@ func TestSpawnArgs(t *testing.T) {
 	if !strings.Contains(joined, "--allowedTools mcp__vineyard__list_machines") || !strings.Contains(joined, "--allowedTools mcp__vineyard__await_agent") {
 		t.Errorf("read-only tools not pre-approved: %v", args)
 	}
-	for _, write := range []string{"start_agent", "message_agent"} {
+	if runtime.GOOS != "windows" && !strings.Contains(joined, "--allowedTools Read(//home/u/.vineyard/received/**)") {
+		t.Errorf("received files not readable: %v", args)
+	}
+	for _, write := range []string{"start_agent", "message_agent", "send_file"} {
 		if strings.Contains(joined, "mcp__vineyard__"+write) {
 			t.Errorf("%s must not be pre-approved", write)
 		}

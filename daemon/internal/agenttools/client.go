@@ -175,6 +175,7 @@ func (c *Client) handle(conn *mesh.Conn, line []byte) {
 		}
 		c.mu.Lock()
 		c.self = f.Self
+		c.lastMsg = time.Now() // even an empty fleet starts the settle wait: snapshots follow it
 		for _, e := range f.Entries {
 			c.putLocked(e)
 		}
@@ -255,7 +256,22 @@ func (c *Client) Entry(machine string) (model.FleetEntry, error) {
 	if e, ok := matchMachine(all, machine); ok {
 		return e, nil
 	}
-	return model.FleetEntry{}, errors.New("no machine called " + machine + " in the fleet (list_machines shows them)")
+	// A machine can be missing for a moment after connecting: give its snapshot a little longer.
+	deadline := time.After(settleMax)
+	for {
+		changed := c.Changed()
+		select {
+		case <-changed:
+		case <-deadline:
+			return model.FleetEntry{}, errors.New("no machine called " + machine + " in the fleet (list_machines shows them)")
+		}
+		if _, all, err = c.Fleet(); err != nil {
+			return model.FleetEntry{}, err
+		}
+		if e, ok := matchMachine(all, machine); ok {
+			return e, nil
+		}
+	}
 }
 
 // Request relays one operation through the local daemon to target ("" for this machine).

@@ -17,7 +17,7 @@ import (
 const MaxAgentHops = 3
 
 // knownAgentTools are the values the agenttools op accepts; anything else is dropped.
-var knownAgentTools = []string{model.AgentToolMachines, model.AgentToolWorkspaces, model.AgentToolSessions, model.AgentToolTranscripts, model.AgentToolDrive}
+var knownAgentTools = []string{model.AgentToolMachines, model.AgentToolWorkspaces, model.AgentToolSessions, model.AgentToolTranscripts, model.AgentToolDrive, model.AgentToolFiles}
 
 // AgentTools is the list of Vineyard tools this machine gives the sessions it starts.
 func (n *Node) AgentTools() []string {
@@ -86,16 +86,25 @@ func hasCap(a protocol.HasCapArgs) (json.RawMessage, error) {
 // acceptAgentOrigin checks a send or spawn another agent asked for and records the hops it brings to
 // the session, so whatever that session sends on carries one more. It returns the text to deliver.
 func (n *Node) acceptAgentOrigin(o *protocol.AgentOrigin, text string) (string, error) {
-	if !n.agentToolOn(model.AgentToolDrive) {
-		return "", fmt.Errorf("%s does not let agents drive its sessions (vineyard.agentTools.driveAgents is off there)", n.cfg.Name)
+	if err := n.checkOrigin(model.AgentToolDrive, "drive its sessions", "driveAgents", o); err != nil {
+		return "", err
+	}
+	return WrapAgentMessage(o, text), nil
+}
+
+// checkOrigin refuses what an agent asked for unless this machine's own setting for it is on, and
+// bounds the hops.
+func (n *Node) checkOrigin(tool, what, setting string, o *protocol.AgentOrigin) error {
+	if !n.agentToolOn(tool) {
+		return fmt.Errorf("%s does not let agents %s (vineyard.agentTools.%s is off there)", n.cfg.Name, what, setting)
 	}
 	if o.Hops < 1 {
 		o.Hops = 1
 	}
 	if o.Hops > MaxAgentHops {
-		return "", fmt.Errorf("refused: this would be agent hop %d, and %d is the limit", o.Hops, MaxAgentHops)
+		return fmt.Errorf("refused: this would be agent hop %d, and %d is the limit", o.Hops, MaxAgentHops)
 	}
-	return WrapAgentMessage(o, text), nil
+	return nil
 }
 
 func (n *Node) noteAgentHops(sessionID string, hops int) {

@@ -25,8 +25,11 @@ func SpawnArgs(exe, vineyardDir, sessionID string, tools []string) []string {
 	for _, t := range ReadOnlyTools() {
 		args = append(args, "--allowedTools", "mcp__"+ServerName+"__"+t)
 	}
-	if rule := readRule(TranscriptDir(vineyardDir)); rule != "" {
-		args = append(args, "--allowedTools", rule)
+	// Transcripts this session fetches, and files other sessions send it.
+	for _, dir := range []string{TranscriptDir(vineyardDir), filepath.Join(vineyardDir, "received")} {
+		if rule := readRule(dir); rule != "" {
+			args = append(args, "--allowedTools", rule)
+		}
 	}
 	return args
 }
