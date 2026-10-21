@@ -291,7 +291,7 @@ tail -f ~/.vineyard/vineyardd.log
 | `rekey {keys}` | pre-0.3.23 peer→peer | a shared key set; ignored from 0.3.23 |
 | `ping` / `pong` | outbound side pings | liveness, 30 s |
 | `fleet`, `update`, `peerstatus` | daemon→viewer | aggregated view for VS Code |
-| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*), `agenttools {tools, at}`, `hascap {names}`, `agenthops {sessionId}`, `putfile`, and `origin` on `send` / `spawn` (see *Agent tools*) |
+| `req {id, target, op, args}` / `res` | viewer→daemon→peer | `transcript` (tail or from a byte offset), `send`, `spawn`, `takeover` (end an observed session's process, wait for it to exit, resume it as a managed child; a pending AskUserQuestion is carried over as a `recovered` pending request whose answer goes in as a prompt), `respond`, `interrupt`, `stop`, `stoptask` (one background command or subagent of a managed session, via Claude Code's `stop_task`), `configure` (model / effort / permission mode of a managed session, via Claude Code's `set_model`, `apply_flag_settings`, `set_permission_mode` control requests; the reply carries the machine's Claude Code settings defaults, which the extension stores with the choice, and a later `spawn` given those as `basis` drops any remembered choice whose default has since changed; the daemon itself sends `get_context_usage` after the handshake, a model switch and a compaction), `login` (relay `claude auth login`: start → URL, code → result), `rename` (custom session title), `wake` (Wake-on-LAN + sleep-proxy nudge for a peer), `sessions` (past transcripts for a workspace or machine), `kill` (terminate an observed session's process), `probe`, `addpeer`, `removepeer`, `invite`, `upgrade` (chunked daemon binary, see *Staying up to date*), `version`, `webapp` / `webpair` / `webdevices` / `webrevoke` (see *The web app*), `agenttools {tools, at}`, `hascap {names}`, `agenthops {sessionId}`, `putfile`, `mkworkspace`, and `origin` on `send` / `spawn` (see *Agent tools*) |
 | `join {token, machineId, listen, publicKey}` / `joined {cert, chain, peers}` | joiner→inviter (no client cert) | one-shot enrolment while an invite is active: the roots and the joiner's certificate chain |
 | `tunnel` / `tunnel-in` / `tunnel-callback` / `tunnel-accept`, `tunnel-ok` / `tunnel-fail` | requester→relay→target | one-hop relay setup; first line of a fresh connection (callback travels on an existing link) |
 
@@ -406,6 +406,7 @@ and every tool is off until a fleet setting turns it on.
   | `fetchTranscripts` | `fetch_transcript` |
   | `driveAgents` | `start_agent`, `message_agent`, `await_agent` |
   | `sendFiles` | `send_file` |
+  | `createWorkspaces` | `create_workspace` |
 
 * **Registered at spawn, loaded on demand.** When a machine has any tool turned on, every session
   its daemon starts or resumes gets `--mcp-config` naming `vineyardd mcp --session <id>`. Claude Code
@@ -466,6 +467,15 @@ and every tool is off until a fleet setting turns it on.
   back as for `message_agent`. Sessions get `Read` on `~/.vineyard/received` pre-approved. The tool
   reads the file itself, so it can send a file Claude Code's own rules would keep from the sending
   session; it is never pre-approved for that reason.
+* **Creating a workspace.** `create_workspace {machine, path}` sends `req mkworkspace {path, origin}`.
+  The receiving daemon refuses an agent's request unless its own `createWorkspaces` is on, and makes
+  the folder (with any parents) only strictly inside the allowed folder,
+  `vineyard.agentTools.workspacesInside` ("Only allow workspaces inside"), which travels with the
+  `agenttools` op as `workspacesInside` and defaults to `~`, each machine's own home
+  (`%USERPROFILE%` on Windows). A leading `~` in either means that home. The check runs on the
+  machine itself, against both paths with links followed (the part of the new path that exists), and
+  again once the folder is made, so neither `..` nor a link inside the allowed folder leads out of
+  it. An existing folder is left as it is and reported as such; nothing but the folder is created.
 * **Retention.** Both folders are cleared out (package `retention`). A fetched transcript (its
   `.jsonl`, `.md` and `.meta.json` together) goes once it has not been fetched for 7 days, and the
   least recently fetched go first while the folder is over 1 GB; the one just fetched always stays.

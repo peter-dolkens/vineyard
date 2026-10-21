@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -22,7 +23,10 @@ import (
 
 // A real daemon node on loopback, the MCP server's own viewer client, and send_file through the
 // tool-call path: the file crosses the wire in chunks and lands in the session's received folder.
-func TestSendFileEndToEnd(t *testing.T) {
+// e2e runs a real daemon node on loopback, giving tools to agents, and an MCP server that reaches it
+// through its own viewer client, as `vineyardd mcp` does.
+func e2e(t *testing.T, tools ...string) (*Server, string) {
+	t.Helper()
 	t.Setenv("VINEYARD_DIR", t.TempDir())
 	if err := config.GenerateFleetCert(); err != nil {
 		t.Fatal(err)
@@ -33,11 +37,11 @@ func TestSendFileEndToEnd(t *testing.T) {
 	}
 	addr := l.Addr().String()
 	l.Close()
-	const target = "0b9b6d1e-1111-4222-8333-944455556666"
+	target := "0b9b6d1e-1111-4222-8333-944455556666"
 	ws := t.TempDir()
 	cfg := config.New("box", "box", 0, addr)
 	cfg.Listen, cfg.Uplink = addr, "off"
-	cfg.AgentTools = []string{model.AgentToolFiles}
+	cfg.AgentTools = tools
 	awake := false
 	cfg.KeepAwakeWhileWatched = &awake // no caffeinate on the machine running the tests
 	node, err := mesh.New(mesh.Options{Config: cfg, Version: "test", Log: log.New(os.Stderr, "box ", 0), Collect: func() model.Snapshot {
@@ -63,8 +67,13 @@ func TestSendFileEndToEnd(t *testing.T) {
 		c := mesh.NewConn(raw)
 		return c, c.Send(protocol.Hello{T: "hello", Role: "viewer", MachineID: "box#mcp-test", Name: "mcp-test", Version: "test", Protocol: protocol.Version})
 	}
-	s := New(Options{Machine: "box", Session: "sender", Dial: dial, Enabled: func() []string { return []string{model.AgentToolFiles} }, TranscriptDir: t.TempDir()})
+	s := New(Options{Machine: "box", Session: "sender", Dial: dial, Enabled: func() []string { return tools }, TranscriptDir: t.TempDir()})
 
+	return s, target
+}
+
+func TestSendFileEndToEnd(t *testing.T) {
+	s, target := e2e(t, model.AgentToolFiles)
 	data := make([]byte, 1300<<10) // three chunks
 	_, _ = rand.Read(data)
 	src := filepath.Join(t.TempDir(), "build output.tar.gz")
@@ -106,5 +115,33 @@ func TestSendFileEndToEnd(t *testing.T) {
 	res = s.call("send_file", args)
 	if res["isError"] != true || !strings.Contains(res["content"].([]map[string]any)[0]["text"].(string), "sendFiles") {
 		t.Fatalf("expected a refusal naming the setting, got %v", res)
+	}
+}
+
+func TestCreateWorkspaceEndToEnd(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	s, _ := e2e(t, model.AgentToolNewWorkspaces)
+	call := func(path string) (map[string]any, bool) {
+		args, _ := json.Marshal(map[string]any{"machine": "box", "path": path})
+		res := s.call("create_workspace", args)
+		text := res["content"].([]map[string]any)[0]["text"].(string)
+		var out map[string]any
+		_ = json.Unmarshal([]byte(text), &out)
+		if out == nil {
+			out = map[string]any{"error": text}
+		}
+		return out, res["isError"] == true
+	}
+	out, failed := call("~/Projects/fresh")
+	if failed || out["path"] != filepath.Join(home, "Projects", "fresh") || out["created"] != true {
+		t.Fatalf("create: %v", out)
+	}
+	if out, failed := call(filepath.Join(t.TempDir(), "nope")); !failed || !strings.Contains(fmt.Sprint(out["error"]), "outside") {
+		t.Fatalf("outside home: %v", out)
 	}
 }

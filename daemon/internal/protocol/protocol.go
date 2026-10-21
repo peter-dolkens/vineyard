@@ -385,6 +385,23 @@ type PutFileResult struct {
 type AgentToolsArgs struct {
 	Tools []string `json:"tools"`
 	At    int64    `json:"at"`
+	// WorkspacesInside is the folder create_workspace may create folders in ("~" is each machine's
+	// home); "" leaves it at the default.
+	WorkspacesInside string `json:"workspacesInside,omitempty"`
+}
+
+// MakeWorkspaceArgs creates a folder for a new workspace ("mkworkspace"), only inside the machine's
+// allowed folder. Origin is set when an agent asked.
+type MakeWorkspaceArgs struct {
+	Path   string       `json:"path"`
+	Origin *AgentOrigin `json:"origin,omitempty"`
+}
+
+// MakeWorkspaceResult: the folder, and whether it was made now or was there already.
+type MakeWorkspaceResult struct {
+	Path    string `json:"path"`
+	Created bool   `json:"created,omitempty"`
+	Existed bool   `json:"existed,omitempty"`
 }
 
 // HasCapArgs asks a machine whether it has these programs on its login shell's PATH ("hascap").

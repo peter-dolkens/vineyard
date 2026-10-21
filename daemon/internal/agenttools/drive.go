@@ -646,3 +646,36 @@ func (s *Server) sendFile(args json.RawMessage) (any, error) {
 	out["reply"] = strings.Replace(replyNote(notify, s.o.Session != ""), "Started.", "Sent, and the session was told where it is.", 1)
 	return out, nil
 }
+
+func (s *Server) createWorkspace(args json.RawMessage) (any, error) {
+	var a struct {
+		Machine string `json:"machine"`
+		Path    string `json:"path"`
+	}
+	if err := decode(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Machine == "" || strings.TrimSpace(a.Path) == "" {
+		return nil, errors.New("machine and path are required")
+	}
+	e, err := s.client.Entry(a.Machine)
+	if err != nil {
+		return nil, err
+	}
+	if !e.Online {
+		return nil, fmt.Errorf("%s is offline", e.Snapshot.Name)
+	}
+	raw, err := s.client.Request(e.Snapshot.MachineID, "mkworkspace", protocol.MakeWorkspaceArgs{Path: a.Path, Origin: s.origin()}, 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("create %s on %s: %w", a.Path, e.Snapshot.Name, err)
+	}
+	var res protocol.MakeWorkspaceResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return nil, err
+	}
+	note := "Created. Start an agent there with start_agent (workspace: this path)."
+	if res.Existed {
+		note = "The folder already existed and was left as it was. Start an agent there with start_agent (workspace: this path)."
+	}
+	return map[string]any{"machine": e.Snapshot.Name, "path": res.Path, "created": res.Created, "note": note}, nil
+}

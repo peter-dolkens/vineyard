@@ -15,7 +15,17 @@ export const AGENT_TOOL_SETTINGS: Record<string, string> = {
   fetchTranscripts: 'transcripts',
   driveAgents: 'drive',
   sendFiles: 'files',
+  createWorkspaces: 'newworkspaces',
 };
+
+/** vineyard.agentTools.workspacesInside: "~" (each machine's home) when left empty. */
+export const DEFAULT_WORKSPACES_INSIDE = '~';
+
+/** The setting as sent: trimmed, with the default written as "" so it matches what a daemon reports. */
+export function normalInside(setting: string | undefined): string {
+  const s = (setting ?? '').trim();
+  return s === DEFAULT_WORKSPACES_INSIDE ? '' : s;
+}
 
 /** The tool groups that settings turn on, sorted as the daemon reports them. */
 export function wantedTools(get: (setting: string) => boolean): string[] {
@@ -29,10 +39,10 @@ export function wantedTools(get: (setting: string) => boolean): string[] {
  * Whether to send `tools` (chosen at `at`) to a machine reporting `st`. A daemon older than agent
  * tools reports nothing: asking it to keep none is pointless, asking for some is worth one try.
  */
-export function shouldSendTools(st: AgentToolsStatus | undefined, tools: string[], at: number): boolean {
+export function shouldSendTools(st: AgentToolsStatus | undefined, tools: string[], at: number, inside = ''): boolean {
   if (!at) return false;
   if (!st) return tools.length > 0;
   if ((st.at ?? 0) >= at) return false;
   const have = [...(st.tools ?? [])].sort();
-  return have.length !== tools.length || have.some((t, i) => t !== tools[i]);
+  return have.length !== tools.length || have.some((t, i) => t !== tools[i]) || normalInside(st.workspacesInside) !== normalInside(inside);
 }

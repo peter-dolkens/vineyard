@@ -137,6 +137,15 @@ var allTools = []*tool{
 		run: (*Server).sendFile,
 	},
 	{
+		name: "create_workspace", setting: model.AgentToolNewWorkspaces, title: "Create a workspace on a machine",
+		description: "Creates a folder for a new workspace on a fleet machine, making parent folders as needed, so an agent can be started there (start_agent). Each machine only allows this inside one folder, by default its user's home folder; a leading ~ in the path means that home. An existing folder is left as it is. It creates nothing but the folder: clone or set up the project with an agent started there.",
+		schema: obj(map[string]any{
+			"machine": str("Machine id or name."),
+			"path":    str("Absolute path of the new folder on that machine, or one starting with ~ for its home folder (e.g. ~/Projects/new-thing)."),
+		}, "machine", "path"),
+		run: (*Server).createWorkspace,
+	},
+	{
 		name: "await_agent", setting: model.AgentToolDrive, title: "Wait for an agent's reply", readOnly: true,
 		description: "Waits until a session you started or messaged finishes its turn, and returns its reply and status: done, question (it asked something), permission (blocked on a permission prompt the user must answer in Vineyard), exited or error. For a session you have not messaged, returns its latest reply once it is not busy. A reply returned here is not delivered as a message too.",
 		schema: obj(map[string]any{
