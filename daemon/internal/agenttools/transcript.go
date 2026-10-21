@@ -24,7 +24,14 @@ type entry struct {
 	IsMeta      bool   `json:"isMeta"`
 	IsSidechain bool   `json:"isSidechain"`
 	Timestamp   string `json:"timestamp"`
-	Message     struct {
+	Origin      struct {
+		Kind string `json:"kind"`
+		Body string `json:"body"` // the message, clean, when another session sent it
+		// SenderTaskID names the session's own subagent or task when one sent it (progress, a
+		// hand-back): not a prompt.
+		SenderTaskID string `json:"senderTaskId"`
+	} `json:"origin"`
+	Message struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`
 		StopReason string          `json:"stop_reason"`
@@ -58,9 +65,15 @@ func parseEntry(raw []byte) (entry, []block, bool) {
 }
 
 // isPrompt is a user line a person (or another agent) wrote, not a tool result or Claude Code's own.
+// A message through the cross-session inbox counts: Claude Code 2.1.301 writes it as a meta line with
+// origin kind "peer" (see peerMessage), and it is how a message reaches an observed session.
 func isPrompt(e entry, bs []block) bool {
-	if e.Type != "user" || e.IsMeta || e.IsSidechain {
+	if e.Type != "user" || e.IsSidechain {
 		return false
+	}
+	if e.IsMeta {
+		_, ok := peerMessage(e, bs)
+		return ok
 	}
 	for _, b := range bs {
 		if b.Type == "tool_result" {
@@ -68,6 +81,51 @@ func isPrompt(e entry, bs []block) bool {
 		}
 	}
 	return len(bs) > 0
+}
+
+var (
+	peerHead     = regexp.MustCompile(`^Another Claude session sent a message:[ \t]*\n?`)
+	peerTail     = regexp.MustCompile(`\n\s*This came from another Claude session\b[\s\S]*$`)
+	crossTags    = regexp.MustCompile(`</?cross-session-message[^>]*>`)
+	vineyardHead = regexp.MustCompile(`^\[Message typed by the user in (?:Vineyard on [^\]\n]*|the Vineyard web app[^\]\n]*)\. Treat it as the user's instruction\.\][ \t]*\n?`)
+	notAMessage  = regexp.MustCompile(`^<(?:agent-message|task-notification)\b`)
+)
+
+// unwrapCross is the message inside a cross-session wrapper of either Claude Code form, with the line
+// Vineyard puts ahead of what its user typed removed; text itself when it is not wrapped.
+func unwrapCross(text string) string {
+	t := strings.TrimSpace(text)
+	prose := peerHead.MatchString(t)
+	if prose {
+		t = strings.TrimSpace(peerTail.ReplaceAllString(peerHead.ReplaceAllString(t, ""), ""))
+	}
+	// A message from another session nests the tag form inside the prose one.
+	if strings.HasPrefix(t, "<cross-session-message") {
+		t = strings.TrimSpace(crossTags.ReplaceAllString(t, ""))
+	} else if !prose {
+		return t
+	}
+	return strings.TrimSpace(vineyardHead.ReplaceAllString(t, ""))
+}
+
+// peerMessage is the message a 2.1.301 cross-session line carries (meta, origin kind "peer"), unless
+// it is a subagent's hand-back or a task notification, which travel the same way.
+func peerMessage(e entry, bs []block) (string, bool) {
+	if e.Type != "user" || e.Origin.Kind != "peer" || e.IsSidechain || e.Origin.SenderTaskID != "" {
+		return "", false
+	}
+	t := strings.TrimSpace(e.Origin.Body)
+	if t == "" {
+		t = strings.TrimSpace(texts(bs))
+	}
+	if t == "" || notAMessage.MatchString(t) {
+		return "", false
+	}
+	t = unwrapCross(t)
+	if notAMessage.MatchString(t) {
+		return "", false
+	}
+	return t, true
 }
 
 func isToolResult(e entry, bs []block) bool {
@@ -331,7 +389,7 @@ func renderMarkdown(jsonlPath, mdPath string, meta transcriptMeta) (mdSummary, e
 		}
 		switch {
 		case isPrompt(e, bs):
-			t := texts(bs)
+			t := unwrapCross(texts(bs))
 			if t == "" {
 				continue
 			}
