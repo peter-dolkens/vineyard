@@ -131,6 +131,9 @@ The sessions Vineyard starts can be given tools that see and use the fleet, each
 * **`sendFiles`**: send a file to a live session on any machine. It lands in
   `~/.vineyard/received/<session>/` there, never in the workspace, and the session is told where.
 
+Fetched transcripts are kept for 7 days after the last fetch (1 GB at most) and received files for 14
+days, longer while their session runs; `config.json` changes the limits.
+
 The tools come from an MCP server built into the daemon. Claude Code loads one only when the
 conversation needs it, so tools that go unused cost a few lines of context.
 

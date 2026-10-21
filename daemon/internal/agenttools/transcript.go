@@ -337,6 +337,9 @@ func (s *Server) fetchTranscript(args json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.o.Retention != nil {
+		s.o.Retention() // after writing: this transcript is the newest and stays
+	}
 	st, _ := os.Stat(jsonlPath)
 	var size int64
 	if st != nil {
