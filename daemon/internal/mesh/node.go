@@ -27,6 +27,7 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/managed"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/retention"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 )
 
@@ -190,6 +191,8 @@ type Node struct {
 	agentHops map[string]int
 	// puts are files being sent to this machine's sessions (files.go).
 	puts putFiles
+	// sweeper clears out old fetched transcripts and received files (package retention).
+	sweeper *retention.Sweeper
 
 	wake chan struct{}
 }
@@ -218,6 +221,7 @@ func New(opts Options) (*Node, error) {
 		callbacks: map[string]chan legConn{},
 		wake:      make(chan struct{}, 1),
 	}
+	n.sweeper = &retention.Sweeper{Policy: n.retentionPolicy, Live: n.sessionLive, Logf: n.logf}
 	n.setTLSLocked(srv, cli)
 	if config.HasMachine(opts.Dir) {
 		if n.me, err = config.LoadMachine(opts.Dir); err != nil {
@@ -256,6 +260,7 @@ func (n *Node) Run(ctx context.Context) error {
 	n.logf("listening on %s as %s (advertise %s)", n.cfg.Listen, n.cfg.MachineID, n.cfg.Advertise)
 
 	go n.acceptLoop(ctx, tlsLn)
+	go n.sweeper.Run(true)
 	go n.collectorLoop(ctx)
 	go n.maintenanceLoop(ctx)
 
@@ -1108,6 +1113,7 @@ func (n *Node) setWantFleet(want bool) {
 			n.graceTimer = nil
 		}
 		if !n.wantFleet {
+			go n.sweeper.Run(false)
 			n.wantFleet = true
 			n.up.gaveUp = false
 			for _, p := range n.peers {

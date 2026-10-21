@@ -466,6 +466,15 @@ and every tool is off until a fleet setting turns it on.
   back as for `message_agent`. Sessions get `Read` on `~/.vineyard/received` pre-approved. The tool
   reads the file itself, so it can send a file Claude Code's own rules would keep from the sending
   session; it is never pre-approved for that reason.
+* **Retention.** Both folders are cleared out (package `retention`). A fetched transcript (its
+  `.jsonl`, `.md` and `.meta.json` together) goes once it has not been fetched for 7 days, and the
+  least recently fetched go first while the folder is over 1 GB; the one just fetched always stays.
+  A received file goes after 14 days unless its session is still running on that machine, and a
+  half-received one after an hour. Empty folders go with them; links are never followed. Nothing
+  runs on a timer: the daemon sweeps when it starts, when a viewer attaches (at most hourly) and
+  after receiving a file, and the agent tools' server sweeps transcripts after each fetch.
+  `transcriptRetentionDays`, `transcriptCacheMB` and `receivedRetentionDays` in a machine's
+  config.json change the limits; a negative value keeps for ever.
 
 ## Taking over a session
 

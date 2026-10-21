@@ -10,6 +10,7 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/caps"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/retention"
 )
 
 // MaxAgentHops bounds a chain of agents prompting agents: a person's agent driving B is one hop, B
@@ -142,4 +143,26 @@ func WrapAgentMessage(o *protocol.AgentOrigin, text string) string {
 
 func attr(s string) string {
 	return strings.NewReplacer("\"", "'", "\n", " ", "<", "(", ">", ")").Replace(s)
+}
+
+// retentionPolicy is this machine's limits for the agent tools' folders.
+func (n *Node) retentionPolicy() retention.Policy {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return retention.PolicyOf(n.cfg)
+}
+
+// sessionLive reports whether a session on this machine is still running, so its received files stay.
+func (n *Node) sessionLive(session string) bool {
+	if n.opts.Managed != nil && n.opts.Managed.Has(session) {
+		return true
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, a := range n.store[n.cfg.MachineID].Snapshot.Agents {
+		if a.SessionID == session && a.Alive {
+			return true
+		}
+	}
+	return false
 }

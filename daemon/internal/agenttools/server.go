@@ -43,7 +43,9 @@ type Options struct {
 	Enabled func() []string
 	// TranscriptDir is where fetch_transcript saves files.
 	TranscriptDir string
-	Log           *log.Logger
+	// Retention, when set, clears out old fetched transcripts after each fetch (package retention).
+	Retention func()
+	Log       *log.Logger
 }
 
 type Server struct {

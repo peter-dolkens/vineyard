@@ -33,6 +33,7 @@ import (
 	"github.com/peter-dolkens/vineyard/daemon/internal/mesh"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/retention"
 	"github.com/peter-dolkens/vineyard/daemon/internal/service"
 	"github.com/peter-dolkens/vineyard/daemon/internal/web"
 )
@@ -714,7 +715,13 @@ func cmdMCP(args []string) error {
 			return c.AgentTools
 		},
 		TranscriptDir: agenttools.TranscriptDir(config.Dir()),
-		Log:           logger,
+		Retention: func() {
+			c, _ := config.Load()
+			if r, err := retention.SweepTranscripts(retention.PolicyOf(c), time.Now()); err == nil && r.Removed > 0 {
+				logger.Printf("retention: removed %d fetched transcripts (%d KB)", r.Removed, r.Bytes>>10)
+			}
+		},
+		Log: logger,
 	})
 	return srv.Serve(os.Stdin, os.Stdout)
 }

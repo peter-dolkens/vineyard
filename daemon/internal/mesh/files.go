@@ -17,9 +17,9 @@ import (
 	"unicode"
 
 	"github.com/peter-dolkens/vineyard/daemon/internal/claude"
-	"github.com/peter-dolkens/vineyard/daemon/internal/config"
 	"github.com/peter-dolkens/vineyard/daemon/internal/model"
 	"github.com/peter-dolkens/vineyard/daemon/internal/protocol"
+	"github.com/peter-dolkens/vineyard/daemon/internal/retention"
 )
 
 const (
@@ -33,8 +33,9 @@ const (
 	maxPuts = 8
 )
 
-// ReceivedDir is where files sent to this machine's sessions land: one folder per session.
-func ReceivedDir() string { return config.Path("received") }
+// ReceivedDir is where files sent to this machine's sessions land: one folder per session. Package
+// retention clears it out.
+func ReceivedDir() string { return retention.ReceivedDir() }
 
 type putFile struct {
 	args    protocol.PutFileArgs
@@ -203,6 +204,7 @@ func (n *Node) putFile(a protocol.PutFileArgs) (json.RawMessage, error) {
 	}
 	res.Path = final
 	n.logf("received %s (%d bytes) for session %s", final, t.n, t.args.SessionID)
+	go n.sweeper.Run(false)
 	if err := n.deliverText(t.args.SessionID, fileNotice(a, final, t.n), a.Origin); err != nil {
 		res.DeliverError = err.Error()
 	} else {

@@ -78,6 +78,12 @@ type Config struct {
 	// the latest choice wins, as for WebApp.
 	AgentTools   []string `json:"agentTools,omitempty"`
 	AgentToolsAt int64    `json:"agentToolsAt,omitempty"`
+	// How long the agent tools' files are kept (package retention): transcripts fetched from other
+	// machines, by days since last fetched and by the folder's size, and files sent to this
+	// machine's sessions, by age. 0 is the default (7 days, 1024 MB, 14 days); negative keeps for ever.
+	TranscriptRetentionDays int `json:"transcriptRetentionDays,omitempty"`
+	TranscriptCacheMB       int `json:"transcriptCacheMB,omitempty"`
+	ReceivedRetentionDays   int `json:"receivedRetentionDays,omitempty"`
 	// AllowUnsignedUpgrades lets this daemon install and store vineyardd builds that carry no valid
 	// release signature: for a development machine only. It is never set over the mesh.
 	AllowUnsignedUpgrades bool `json:"allowUnsignedUpgrades,omitempty"`
