@@ -11,6 +11,7 @@ import { cacheTtlMs, contextFor, contextGauge, type CacheUsage } from '../core/c
 import { acceptEditsSuggestions, planText, PLAN_REJECTED } from '../core/plan.ts';
 import { isDelegating, shownState, shownStateLabel } from '../core/subagents.ts';
 import { isNarration } from '../core/thinking.ts';
+import { peerPrompt, unwrapCrossSession } from '../core/crossSession.ts';
 
 declare function acquireVsCodeApi(): { postMessage(m: unknown): void };
 const vscode = acquireVsCodeApi();
@@ -814,6 +815,13 @@ function renderEntry(e: Entry) {
     stats.cacheRequestAt = epoch(e.timestamp);
     if (e.isCompactSummary === true) stats.compactedAt = epoch(e.timestamp) ?? Date.now();
   }
+  // A message sent through the cross-session inbox (Vineyard's own, to an observed session): Claude
+  // Code 2.1.301 writes it as a meta prompt, which every other check here would skip.
+  const peer = type === 'user' && e.isMeta === true && !side ? peerPrompt(e) : undefined;
+  if (peer) {
+    startTurn(peer.text, time, true);
+    return;
+  }
   const blocks: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
   // Images the user sent (vineyard puts them ahead of the prompt's text): shown with the prompt, or
   // as a prompt of their own when there is no text.
@@ -834,9 +842,8 @@ function renderEntry(e: Entry) {
         if (type === 'user') {
           if (e.isMeta === true || side) break;
           const t = text.trim();
-          const cross = /^<cross-session-message\b/.test(t);
-          const clean = cross ? t.replace(/<\/?cross-session-message[^>]*>/g, '').trim() : t;
-          startTurn(clean, time, cross, images);
+          const cross = unwrapCrossSession(t);
+          startTurn(cross ? cross.text : t, time, !!cross, images);
           images = [];
         } else {
           turnFor().appendChild(assistantRow(text, side, time));
@@ -931,12 +938,11 @@ function renderQueuedPrompt(att: any, time: string) {
   if (att.commandMode && att.commandMode !== 'prompt') return;
   const blocks: any[] = Array.isArray(att.prompt) ? att.prompt : typeof att.prompt === 'string' ? [{ type: 'text', text: att.prompt }] : [];
   const t = blocks.map((b) => (b.type === 'text' ? String(b.text ?? '') : '')).join('\n').trim();
-  if (/^<task-notification>/.test(t)) return;
+  if (/^<(?:task-notification|agent-message)\b/.test(t)) return; // not messages: a task's end, a subagent's hand-back
   const images = blocks.flatMap((b) => (b.type === 'image' && b.source?.type === 'base64' && /^image\/(png|jpeg|gif|webp)$/.test(b.source.media_type) ? [`data:${b.source.media_type};base64,${b.source.data}`] : []));
   if (!t && !images.length) return;
-  const cross = /^<cross-session-message\b/.test(t);
-  const clean = cross ? t.replace(/<\/?cross-session-message[^>]*>/g, '').trim() : t;
-  startTurn(clean, time, cross, images, 'read mid-turn');
+  const cross = unwrapCrossSession(t);
+  startTurn(cross ? cross.text : t, time, !!cross, images, 'read mid-turn');
 }
 
 function ioBlock(label: string, text: string, cls: string): HTMLElement {
