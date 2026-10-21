@@ -78,6 +78,9 @@ type Config struct {
 	// the latest choice wins, as for WebApp.
 	AgentTools   []string `json:"agentTools,omitempty"`
 	AgentToolsAt int64    `json:"agentToolsAt,omitempty"`
+	// WorkspacesInside limits where create_workspace may create a folder ("~" for the home folder,
+	// the default when empty); set with AgentTools.
+	WorkspacesInside string `json:"workspacesInside,omitempty"`
 	// How long the agent tools' files are kept (package retention): transcripts fetched from other
 	// machines, by days since last fetched and by the folder's size, and files sent to this
 	// machine's sessions, by age. 0 is the default (7 days, 1024 MB, 14 days); negative keeps for ever.

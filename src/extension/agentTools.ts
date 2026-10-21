@@ -9,7 +9,7 @@
 
 import * as vscode from 'vscode';
 import type { FleetService } from './fleet.ts';
-import { shouldSendTools, wantedTools } from '../core/agentTools.ts';
+import { normalInside, shouldSendTools, wantedTools } from '../core/agentTools.ts';
 
 const CHANGED_KEY = 'vineyard.agentTools.changedAt';
 
@@ -56,15 +56,16 @@ export class AgentToolsSync implements vscode.Disposable {
     const at = this.context.globalState.get<number>(CHANGED_KEY, 0);
     if (!at) return; // never touched here: nothing to say
     const tools = this.desired();
+    const inside = normalInside(vscode.workspace.getConfiguration('vineyard.agentTools').get<string>('workspacesInside', '~'));
     for (const m of this.fleet.machines()) {
       if (!m.online) continue;
       const st = m.entry.snapshot.agentTools;
       const key = `${m.id}@${m.entry.snapshot.daemonVersion ?? ''}`;
       if (this.inflight.has(m.id) || this.unsupported.has(key) || (this.retryAt.get(m.id) ?? 0) > Date.now()) continue;
-      if (!shouldSendTools(st, tools, at)) continue;
+      if (!shouldSendTools(st, tools, at, inside)) continue;
       this.inflight.add(m.id);
       this.fleet.client
-        .request('agenttools', m.id, { tools, at }, 15_000)
+        .request('agenttools', m.id, { tools, at, workspacesInside: inside }, 15_000)
         .then(() => this.log.appendLine(`agent tools on ${m.name}: ${tools.length ? tools.join(', ') : 'none'}`))
         .catch((err: Error) => {
           if (st) this.retryAt.set(m.id, Date.now() + 60_000);

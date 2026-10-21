@@ -130,6 +130,9 @@ The sessions Vineyard starts can be given tools that see and use the fleet, each
   permission prompts on the far side are still yours to answer.
 * **`sendFiles`**: send a file to a live session on any machine. It lands in
   `~/.vineyard/received/<session>/` there, never in the workspace, and the session is told where.
+* **`createWorkspaces`**: create a folder for a new workspace on any machine, so an agent can be
+  started there. Only inside the folder in *Only allow workspaces inside*
+  (`vineyard.agentTools.workspacesInside`), by default each machine's home folder.
 
 Fetched transcripts are kept for 7 days after the last fetch (1 GB at most) and received files for 14
 days, longer while their session runs; `config.json` changes the limits.

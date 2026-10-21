@@ -2092,6 +2092,12 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return hasCap(a)
+	case "mkworkspace":
+		var a protocol.MakeWorkspaceArgs
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		return n.makeWorkspace(a)
 	case "putfile":
 		var a protocol.PutFileArgs
 		if err := json.Unmarshal(r.Args, &a); err != nil {

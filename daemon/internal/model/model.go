@@ -320,18 +320,21 @@ type Snapshot struct {
 
 // The tools a fleet setting can give Vineyard's sessions, one per vineyard.agentTools setting.
 const (
-	AgentToolMachines    = "machines"    // list_machines, find_machines
-	AgentToolWorkspaces  = "workspaces"  // list_workspaces
-	AgentToolSessions    = "sessions"    // list_sessions
-	AgentToolTranscripts = "transcripts" // fetch_transcript
-	AgentToolDrive       = "drive"       // start_agent, message_agent, await_agent
-	AgentToolFiles       = "files"       // send_file
+	AgentToolMachines      = "machines"      // list_machines, find_machines
+	AgentToolWorkspaces    = "workspaces"    // list_workspaces
+	AgentToolSessions      = "sessions"      // list_sessions
+	AgentToolTranscripts   = "transcripts"   // fetch_transcript
+	AgentToolDrive         = "drive"         // start_agent, message_agent, await_agent
+	AgentToolFiles         = "files"         // send_file
+	AgentToolNewWorkspaces = "newworkspaces" // create_workspace
 )
 
 // AgentToolsStatus: Tools is the list in force (model.AgentTool*), At when it was chosen (Unix ms).
 type AgentToolsStatus struct {
 	Tools []string `json:"tools"`
 	At    int64    `json:"at,omitempty"`
+	// WorkspacesInside is the folder create_workspace is limited to, as set ("" is the default, "~").
+	WorkspacesInside string `json:"workspacesInside,omitempty"`
 }
 
 // WebAppStatus: Listen is where it is meant to serve ("" = off), URLs where it answers while running,

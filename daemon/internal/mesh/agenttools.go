@@ -18,7 +18,7 @@ import (
 const MaxAgentHops = 3
 
 // knownAgentTools are the values the agenttools op accepts; anything else is dropped.
-var knownAgentTools = []string{model.AgentToolMachines, model.AgentToolWorkspaces, model.AgentToolSessions, model.AgentToolTranscripts, model.AgentToolDrive, model.AgentToolFiles}
+var knownAgentTools = []string{model.AgentToolMachines, model.AgentToolWorkspaces, model.AgentToolSessions, model.AgentToolTranscripts, model.AgentToolDrive, model.AgentToolFiles, model.AgentToolNewWorkspaces}
 
 // AgentTools is the list of Vineyard tools this machine gives the sessions it starts.
 func (n *Node) AgentTools() []string {
@@ -46,8 +46,9 @@ func (n *Node) setAgentTools(a protocol.AgentToolsArgs) (json.RawMessage, error)
 	apply := a.At > n.cfg.AgentToolsAt
 	if apply {
 		n.cfg.AgentTools, n.cfg.AgentToolsAt = tools, a.At
+		n.cfg.WorkspacesInside = strings.TrimSpace(a.WorkspacesInside)
 	}
-	st := model.AgentToolsStatus{Tools: nonNil(n.cfg.AgentTools), At: n.cfg.AgentToolsAt}
+	st := *n.agentToolsStatusLocked()
 	n.mu.Unlock()
 	if apply {
 		if err := n.saveConfig(); err != nil {
@@ -68,7 +69,7 @@ func nonNil(s []string) []string {
 
 // agentToolsStatus is the snapshot's agentTools.
 func (n *Node) agentToolsStatusLocked() *model.AgentToolsStatus {
-	return &model.AgentToolsStatus{Tools: nonNil(slices.Clone(n.cfg.AgentTools)), At: n.cfg.AgentToolsAt}
+	return &model.AgentToolsStatus{Tools: nonNil(slices.Clone(n.cfg.AgentTools)), At: n.cfg.AgentToolsAt, WorkspacesInside: n.cfg.WorkspacesInside}
 }
 
 // hasCap answers which of the names this machine has on PATH.

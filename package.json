@@ -791,6 +791,18 @@
           "scope": "application",
           "markdownDescription": "**Agent tool: send files to sessions.** Sessions Vineyard starts get `send_file`, which copies a file (up to 256 MB, checksum verified) to a live session on any machine. It lands in `~/.vineyard/received/<session>/` there, never in the workspace, and the session is told where, marked as coming from an agent. A machine accepts files only while this setting is on there too. The tool reads the file itself, so a file Claude Code's own rules would not let the session read can still be sent; the tool asks permission each time unless the session's mode skips prompts. Fleet-wide. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
         },
+        "vineyard.agentTools.createWorkspaces": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "**Agent tool: create workspaces.** Sessions Vineyard starts get `create_workspace`, which creates a folder for a new workspace on any machine, so an agent can be started there. Only inside the folder set in *Only allow workspaces inside*; an existing folder is left as it is. A machine allows this only while the setting is on there too. Fleet-wide. Off by default. Applies to sessions started or resumed after the first tool is turned on; once one is on, running sessions see changes straight away."
+        },
+        "vineyard.agentTools.workspacesInside": {
+          "type": "string",
+          "default": "~",
+          "scope": "application",
+          "markdownDescription": "**Only allow workspaces inside.** The folder `create_workspace` may create new workspaces in, on every machine. `~` (the default) is each machine's own home folder (`%USERPROFILE%` on Windows); `~/Projects` narrows it to that folder there; an absolute path means the same path on every machine. Folders are checked on the machine itself after following links, so a link inside cannot lead out of it. Fleet-wide."
+        },
         "vineyard.webApp.enabled": {
           "type": "boolean",
           "default": false,

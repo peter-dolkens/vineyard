@@ -8,6 +8,13 @@ test('settings map to the daemon tool groups, sorted', () => {
   assert.deepEqual(wantedTools((s) => on.has(s)), ['drive', 'files', 'machines']);
 });
 
+test('a changed allowed folder is sent too; "~" and empty mean the same', () => {
+  assert.equal(shouldSendTools({ tools: ['newworkspaces'], at: 50 }, ['newworkspaces'], 100, '~'), false);
+  assert.equal(shouldSendTools({ tools: ['newworkspaces'], at: 50, workspacesInside: '' }, ['newworkspaces'], 100, ' ~ '), false);
+  assert.equal(shouldSendTools({ tools: ['newworkspaces'], at: 50 }, ['newworkspaces'], 100, '~/Projects'), true);
+  assert.equal(shouldSendTools({ tools: ['newworkspaces'], at: 50, workspacesInside: '~/Projects' }, ['newworkspaces'], 100, '~/Projects'), false);
+});
+
 test('only a newer, different choice is sent', () => {
   assert.equal(shouldSendTools({ tools: [], at: 0 }, ['drive'], 0), false, 'never chosen here');
   assert.equal(shouldSendTools({ tools: [], at: 0 }, ['drive'], 100), true);

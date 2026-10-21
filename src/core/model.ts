@@ -325,6 +325,8 @@ export interface Snapshot {
 export interface AgentToolsStatus {
   tools: string[];
   at?: number;
+  /** Where create_workspace may create folders, as set ("" or missing means "~"). */
+  workspacesInside?: string;
 }
 
 /**
