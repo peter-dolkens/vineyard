@@ -142,7 +142,7 @@ export class FleetStore {
   }
 
   summary(): FleetSummary {
-    const s: FleetSummary = { machinesOnline: 0, machinesTotal: 0, agentsLive: 0, attention: 0, busy: 0, idle: 0 };
+    const s: FleetSummary = { machinesOnline: 0, machinesTotal: 0, agentsLive: 0, attention: 0, busy: 0, background: 0, idle: 0 };
     for (const m of this.allMachines()) {
       s.machinesTotal++;
       if (!m.online) continue;
@@ -153,6 +153,7 @@ export class FleetStore {
         const st = shownState(a);
         if (needsAttention(st)) s.attention++;
         else if (isBusy(st)) s.busy++;
+        else if (st === 'background') s.background++;
         else s.idle++;
       }
     }
@@ -257,10 +258,12 @@ export function countByState(agents: Agent[]): string {
   const live = agents.filter((a) => a.alive);
   const attention = live.filter((a) => needsAttention(shownState(a))).length;
   const busy = live.filter((a) => isBusy(shownState(a))).length;
-  const idle = live.length - attention - busy;
+  const background = live.filter((a) => shownState(a) === 'background').length;
+  const idle = live.length - attention - busy - background;
   const parts: string[] = [];
   if (attention) parts.push(`${attention} need${attention === 1 ? 's' : ''} you`);
   if (busy) parts.push(`${busy} working`);
+  if (background) parts.push(`${background} running a task`);
   if (idle) parts.push(`${idle} idle`);
   return parts.join(' · ');
 }

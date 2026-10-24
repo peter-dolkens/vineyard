@@ -59,6 +59,8 @@ export function stateIcon(state: AgentState): vscode.ThemeIcon {
       return new vscode.ThemeIcon('tools', color('charts.blue'));
     case 'shell':
       return new vscode.ThemeIcon('terminal', color('charts.orange'));
+    case 'background':
+      return new vscode.ThemeIcon('server-process', color('terminal.ansiCyan'));
     case 'idle':
       return new vscode.ThemeIcon('circle-large-filled', color('charts.green'));
     case 'done':
@@ -82,7 +84,7 @@ function dominantState(agents: Agent[]): AgentState | undefined {
 
 /** A session's icon: its own state, or the agent glyph while it waits on its subagents. */
 function agentIcon(a: Agent): vscode.ThemeIcon {
-  if (!isDelegating(a)) return stateIcon(a.state);
+  if (!isDelegating(a)) return stateIcon(shownState(a) === 'background' ? 'background' : a.state);
   const st = shownState(a);
   return new vscode.ThemeIcon('hubot', color(st === 'working' ? 'charts.blue' : 'notificationsWarningIcon.foreground'));
 }
@@ -91,10 +93,12 @@ function countByState(agents: Agent[]): string {
   const live = agents.filter((a) => a.alive);
   const attention = live.filter((a) => needsAttention(shownState(a))).length;
   const busy = live.filter((a) => isBusy(shownState(a))).length;
-  const idle = live.length - attention - busy;
+  const background = live.filter((a) => shownState(a) === 'background').length;
+  const idle = live.length - attention - busy - background;
   const parts: string[] = [];
   if (attention) parts.push(`${attention} need${attention === 1 ? 's' : ''} you`);
   if (busy) parts.push(`${busy} working`);
+  if (background) parts.push(`${background} running a task`);
   if (idle) parts.push(`${idle} idle`);
   return parts.join(' · ');
 }
@@ -105,6 +109,7 @@ function machineIcon(m: MachineView): vscode.ThemeIcon {
   const agents = m.entry.snapshot.agents.filter((a) => a.alive);
   if (agents.some((a) => needsAttention(shownState(a)))) return new vscode.ThemeIcon(base, color('notificationsWarningIcon.foreground'));
   if (agents.some((a) => isBusy(shownState(a)))) return new vscode.ThemeIcon(base, color('charts.blue'));
+  if (agents.some((a) => shownState(a) === 'background')) return new vscode.ThemeIcon(base, color('terminal.ansiCyan'));
   return new vscode.ThemeIcon(base, color('charts.green'));
 }
 
@@ -337,7 +342,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const model = shortModel(agent.model);
     if (model) bits.push(agent.effort ? `${model} · ${agent.effort}` : model);
     if (activeSubs && !isDelegating(agent)) bits.push(`${activeSubs} subagent${activeSubs === 1 ? '' : 's'} running`);
-    if (activeTasks) bits.push(`${activeTasks} background task${activeTasks === 1 ? '' : 's'}`);
+    if (activeTasks && shownState(agent) !== 'background') bits.push(`${activeTasks} background task${activeTasks === 1 ? '' : 's'}`);
     if (agent.lastActivityAt) bits.push(relativeTime(agent.lastActivityAt));
     item.description = bits.join(' · ');
     item.command = { command: 'vineyard.showTranscript', title: 'Show Transcript', arguments: [node] };
@@ -345,7 +350,7 @@ export class FleetTree implements vscode.TreeDataProvider<Node> {
     const md = new vscode.MarkdownString('', true);
     md.appendMarkdown(`**${escapeMd(agentLabel(agent))}**  \n`);
     md.appendMarkdown(`$(${agentIcon(agent).id}) **${shownStateLabel(agent)}**`);
-    if (isDelegating(agent)) md.appendMarkdown(` (its own turn has ended: ${STATE_LABEL[agent.state].toLowerCase()})`);
+    if (isDelegating(agent) || shownState(agent) === 'background') md.appendMarkdown(` (its own turn has ended: ${STATE_LABEL[agent.state].toLowerCase()})`);
     if (agent.stateDetail) md.appendMarkdown(` — ${escapeMd(agent.stateDetail)}`);
     md.appendMarkdown('\n\n');
     const rows: [string, string | undefined][] = [

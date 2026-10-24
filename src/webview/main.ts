@@ -86,6 +86,7 @@ const STATE_ICON: Record<string, string> = {
   thinking: 'lightbulb',
   tool: 'tools',
   shell: 'terminal',
+  background: 'server-process',
   idle: 'circle-large-filled',
   done: 'pass',
   exited: 'circle-slash',
@@ -973,7 +974,7 @@ function renderHeader() {
   icon.className = `state-dot state-${st}`;
   icon.innerHTML = `<i class="codicon codicon-${delegating ? 'hubot' : STATE_ICON[st] ?? 'circle-outline'}"></i>`;
   const bits = [agent.alive ? shownStateLabel(agent) : STATE_LABEL.exited];
-  if (agent.stateDetail && st !== 'idle' && !delegating) bits.push(agent.stateDetail);
+  if (agent.stateDetail && st !== 'idle' && st !== 'background' && !delegating) bits.push(agent.stateDetail);
   // Model, effort, mode and context size live in the toolbar under the message box.
   const meta: string[] = [`${machine.name} · ${agent.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? ''}`];
   if (agent.gitBranch) meta.push(agent.gitBranch);
