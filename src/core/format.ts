@@ -53,6 +53,7 @@ export const STATE_LABEL: Record<AgentState, string> = {
   thinking: 'Thinking',
   tool: 'Running a tool',
   shell: 'In a shell',
+  background: 'Background task running',
   idle: 'Idle',
   done: 'Finished',
   exited: 'Exited',

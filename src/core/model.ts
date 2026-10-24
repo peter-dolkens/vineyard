@@ -9,6 +9,8 @@ export type AgentState =
   | 'thinking'
   | 'tool'
   | 'shell'
+  /** Shown only, never reported by a daemon: the turn has ended but a background command it started still runs (core/subagents.ts). */
+  | 'background'
   | 'idle'
   | 'done'
   | 'exited'
@@ -22,10 +24,11 @@ export const STATE_PRIORITY: Record<AgentState, number> = {
   thinking: 3,
   tool: 4,
   shell: 5,
-  idle: 6,
-  done: 7,
-  unknown: 8,
-  exited: 9,
+  background: 6,
+  idle: 7,
+  done: 8,
+  unknown: 9,
+  exited: 10,
 };
 
 export function needsAttention(state: AgentState): boolean {
@@ -365,5 +368,7 @@ export interface FleetSummary {
   agentsLive: number;
   attention: number;
   busy: number;
+  /** Idle but for a background command still running. */
+  background: number;
   idle: number;
 }
