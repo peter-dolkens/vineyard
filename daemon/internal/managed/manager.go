@@ -468,6 +468,63 @@ func (m *Manager) StopTask(sid, taskID string) error {
 	return nil
 }
 
+// BackgroundTask moves a running foreground tool call (a Bash command or subagent) to the
+// background, as Ctrl+B does in the terminal: Claude Code's background_tasks control request. The
+// tool call returns at once with a "backgrounded" tool_result, the turn carries on, and the task
+// reports back when it ends. It works only once Claude Code has registered the call as a task
+// (ManagedInfo.Foreground); before that, or for a call that has finished, it reports false.
+func (m *Manager) BackgroundTask(sid, toolUseID string) (bool, error) {
+	p, err := m.get(sid)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(toolUseID) == "" {
+		return false, errors.New("tool use id is empty")
+	}
+	body, err := m.control(p, map[string]any{"subtype": "background_tasks", "tool_use_id": toolUseID})
+	if err != nil {
+		return false, err
+	}
+	var r struct {
+		Backgrounded *bool `json:"backgrounded"`
+	}
+	_ = json.Unmarshal(body, &r)
+	ok := r.Backgrounded == nil || *r.Backgrounded
+	if ok {
+		m.mu.Lock()
+		changed := false
+		for i, f := range p.info.Foreground {
+			if f.ToolUseID == toolUseID {
+				p.info.Foreground = append(p.info.Foreground[:i:i], p.info.Foreground[i+1:]...)
+				changed = true
+				break
+			}
+		}
+		m.mu.Unlock()
+		if changed {
+			m.changed()
+		}
+	}
+	return ok, nil
+}
+
+// dropForeground forgets a foreground task that has moved to the background or ended, reporting
+// whether there was one.
+func (m *Manager) dropForeground(p *proc, taskID string) bool {
+	if taskID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, f := range p.info.Foreground {
+		if f.TaskID == taskID {
+			p.info.Foreground = append(p.info.Foreground[:i:i], p.info.Foreground[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // control sends a control_request and waits for Claude Code's control_response, so callers learn
 // whether a live change was accepted (e.g. bypassPermissions can be refused). The response body is
 // returned for requests that answer with data (initialize).
@@ -742,6 +799,16 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 			TotalCostUSD    float64         `json:"total_cost_usd"`
 			IsError         bool            `json:"is_error"`
 			Result          string          `json:"result"`
+			// system/task_started, task_updated, task_notification
+			TaskID         string `json:"task_id"`
+			ToolUseID      string `json:"tool_use_id"`
+			TaskType       string `json:"task_type"`
+			Description    string `json:"description"`
+			IsBackgrounded *bool  `json:"is_backgrounded"`
+			Patch          struct {
+				Status         string `json:"status"`
+				IsBackgrounded *bool  `json:"is_backgrounded"`
+			} `json:"patch"`
 		}
 		if json.Unmarshal(line, &env) != nil {
 			continue
@@ -819,6 +886,21 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 				m.mu.Unlock()
 				m.changed()
 				go m.refreshContext(p)
+			case "task_started":
+				// A tool call registered as a task. One blocking the turn can be moved to the
+				// background from here on (before this, background_tasks finds nothing to move).
+				if env.IsBackgrounded != nil && !*env.IsBackgrounded && env.ToolUseID != "" && env.TaskID != "" {
+					m.mu.Lock()
+					p.info.Foreground = append(p.info.Foreground, model.ForegroundTask{ToolUseID: env.ToolUseID, TaskID: env.TaskID, Type: env.TaskType, Description: env.Description})
+					m.mu.Unlock()
+					m.changed()
+				}
+			case "task_updated", "task_notification":
+				ended := env.Subtype == "task_notification" || (env.Patch.IsBackgrounded != nil && *env.Patch.IsBackgrounded) ||
+					(env.Patch.Status != "" && env.Patch.Status != "running" && env.Patch.Status != "pending")
+				if ended && m.dropForeground(p, env.TaskID) {
+					m.changed()
+				}
 			case "elicitation_complete":
 				// The MCP server's question was answered or withdrawn. Respond already clears Pending
 				// on our own answer; this covers a server that gives up first.
@@ -847,6 +929,7 @@ func (m *Manager) readStdout(p *proc, r io.Reader) {
 			}
 		case "result":
 			m.mu.Lock()
+			p.info.Foreground = nil // nothing blocks a turn that has ended
 			p.info.Turns++
 			p.info.CostUSD = env.TotalCostUSD
 			if env.IsError {

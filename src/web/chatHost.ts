@@ -53,6 +53,7 @@ type FromFrame =
   | { type: 'action'; id: string }
   | { type: 'openSubagent'; agentId: string }
   | { type: 'stopTask'; taskId: string }
+  | { type: 'backgroundTask'; toolUseId: string }
   | { type: 'nav'; to: 'back' };
 
 export interface ChatDeps {
@@ -253,6 +254,14 @@ export class ChatHost {
           } catch (err) {
             this.post({ type: 'taskStopFailed', taskId: m.taskId });
             throw new Error(`Could not stop task ${m.taskId}: ${(err as Error).message}`);
+          }
+          break;
+        case 'backgroundTask':
+          try {
+            await this.deps.api.request('backgroundtask', machine.id, { sessionId: agent.sessionId, toolUseId: m.toolUseId }, 25_000);
+          } catch (err) {
+            this.post({ type: 'backgroundFailed', toolUseId: m.toolUseId });
+            throw new Error(`Could not move it to the background: ${(err as Error).message}`);
           }
           break;
         case 'stop': {

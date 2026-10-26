@@ -1782,6 +1782,32 @@ func (n *Node) handleLocal(r protocol.Request) (json.RawMessage, error) {
 			return nil, err
 		}
 		return json.RawMessage(`{"ok":true}`), nil
+	case "backgroundtask":
+		if n.opts.Managed == nil {
+			return nil, errors.New("managed sessions are disabled on this daemon")
+		}
+		var a struct {
+			SessionID string `json:"sessionId"`
+			ToolUseID string `json:"toolUseId"`
+		}
+		if err := json.Unmarshal(r.Args, &a); err != nil {
+			return nil, err
+		}
+		if a.ToolUseID == "" {
+			return nil, errors.New("toolUseId is required")
+		}
+		if !n.opts.Managed.Has(a.SessionID) {
+			return nil, errors.New("only sessions started by Vineyard can move a tool call to the background")
+		}
+		ok, err := n.opts.Managed.BackgroundTask(a.SessionID, a.ToolUseID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("that tool call is not running in the foreground any more")
+		}
+		n.kickCollector()
+		return json.RawMessage(`{"backgrounded":true}`), nil
 	case "stoptask":
 		// Stops one background task or subagent; only a session this daemon spawned has the control
 		// channel that carries stop_task, so an observed session gets a plain refusal.
