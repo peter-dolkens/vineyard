@@ -58,7 +58,7 @@ interface Agent {
   pendingTools: { id: string; name: string; summary?: string }[];
   subagents?: Subagent[];
   tasks?: BackgroundTask[];
-  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; pendingMore?: number; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; bypassAvailable?: boolean; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage };
+  managed?: { exited: boolean; compacting?: boolean; pending?: Pending; pendingMore?: number; turns: number; costUsd?: number; lastError?: string; permissionMode?: string; bypassAvailable?: boolean; model?: string; effort?: string; models?: ModelInfo[]; commands?: CommandInfo[]; account?: string; accountOrg?: string; accountPlan?: string; usage?: Usage; foreground?: { toolUseId: string }[] };
 }
 interface MachineInfo {
   id: string;
@@ -99,6 +99,7 @@ let agent: Agent | undefined;
 let machine: MachineInfo | undefined;
 const seen = new Set<string>();
 const toolRows = new Map<string, HTMLElement>(); // tool_use_id → details row
+const backgrounding = new Set<string>(); // tool_use ids asked to move to the background, not yet moved
 const toolNames = new Map<string, string>();
 let currentTurn: HTMLElement | undefined;
 /** Every transcript entry shown, oldest first: drawn again whole when an older page arrives. */
@@ -945,6 +946,46 @@ function renderQueuedPrompt(att: any, time: string) {
   startTurn(cross ? cross.text : t, time, !!cross, images, 'read mid-turn');
 }
 
+/**
+ * "Run in background" under each running tool call the session could move there: Claude Code lists
+ * it once it has registered the call as a foreground task (ManagedInfo.foreground). The link goes
+ * when the call is moved, finishes, or the session stops being one Vineyard runs. refresh redraws
+ * links that were left waiting on an answer.
+ */
+function syncRunInBackground(refresh = false) {
+  const live = !!agent?.managed && !agent.managed.exited && agent.alive;
+  const fg = new Set(live ? (agent!.managed!.foreground ?? []).map((f) => f.toolUseId) : []);
+  for (const [id, row] of toolRows) {
+    let link = row.nextElementSibling?.classList.contains('run-bg') ? (row.nextElementSibling as HTMLButtonElement) : undefined;
+    const want = fg.has(id) && !!row.querySelector('.tool-status.running');
+    if (!want) {
+      link?.remove();
+      backgrounding.delete(id);
+      continue;
+    }
+    if (link && refresh) {
+      link.remove();
+      link = undefined;
+    }
+    if (link) continue;
+    const btn = el('button', 'run-bg') as HTMLButtonElement;
+    btn.type = 'button';
+    const waiting = backgrounding.has(id);
+    btn.disabled = waiting;
+    btn.innerHTML = `<i class="codicon codicon-${waiting ? 'loading codicon-modifier-spin' : 'debug-step-out'}"></i>`;
+    btn.appendChild(document.createTextNode(waiting ? ' Moving to the background…' : ' Run in background'));
+    btn.title = 'Let the turn carry on while this keeps running; the agent is told when it finishes (Ctrl+B in Claude Code)';
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      if (backgrounding.has(id)) return;
+      backgrounding.add(id);
+      vscode.postMessage({ type: 'backgroundTask', toolUseId: id });
+      syncRunInBackground(true);
+    };
+    row.insertAdjacentElement('afterend', btn);
+  }
+}
+
 function ioBlock(label: string, text: string, cls: string): HTMLElement {
   const wrap = el('div', `io ${cls}`);
   wrap.appendChild(el('span', 'io-label', label));
@@ -1492,11 +1533,17 @@ window.addEventListener('message', (ev) => {
       agent = m.agent;
       machine = m.machine;
       renderHeader();
+      syncRunInBackground();
+      break;
+    case 'backgroundFailed':
+      backgrounding.delete(m.toolUseId);
+      syncRunInBackground(true);
       break;
     case 'entries':
       if (m.reset) resetLog();
       for (const e of m.entries) show(e);
       keepEchoesLast();
+      syncRunInBackground();
       if (!infoEl.hidden) renderInfo();
       bar.render(agent, machine, barStats()); // cache and subagent pills follow the transcript
       afterAppend();

@@ -190,6 +190,14 @@ export interface ModelInfo {
   supportedEffortLevels?: string[];
 }
 
+/** A foreground tool call (Bash command or subagent) a managed session could move to the background. */
+export interface ForegroundTask {
+  toolUseId: string;
+  taskId: string;
+  type?: string;
+  description?: string;
+}
+
 export interface ManagedInfo {
   sessionId: string;
   pid: number;
@@ -208,6 +216,8 @@ export interface ManagedInfo {
   pendingMore?: number;
   /** Tool_use id of a recovered question already answered; the daemon hides its dangling tool_use until the transcript catches up. */
   recoveredDone?: string;
+  /** Tool calls blocking the turn that Claude Code has registered as tasks: "Run in background" can move them. */
+  foreground?: ForegroundTask[];
   turns: number;
   costUsd?: number;
   exited: boolean;

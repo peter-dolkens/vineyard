@@ -112,3 +112,60 @@ func TestLiveAllowBypassPermissions(t *testing.T) {
 		_ = m.Stop(sid)
 	}
 }
+
+// Against the real Claude Code: a long foreground Bash call shows up in Foreground once Claude Code
+// registers it as a task, BackgroundTask moves it to the background, and the turn carries on without
+// waiting for the command. Run with VINEYARD_CLAUDE_LIVE=1 (spends a few haiku tokens).
+func TestLiveRunInBackground(t *testing.T) {
+	if os.Getenv("VINEYARD_CLAUDE_LIVE") == "" {
+		t.Skip("set VINEYARD_CLAUDE_LIVE=1 to drive a real Claude Code")
+	}
+	if _, err := FindClaude(""); err != nil {
+		t.Skip("claude not installed")
+	}
+	m := New(nil, func() {})
+	sid, err := m.Spawn(SpawnOptions{
+		Cwd:          t.TempDir(),
+		Model:        "haiku",
+		AllowedTools: []string{"Bash(ping:*)"},
+		Prompt: "Run exactly this with the Bash tool, in the foreground (do NOT set run_in_background), timeout 120000: " +
+			"ping -c 60 127.0.0.1 . If it moves to the background, say so in one line and end your turn; do not wait for it.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop(sid)
+	p, err := m.get(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fg string
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline) && fg == ""; time.Sleep(250 * time.Millisecond) {
+		m.mu.Lock()
+		if len(p.info.Foreground) > 0 {
+			fg = p.info.Foreground[0].ToolUseID
+		}
+		m.mu.Unlock()
+	}
+	if fg == "" {
+		t.Fatal("the ping never showed as a foreground task")
+	}
+	at := time.Now()
+	ok, err := m.BackgroundTask(sid, fg)
+	if err != nil || !ok {
+		t.Fatalf("BackgroundTask = %v, %v", ok, err)
+	}
+	for deadline := time.Now().Add(40 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		m.mu.Lock()
+		turns, left := p.info.Turns, len(p.info.Foreground)
+		m.mu.Unlock()
+		if turns >= 1 {
+			if left != 0 {
+				t.Fatalf("still offered after the turn: %d", left)
+			}
+			t.Logf("turn ended %.1fs after backgrounding (the ping runs for 60 s)", time.Since(at).Seconds())
+			return
+		}
+	}
+	t.Fatal("the turn kept waiting for the command")
+}
