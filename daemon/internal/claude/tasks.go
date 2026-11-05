@@ -15,8 +15,9 @@ import (
 // tool-use id and a status. The chat's Agent map and the tree show them beside the subagents.
 
 var (
-	// The two tool_result phrasings that hand back a background task id.
-	bgTaskIDRe = regexp.MustCompile(`(?:moved to the background \(ID: |running in background with ID: )([A-Za-z0-9_-]+)`)
+	// The tool_result phrasings that hand back a background task id: started in the background, moved
+	// there after its timeout, or moved there by the user (Ctrl+B, or the background_tasks request).
+	bgTaskIDRe = regexp.MustCompile(`(?:moved to the background \(ID: |running in background with ID: |manually backgrounded by user with ID: )([A-Za-z0-9_-]+)`)
 	// One notification: task id, the tool-use id it belongs to, then how it ended.
 	bgTaskNoteRe = regexp.MustCompile(`<task-id>\s*([^<\s]+)\s*</task-id>[\s\S]*?<tool-use-id>\s*([^<\s]+)\s*</tool-use-id>[\s\S]*?<status>\s*(\w+)\s*</status>`)
 )

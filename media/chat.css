@@ -75,6 +75,10 @@ details.thinking .md { padding: 4px 12px 10px; opacity: 0.8; font-size: 12px; }
 .tool-status.running { border: 2px solid var(--vscode-charts-blue, #3794ff); border-right-color: transparent; animation: spin .9s linear infinite; }
 .tool-status.done { color: var(--vscode-charts-green, #89d185); }
 .tool-status.error { color: var(--vscode-errorForeground); }
+.run-bg { display: inline-flex; align-items: center; gap: 2px; margin: 2px 0 4px 22px; padding: 2px 6px; border: none; background: none; color: var(--vscode-textLink-foreground); font: inherit; font-size: 12px; cursor: pointer; border-radius: 3px; }
+.run-bg:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); text-decoration: underline; }
+.run-bg:disabled { color: var(--vscode-descriptionForeground); cursor: default; }
+.run-bg .codicon { font-size: 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tool-body { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 6px; }
 .tool-body pre { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); overflow-x: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; }

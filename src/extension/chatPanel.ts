@@ -31,7 +31,9 @@ type ToWebview =
   | { type: 'sending'; busy: boolean }
   | { type: 'sendFailed' }
   /** The daemon refused a stopTask; the Agent map's row leaves its spinner. */
-  | { type: 'taskStopFailed'; taskId: string };
+  | { type: 'taskStopFailed'; taskId: string }
+  /** The daemon could not move a tool call to the background; its link comes back. */
+  | { type: 'backgroundFailed'; toolUseId: string };
 
 type FromWebview =
   | { type: 'ready' }
@@ -61,7 +63,8 @@ type FromWebview =
   /** From the Agent map: open that subagent's transcript in its own chat panel. */
   | { type: 'openSubagent'; agentId: string }
   /** From the Agent map: stop a running subagent (its agent id) or background command (its task id). */
-  | { type: 'stopTask'; taskId: string };
+  | { type: 'stopTask'; taskId: string }
+  | { type: 'backgroundTask'; toolUseId: string };
 
 class ChatPanel {
   private readonly feed: TranscriptFeed;
@@ -212,6 +215,14 @@ class ChatPanel {
           } catch (err) {
             this.post({ type: 'taskStopFailed', taskId: m.taskId });
             void vscode.window.showErrorMessage(`Could not stop task ${m.taskId} of ${agentLabel(this.agent)}: ${(err as Error).message}`);
+          }
+          break;
+        case 'backgroundTask':
+          try {
+            await this.fleet.client.request('backgroundtask', this.machine.id, { sessionId: this.agent.sessionId, toolUseId: m.toolUseId }, 25_000);
+          } catch (err) {
+            this.post({ type: 'backgroundFailed', toolUseId: m.toolUseId });
+            void vscode.window.showErrorMessage(`Could not move that tool call of ${agentLabel(this.agent)} to the background: ${(err as Error).message}`);
           }
           break;
         case 'stop': {

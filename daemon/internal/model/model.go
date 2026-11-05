@@ -118,6 +118,16 @@ type Subagent struct {
 	ToolUseID      string        `json:"toolUseId,omitempty"`
 }
 
+// ForegroundTask is a tool call running in the foreground of a managed session that Claude Code has
+// registered as a task (system/task_started with is_backgrounded false): the background_tasks
+// control request can move it to the background.
+type ForegroundTask struct {
+	ToolUseID   string `json:"toolUseId"`
+	TaskID      string `json:"taskId"`
+	Type        string `json:"type,omitempty"` // local_bash | local_agent | …
+	Description string `json:"description,omitempty"`
+}
+
 // PendingRequest is a control_request the managed session is blocked on: a permission prompt or an
 // AskUserQuestion. Input is the tool input as Claude proposed it.
 type PendingRequest struct {
@@ -209,12 +219,16 @@ type ManagedInfo struct {
 	// RecoveredDone is the tool_use id of a recovered question that has been answered (or waved off
 	// with a prompt). The transcript keeps that AskUserQuestion dangling for a moment after the
 	// answer is sent, until Claude Code appends the prompt; Merge hides it meanwhile.
-	RecoveredDone string  `json:"recoveredDone,omitempty"`
-	Turns         int     `json:"turns"`
-	CostUSD       float64 `json:"costUsd,omitempty"`
-	Exited        bool    `json:"exited"`
-	ExitedAt      int64   `json:"exitedAt,omitempty"`
-	LastError     string  `json:"lastError,omitempty"`
+	RecoveredDone string `json:"recoveredDone,omitempty"`
+	// Foreground are the tool calls Claude Code is blocked on and could move to the background (a
+	// Bash command or subagent it registered as a foreground task), so the chat can offer "Run in
+	// background" on them.
+	Foreground []ForegroundTask `json:"foreground,omitempty"`
+	Turns      int              `json:"turns"`
+	CostUSD    float64          `json:"costUsd,omitempty"`
+	Exited     bool             `json:"exited"`
+	ExitedAt   int64            `json:"exitedAt,omitempty"`
+	LastError  string           `json:"lastError,omitempty"`
 	// Models is what this session's Claude Code offers in its model picker; empty until the harness
 	// has answered the initialize request sent at spawn.
 	Models []ModelInfo `json:"models,omitempty"`

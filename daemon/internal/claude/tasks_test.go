@@ -99,3 +99,16 @@ func TestMergeTasks(t *testing.T) {
 		t.Errorf("nothing in, nothing out: %v", same)
 	}
 }
+
+// A command the user (or Vineyard's "Run in background") moved to the background mid-run, worded as
+// Claude Code 2.1.301 writes it.
+func TestBuildTasksManuallyBackgrounded(t *testing.T) {
+	entries := []map[string]any{
+		bashUse("tu9", "Ping localhost 40 times", "2026-10-26T04:00:00Z", false),
+		bgResult("tu9", "Command was manually backgrounded by user with ID: be836cno1. Output is being written to: /tmp/be836cno1.output", "2026-10-26T04:00:17Z"),
+	}
+	got := BuildTasks(entries)
+	if len(got) != 1 || got[0].TaskID != "be836cno1" || got[0].State != "running" || got[0].StartedAt != entryTime(entries[0]) {
+		t.Fatalf("tasks = %+v", got)
+	}
+}
