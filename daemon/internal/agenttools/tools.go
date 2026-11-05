@@ -126,7 +126,7 @@ var allTools = []*tool{
 	},
 	{
 		name: "await_agent", setting: model.AgentToolDrive, title: "Wait for an agent's reply", readOnly: true,
-		description: "Waits until a session you started or messaged finishes its turn, and returns its reply and status: done, question (it asked something), permission (blocked on a permission prompt the user must answer in Vineyard), exited or error. For a session you have not messaged, returns its latest reply once it is not busy. A reply returned here is not delivered as a message too.",
+		description: "Waits until a session you started or messaged finishes its turn, and returns its reply and status: done, exited or error. It returns sooner if the session stops mid-turn on a question (it asked something) or a permission prompt (the user must answer it in Vineyard); that turn is not over, and once answered it carries on: call await_agent again for its reply. For a session you have not messaged, returns its latest reply once it is not busy. A reply returned here is not delivered as a message too.",
 		schema: obj(map[string]any{
 			"machine":         str("Machine id or name."),
 			"session_id":      str("The session."),

@@ -452,6 +452,10 @@ and every tool is off until a fleet setting turns it on.
   * **Status, not just text.** A reply says `done`, `question` (the target asked an AskUserQuestion),
     `permission` (it is blocked on a permission prompt), `exited` or `error`. Permission prompts on
     the target are a person's to answer, in Vineyard, never the driving agent's.
+  * **A stall is not the end.** `question` and `permission` stop the turn without ending it, so the
+    watch keeps going: the first stall is pushed (or returned by a waiting `await_agent`) with a note
+    that the turn is not over, and once it is answered the turn's real reply follows the same way.
+    `await_agent` returns a stall once; called again, it waits for the turn to end or a new stall.
   * Detection relies on the target being a managed session or one whose transcript ends its turns
     normally; a watch is given up after two hours, and with the sender's session.
 

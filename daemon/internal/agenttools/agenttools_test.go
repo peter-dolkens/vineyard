@@ -262,3 +262,38 @@ func TestPeerMessagesArePrompts(t *testing.T) {
 		t.Fatalf("old form: %q", got)
 	}
 }
+
+// A permission prompt stops a watched turn but does not end it: once answered, the turn's reply
+// still comes, and await_agent never hands back a prompt that is gone.
+func TestWatchStall(t *testing.T) {
+	ws := newWatches(New(Options{}))
+	w := &watch{name: "m", session: "s", done: make(chan struct{}), stallChanged: make(chan struct{})}
+	perm := Reply{Machine: "m", SessionID: "s", Status: "permission", Detail: "Bash: rm -rf build"}
+
+	ws.setStall(w, &perm)
+	if r := w.await(time.Second); r.Status != "permission" || r.Note == "" {
+		t.Fatalf("first await = %+v, want the stall with a note", r)
+	}
+	// Told once: waiting again blocks until something changes, and reports the stall if nothing does.
+	// The same prompt with another detail (seen live on magpie) is not something new.
+	again := perm
+	again.Detail = "Responding to prompt…"
+	ws.setStall(w, &again)
+	start := time.Now()
+	if r := w.await(50 * time.Millisecond); r.Status != "permission" || r.Detail != perm.Detail || time.Since(start) < 50*time.Millisecond {
+		t.Fatalf("await while still stalled = %+v after %v", r, time.Since(start))
+	}
+
+	// The user answers; the turn runs on and finishes.
+	got := make(chan Reply)
+	go func() { got <- w.await(time.Second) }()
+	time.Sleep(10 * time.Millisecond)
+	ws.setStall(w, nil)
+	ws.finish(w, Reply{Machine: "m", SessionID: "s", Status: "done", Text: "all done"})
+	if r := <-got; r.Status != "done" || r.Text != "all done" {
+		t.Fatalf("await after the prompt was answered = %+v", r)
+	}
+	if r := w.await(time.Second); r.Status != "done" {
+		t.Fatalf("later await = %+v", r)
+	}
+}

@@ -33,6 +33,8 @@ type Reply struct {
 	Text      string          `json:"reply"`
 	Truncated bool            `json:"truncated,omitempty"`
 	Question  json.RawMessage `json:"question,omitempty"`
+	// Note is set on a reply the turn has not ended with: a stall, saying how its reply comes.
+	Note string `json:"note,omitempty"`
 }
 
 // watch waits for one session to finish the turn our message started.
@@ -51,6 +53,15 @@ type watch struct {
 	awaited bool
 	done    chan struct{}
 	reply   Reply
+	// stall is what the session is stopped on mid-turn (a permission prompt, a question), nil while it
+	// runs; stallChanged is closed and replaced when it changes. A stall does not end the watch: once
+	// it is answered the turn carries on, and the reply that ends it still comes. stallTold is set
+	// once this stall has been pushed or returned by await_agent; stallPushed once any stall of this
+	// watch has been pushed, so a run of prompts does not flood the conversation.
+	stall        *Reply
+	stallChanged chan struct{}
+	stallTold    bool
+	stallPushed  bool
 }
 
 type watches struct {
@@ -79,7 +90,7 @@ func (ws *watches) start(machineID, name, session string, targs protocol.Transcr
 			return
 		}
 	}
-	w := &watch{machineID: machineID, name: name, session: session, targs: targs, baseline: baseline, requirePrompt: requirePrompt, started: time.Now(), notify: notify, done: make(chan struct{})}
+	w := &watch{machineID: machineID, name: name, session: session, targs: targs, baseline: baseline, requirePrompt: requirePrompt, started: time.Now(), notify: notify, done: make(chan struct{}), stallChanged: make(chan struct{})}
 	ws.m[key] = w
 	ws.mu.Unlock()
 	go ws.run(w)
@@ -98,15 +109,33 @@ func (ws *watches) run(w *watch) {
 	deadline := time.After(watchFor)
 	for {
 		changed := s.client.Changed()
-		if r, ok := s.checkTurn(w); ok {
+		switch r, st := s.checkTurn(w); st {
+		case turnOver:
 			ws.finish(w, r)
 			return
+		case turnStalled:
+			ws.setStall(w, &r)
+		case turnRunning:
+			ws.setStall(w, nil)
 		}
 		select {
 		case <-changed:
 		case <-time.After(watchTick):
 		case <-deadline:
-			ws.finish(w, Reply{Machine: w.name, SessionID: w.session, Status: "timeout", Detail: "no reply within " + watchFor.String()})
+			r := Reply{Machine: w.name, SessionID: w.session, Status: "timeout", Detail: "no reply within " + watchFor.String()}
+			w.mu.Lock()
+			if w.stall != nil {
+				r = *w.stall
+				r.Note = "Vineyard stopped waiting for its reply after " + watchFor.String() + "; await_agent reports how it stands now."
+			}
+			w.mu.Unlock()
+			ws.finish(w, r)
+			// Forget it, so a later await_agent looks at the session as it is rather than this.
+			ws.mu.Lock()
+			if ws.m[watchKey(w.machineID, w.session)] == w {
+				delete(ws.m, watchKey(w.machineID, w.session))
+			}
+			ws.mu.Unlock()
 			return
 		}
 	}
@@ -120,6 +149,87 @@ func (ws *watches) finish(w *watch, r Reply) {
 	w.mu.Unlock()
 	if push {
 		ws.s.push(r)
+	}
+}
+
+// sameStall: the session is still stopped the same way. Not the detail: while one permission prompt
+// waits, the detail can change under it (Claude Code says "waiting" while the transcript's last line
+// reads "Responding to prompt…"), and that is not a new prompt. A new one needs the session to run
+// in between, which clears the stall.
+func sameStall(a, b *Reply) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Status == b.Status
+}
+
+// setStall records what the session is stopped on now (nil: nothing), pushing the first stall of
+// the watch when nobody is waiting in await_agent to be told it.
+func (ws *watches) setStall(w *watch, r *Reply) {
+	w.mu.Lock()
+	if sameStall(w.stall, r) {
+		w.mu.Unlock()
+		return
+	}
+	if r != nil {
+		c := *r
+		if w.notify && ws.s.o.Session != "" {
+			c.Note = "Its turn is not over: once that is answered it carries on, and its reply arrives as another <vineyard-agent-reply> message."
+		} else {
+			c.Note = "Its turn is not over: once that is answered it carries on; call await_agent again for its reply."
+		}
+		r = &c
+	}
+	w.stall, w.stallTold = r, false
+	close(w.stallChanged)
+	w.stallChanged = make(chan struct{})
+	push := r != nil && w.notify && !w.awaited && !w.stallPushed
+	if push {
+		w.stallPushed, w.stallTold = true, true
+	}
+	w.mu.Unlock()
+	if push {
+		ws.s.push(*r)
+	}
+}
+
+// await waits up to timeout for the turn to end, returning sooner with a stall not yet told. While
+// it waits, the turn's reply is not pushed; when it returns without one, the reply is pushed when
+// it comes (if notify was on).
+func (w *watch) await(timeout time.Duration) Reply {
+	deadline := time.After(timeout)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for {
+		select {
+		case <-w.done:
+			return w.reply
+		default:
+		}
+		if w.stall != nil && !w.stallTold {
+			w.stallTold, w.awaited = true, false
+			return *w.stall
+		}
+		w.awaited = true
+		changed := w.stallChanged
+		w.mu.Unlock()
+		select {
+		case <-w.done:
+		case <-changed:
+		case <-deadline:
+			w.mu.Lock()
+			select {
+			case <-w.done:
+				return w.reply
+			default:
+			}
+			w.awaited = false
+			if w.stall != nil {
+				return *w.stall
+			}
+			return Reply{Machine: w.name, SessionID: w.session, Status: "timeout", Detail: "still working; its reply is delivered later if notify was on, or call await_agent again"}
+		}
+		w.mu.Lock()
 	}
 }
 
@@ -148,6 +258,9 @@ func (s *Server) push(r Reply) {
 	case "question":
 		b.WriteString(" That agent asked a question; answer with message_agent if it is yours to answer, or leave it to the user.")
 	}
+	if r.Note != "" {
+		b.WriteString(" " + r.Note)
+	}
 	if _, err := s.client.Request("", "send", protocol.SendArgs{SessionID: s.o.Session, Text: b.String()}, 30*time.Second); err != nil {
 		s.o.Log.Printf("deliver reply from %s/%s: %v", r.Machine, r.SessionID, err)
 	}
@@ -157,11 +270,23 @@ func endsTurn(stop string) bool {
 	return stop == "end_turn" || stop == "stop_sequence" || stop == "max_tokens"
 }
 
-// checkTurn reports the reply once the watched session has finished the turn our message started.
-func (s *Server) checkTurn(w *watch) (Reply, bool) {
+// Where a watched turn stands: not known yet (no snapshot, an unreadable transcript), running,
+// stopped on something someone has to answer, or over.
+type turnState int
+
+const (
+	turnUnknown turnState = iota
+	turnRunning
+	turnStalled
+	turnOver
+)
+
+// checkTurn reports where the turn our message started stands, with the reply once it is over (or
+// what it is stopped on, when stalled).
+func (s *Server) checkTurn(w *watch) (Reply, turnState) {
 	e, err := s.client.Entry(w.machineID)
 	if err != nil {
-		return Reply{}, false
+		return Reply{}, turnUnknown
 	}
 	var ag *model.Agent
 	for i := range e.Snapshot.Agents {
@@ -170,41 +295,44 @@ func (s *Server) checkTurn(w *watch) (Reply, bool) {
 		}
 	}
 	if ag == nil {
-		return Reply{}, false // a new session not reported yet
+		return Reply{}, turnUnknown // a new session not reported yet
 	}
-	if model.IsBusy(ag.State) || ag.State == model.StateUnknown || ag.State == model.StateShell {
-		return Reply{}, false
+	if model.IsBusy(ag.State) {
+		return Reply{}, turnRunning
+	}
+	if ag.State == model.StateUnknown || ag.State == model.StateShell {
+		return Reply{}, turnUnknown
 	}
 	if w.targs.Path == "" && ag.TranscriptPath != "" {
 		w.targs.Path = ag.TranscriptPath
 	}
 	entries, err := s.entriesSince(w.machineID, w.targs, w.baseline)
 	if err != nil {
-		return Reply{}, false
+		return Reply{}, turnUnknown
 	}
-	r := Reply{Machine: w.name, SessionID: w.session}
+	r, st := Reply{Machine: w.name, SessionID: w.session}, turnOver
 	switch {
 	case !ag.Alive || ag.State == model.StateExited:
 		r.Status, r.Detail = "exited", "the session's process has ended"
 	case ag.APIError != "":
 		r.Status, r.Detail = "error", ag.APIError
 	case ag.State == model.StateQuestion:
-		r.Status, r.Detail = "question", ag.StateDetail
+		r.Status, r.Detail, st = "question", ag.StateDetail, turnStalled
 		for _, p := range ag.PendingTools {
 			if len(p.Input) > 0 {
 				r.Question = p.Input
 			}
 		}
 	case ag.State == model.StatePermission:
-		r.Status, r.Detail = "permission", ag.StateDetail
+		r.Status, r.Detail, st = "permission", ag.StateDetail, turnStalled
 	default:
 		if !turnEnded(entries, w.baseline > 0 || w.requirePrompt) {
-			return Reply{}, false
+			return Reply{}, turnRunning
 		}
 		r.Status = "done"
 	}
 	r.Text, r.Truncated = replyText(entries)
-	return r, true
+	return r, st
 }
 
 // entriesSince is the transcript after byte offset since, at most the last tailLines entries; with
@@ -463,20 +591,7 @@ func (s *Server) awaitAgent(args json.RawMessage) (any, error) {
 	}
 	id, name := e.Snapshot.MachineID, e.Snapshot.Name
 	if w := s.watches.get(id, a.SessionID); w != nil {
-		w.mu.Lock()
-		w.awaited = true
-		w.mu.Unlock()
-		select {
-		case <-w.done:
-			w.mu.Lock()
-			defer w.mu.Unlock()
-			return w.reply, nil
-		case <-time.After(timeout):
-			w.mu.Lock()
-			w.awaited = false // still pushed when it comes, if asked for
-			w.mu.Unlock()
-			return Reply{Machine: name, SessionID: a.SessionID, Status: "timeout", Detail: "still working; its reply is delivered later if notify was on, or call await_agent again"}, nil
-		}
+		return w.await(timeout), nil
 	}
 	// Not messaged from here: wait for it to stop being busy and report its latest reply.
 	release := s.client.Hold()
