@@ -162,6 +162,7 @@ function machineTint(m: MachineView): string {
   const live = m.entry.snapshot.agents.filter((a) => a.alive);
   if (live.some((a) => needsAttention(shownState(a)))) return 'var(--orange)';
   if (live.some((a) => isBusy(shownState(a)))) return 'var(--blue)';
+  if (live.some((a) => shownState(a) === 'background')) return 'var(--teal)';
   return 'var(--green)';
 }
 
@@ -187,7 +188,7 @@ function agentSub(a: Agent): string {
   const subs = (a.subagents ?? []).filter(subagentActive).length;
   if (subs && !isDelegating(a)) bits.push(`${subs} subagent${subs === 1 ? '' : 's'}`);
   const tasks = (a.tasks ?? []).filter(taskActive).length;
-  if (tasks) bits.push(`${tasks} task${tasks === 1 ? '' : 's'}`);
+  if (tasks && shownState(a) !== 'background') bits.push(`${tasks} task${tasks === 1 ? '' : 's'}`);
   if (a.lastActivityAt) bits.push(relativeTime(a.lastActivityAt));
   return bits.join(' · ');
 }
@@ -198,13 +199,14 @@ function agentNote(a: Agent): string | undefined {
   const q = a.pendingTools.find((t) => t.name === 'AskUserQuestion');
   if (a.state === 'question' && q?.summary) return q.summary;
   if (isDelegating(a)) return `Its own turn has ended; waiting on ${a.subagents?.filter(subagentActive).length === 1 ? 'its subagent' : 'its subagents'}`;
+  if (shownState(a) === 'background') return 'Its own turn has ended; it picks up again when the task finishes';
   if (a.managed?.pending?.description) return a.managed.pending.description;
   return a.stateDetail || undefined;
 }
 
 /** A session's icon: its own state's, or the agent glyph while it waits on its subagents. */
 function agentIcon(a: Agent): string {
-  return isDelegating(a) ? 'hubot' : STATE_ICON[a.state];
+  return isDelegating(a) ? 'hubot' : STATE_ICON[shownState(a) === 'background' ? 'background' : a.state];
 }
 
 function agentRow(ctx: Ctx, m: MachineView, a: Agent, opts: { where?: boolean; info?: boolean } = {}): Row {

@@ -95,3 +95,20 @@ test('own state wins when the session is busy, needs you, has exited or has no r
   assert.equal(isDelegating(finished), false);
   assert.equal(shownStateLabel(finished), 'Idle');
 });
+
+test('a session whose only work left is a background command has a state of its own', () => {
+  const running = { state: 'running', description: 'Apply US/UK enablement plan' };
+  const done = { state: 'completed', description: 'old' };
+  const base = { alive: true, state: 'idle', subagents: [], tasks: [running, done] };
+  assert.equal(shownState(base), 'background');
+  assert.equal(shownStateLabel(base), 'Background task running: Apply US/UK enablement plan');
+  assert.equal(shownStateLabel({ ...base, tasks: [running, running] }), '2 background tasks running');
+  assert.equal(shownStateLabel({ ...base, tasks: [{ state: 'running' }] }), 'Background task running');
+  // Only when nothing else is going on: its own work, a question, a subagent, or nothing running.
+  assert.equal(shownState({ ...base, state: 'tool' }), 'tool');
+  assert.equal(shownState({ ...base, state: 'question' }), 'question');
+  assert.equal(shownState({ ...base, state: 'shell' }), 'shell');
+  assert.equal(shownState({ ...base, subagents: [{ state: 'working' }] }), 'working');
+  assert.equal(shownState({ ...base, tasks: [done] }), 'idle');
+  assert.equal(shownState({ ...base, alive: false }), 'idle');
+});

@@ -4,7 +4,7 @@
  * own, into an Agent-shaped view the chat panel and transcript viewer already understand.
  */
 
-import type { Agent, AgentState, Subagent } from './model.ts';
+import type { Agent, AgentState, BackgroundTask, Subagent } from './model.ts';
 import { isBusy, needsAttention } from './model.ts';
 import { STATE_LABEL, subagentLabel } from './format.ts';
 
@@ -83,6 +83,7 @@ interface Delegator {
   alive: boolean;
   state: AgentState | string;
   subagents?: Pick<Subagent, 'state'>[];
+  tasks?: Pick<BackgroundTask, 'state' | 'description'>[];
 }
 
 /**
@@ -102,13 +103,30 @@ export function shownState(a: Delegator): AgentState {
   const subs = delegatedTo(a);
   if (subs.some((s) => s.state === 'question')) return 'question';
   if (subs.some((s) => s.state === 'permission')) return 'permission';
-  return subs.length ? 'working' : (a.state as AgentState);
+  if (subs.length) return 'working';
+  return backgroundTasks(a).length ? 'background' : (a.state as AgentState);
 }
 
-/** "2 subagents working", "A subagent is asking a question", or the session's own state. */
+/**
+ * Background commands still running for a session with nothing else going on: its turn has ended
+ * and no subagent is at work. Claude Code reports it idle, but it picks up again when one finishes,
+ * so it has a state of its own ("background"): not working (a dev server may run for ever) and not
+ * idle either.
+ */
+export function backgroundTasks(a: Delegator): Pick<BackgroundTask, 'state' | 'description'>[] {
+  if (!a.alive || (a.state !== 'idle' && a.state !== 'done') || delegatedTo(a).length) return [];
+  return (a.tasks ?? []).filter((t) => t.state === 'running');
+}
+
+/** "2 subagents working", "A subagent is asking a question", "Background task running: …", or the session's own state. */
 export function shownStateLabel(a: Delegator): string {
   const subs = delegatedTo(a);
-  if (!subs.length) return STATE_LABEL[a.state as AgentState] ?? String(a.state);
+  if (!subs.length) {
+    const tasks = backgroundTasks(a);
+    if (tasks.length === 1) return tasks[0]!.description ? `Background task running: ${tasks[0]!.description}` : STATE_LABEL.background;
+    if (tasks.length > 1) return `${tasks.length} background tasks running`;
+    return STATE_LABEL[a.state as AgentState] ?? String(a.state);
+  }
   const shown = shownState(a);
   if (shown === 'question') return 'A subagent is asking a question';
   if (shown === 'permission') return 'A subagent is waiting for permission';

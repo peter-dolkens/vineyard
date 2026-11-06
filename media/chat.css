@@ -29,6 +29,7 @@ pre, code { font-family: var(--vscode-editor-font-family, monospace); font-size:
 .state-question, .state-permission { background: var(--vscode-editorWarning-foreground); color: #000; }
 .state-working, .state-tool, .state-thinking { background: var(--vscode-charts-blue, #3794ff); color: #fff; }
 .state-idle, .state-done { background: var(--vscode-charts-green, #89d185); color: #000; }
+.state-background { background: var(--vscode-terminal-ansiCyan, #29b8db); color: #000; }
 .state-exited, .state-unknown { background: var(--vscode-disabledForeground); color: #fff; }
 .state-shell { background: var(--vscode-charts-orange, #d18616); color: #000; }
 

@@ -130,7 +130,7 @@ export class FleetService implements vscode.Disposable {
   }
 
   summary(): FleetSummary {
-    const s: FleetSummary = { machinesOnline: 0, machinesTotal: 0, agentsLive: 0, attention: 0, busy: 0, idle: 0 };
+    const s: FleetSummary = { machinesOnline: 0, machinesTotal: 0, agentsLive: 0, attention: 0, busy: 0, background: 0, idle: 0 };
     for (const m of this.machines()) {
       s.machinesTotal++;
       if (!m.online) continue;
@@ -141,6 +141,7 @@ export class FleetService implements vscode.Disposable {
         const st = shownState(a);
         if (needsAttention(st)) s.attention++;
         else if (isBusy(st)) s.busy++;
+        else if (st === 'background') s.background++;
         else s.idle++;
       }
     }

@@ -168,7 +168,11 @@ The daemon reports each session's own state. The views show a *shown* state on t
 (`shownState` in `src/core/subagents.ts`): a live session that is not busy and not waiting on you, but
 has subagents still running, shows as `working` ("2 subagents working"), or as `question` /
 `permission` when one of those subagents is. Roll-ups, counts, attention sorting and notifications
-all use the shown state. Background shell tasks do not count.
+all use the shown state. A session with nothing left running but a background command it started
+(its turn ended, no subagent at work) shows a state of its own, `background` ("Background task
+running: …", a cyan process icon): it picks up again when the command finishes, so it is not idle,
+but a dev server or watcher may never finish, so it is not working either. It counts as neither
+busy nor attention, and the "finished" notification waits for the idle after it.
 
 ## Repository layout
 

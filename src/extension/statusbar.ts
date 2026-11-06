@@ -24,6 +24,7 @@ export class FleetStatusBar implements vscode.Disposable {
     const parts: string[] = [];
     if (s.attention) parts.push(`$(question) ${s.attention}`);
     if (s.busy) parts.push(`$(loading~spin) ${s.busy}`);
+    if (s.background) parts.push(`$(server-process) ${s.background}`);
     if (s.idle) parts.push(`$(circle-large-filled) ${s.idle}`);
     if (!parts.length) parts.push('$(hubot) 0');
     // The fullest account limit any online machine reports, once it is worth a look.
@@ -42,6 +43,7 @@ export class FleetStatusBar implements vscode.Disposable {
     md.appendMarkdown(`${s.agentsLive} live agent${s.agentsLive === 1 ? '' : 's'}`);
     if (s.attention) md.appendMarkdown(`  \n$(question) ${s.attention} waiting on you`);
     if (s.busy) md.appendMarkdown(`  \n$(loading~spin) ${s.busy} working`);
+    if (s.background) md.appendMarkdown(`  \n$(server-process) ${s.background} running a background task`);
     if (s.idle) md.appendMarkdown(`  \n$(circle-large-filled) ${s.idle} idle`);
     for (const { m, w } of limits) md.appendMarkdown(`  \n$(${w!.rejected ? 'error' : 'warning'}) ${m.name}: ${w!.text}`);
     this.item.tooltip = md;

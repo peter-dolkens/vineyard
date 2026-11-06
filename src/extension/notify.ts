@@ -35,7 +35,9 @@ export class Notifier implements vscode.Disposable {
     const now = shownState(current);
     const before = previous && shownState(previous);
     const wantsAttention = cfg.get<boolean>('notify.attention', true) && needsAttention(now) && !(before && needsAttention(before));
-    const finished = cfg.get<boolean>('notify.finished', false) && now === 'idle' && before !== undefined && isBusy(before);
+    // A turn that ends with a background command still running has not finished: it picks up again
+    // when the command does, so "finished" waits for the idle after that.
+    const finished = cfg.get<boolean>('notify.finished', false) && now === 'idle' && before !== undefined && (isBusy(before) || before === 'background');
     if (!wantsAttention && !finished) return;
 
     // Debounce: the same agent flapping between two states should not spam.
